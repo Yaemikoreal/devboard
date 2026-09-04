@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>devboard - 设置页风格 Demo</title>
+<style>
+  :root {
+    --bg: #f5f5f7;
+    --card: #fdfdfe;
+    --text: #1d1d1f;
+    --text-2: #6e6e73;
+    --text-3: #86868b;
+    --border: rgba(0, 0, 0, 0.07);
+    --accent: #0071e3;
+    --accent-soft: rgba(0, 113, 227, 0.10);
+    --bar: #d7d7dc;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+    --shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.05), 0 12px 32px rgba(0, 0, 0, 0.10);
+    --radius: 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e;
+      --card: #2c2c2e;
+      --text: #f5f5f7;
+      --text-2: #a1a1a6;
+      --text-3: #8e8e93;
+      --border: rgba(255, 255, 255, 0.09);
+      --accent: #0a84ff;
+      --accent-soft: rgba(10, 132, 255, 0.16);
+      --bar: #48484d;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 8px 24px rgba(0, 0, 0, 0.30);
+      --shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.28), 0 12px 32px rgba(0, 0, 0, 0.40);
+    }
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+
+  .page { max-width: 880px; margin: 0 auto; padding: 40px 24px 64px; }
+
+  /* Header */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 32px;
+  }
+  .brand h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+  .brand .sub { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+  .refresh {
+    appearance: none; border: none; cursor: pointer;
+    background: var(--card); color: var(--accent);
+    font: inherit; font-size: 14px; font-weight: 500;
+    padding: 8px 18px; border-radius: 999px;
+    box-shadow: var(--shadow); border: 1px solid var(--border);
+    transition: transform 0.12s ease, box-shadow 0.2s ease;
+  }
+  .refresh:hover { box-shadow: var(--shadow-hover); }
+  .refresh:active { transform: scale(0.98); }
+
+  /* Bands */
+  .band { margin-bottom: 36px; }
+  .band-title {
+    font-size: 15px; font-weight: 600; color: var(--text);
+    margin: 0 4px 12px; display: flex; align-items: baseline; gap: 8px;
+  }
+  .band-title .count { font-size: 12px; font-weight: 400; color: var(--text-3); }
+  .grid { display: grid; gap: 14px; }
+  .grid.wide { grid-template-columns: repeat(2, 1fr); }
+  .grid.compact { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 720px) {
+    .grid.wide, .grid.compact { grid-template-columns: 1fr; }
+  }
+
+  /* Card */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 18px 20px;
+    cursor: pointer;
+    transition: transform 0.18s ease, box-shadow 0.22s ease, opacity 0.3s ease;
+  }
+  .card:hover { transform: translateY(-2px); box-shadow: var(--shadow-hover); }
+  .card.flash { animation: flash 0.55s ease; }
+  @keyframes flash { 30% { opacity: 0.55; } }
+
+  .card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .name { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+  .when { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+  .memo {
+    font-size: 13px; color: var(--text-2); font-style: italic;
+    margin-top: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .memo.empty { font-style: normal; color: var(--text-3); }
+
+  .meta {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 12px; font-size: 12px; color: var(--text-2);
+    flex-wrap: wrap;
+  }
+  .branch {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    background: var(--accent-soft); color: var(--accent);
+    padding: 2px 8px; border-radius: 6px; font-size: 11.5px;
+  }
+  .commits7 { color: var(--text-2); }
+  .commits7 b { color: var(--text); font-weight: 600; }
+
+  /* Sparkline */
+  .spark {
+    display: flex; align-items: flex-end; gap: 2px;
+    height: 28px; margin-top: 14px;
+  }
+  .spark i {
+    flex: 1; min-width: 2px; border-radius: 2px 2px 1px 1px;
+    background: var(--bar); display: block;
+  }
+  .spark i.hot { background: var(--accent); opacity: 0.85; }
+
+  /* Pills */
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .pill {
+    font-size: 11.5px; font-weight: 500; line-height: 1;
+    padding: 5px 10px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .pill.warn { background: var(--accent-soft); color: var(--accent); }
+  .pill.warn::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); flex: none;
+  }
+  .pill.note { background: var(--accent-soft); color: var(--accent); }
+  .pill.tag { background: transparent; color: var(--text-2); border: 1px solid var(--border); }
+  .ai-hint { font-size: 12px; color: var(--text-3); margin-top: 10px; }
+
+  /* Details (expandable) */
+  .details {
+    display: grid; grid-template-rows: 0fr;
+    transition: grid-template-rows 0.28s ease;
+  }
+  .card.open .details { grid-template-rows: 1fr; }
+  .details-inner { overflow: hidden; }
+  .details-body {
+    margin-top: 14px; padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .dt-label {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-3); margin-bottom: 8px;
+  }
+  .commit-row {
+    display: flex; justify-content: space-between; gap: 12px;
+    font-size: 13px; padding: 4px 0;
+  }
+  .commit-row .msg { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .commit-row .t { color: var(--text-3); font-size: 12px; white-space: nowrap; }
+  .dirty { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .dirty code {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 11.5px; color: var(--accent);
+    background: var(--accent-soft); padding: 3px 8px; border-radius: 6px;
+  }
+  .dt-section + .dt-section { margin-top: 14px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div class="brand">
+      <h1>devboard</h1>
+      <p class="sub">8 个项目 · 最后扫描 <span class="mono" id="scanTime">14:32</span></p>
+    </div>
+    <button class="refresh" id="refreshBtn" type="button">刷新</button>
+  </header>
+
+  <!-- 热: 3天内 -->
+  <section class="band">
+    <h2 class="band-title">热 <span class="count">3 天内 · 2 个项目</span></h2>
+    <div class="grid wide">
+
+      <article class="card open" data-spark="0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,1,2,1,2,3,2,3">
+        <div class="card-top">
+          <span class="name">wyy2qqmusic</span>
+          <span class="when mono">2小时前</span>
+        </div>
+        <p class="memo">迁移脚本联调中，QQ 登录 cookie 老失效</p>
+        <div class="meta">
+          <span class="branch">main</span>
+          <span class="commits7">近7天 <b class="mono">14</b> 提交</span>
+        </div>
+        <div class="spark"></div>
+        <div class="pills">
+          <span class="pill warn">未推送 2 提交</span>
+          <span class="pill warn">3 文件未提交</span>
+        </div>
+        <p class="ai-hint">AI 会话 · 40分钟前</p>
+        <div class="details"><div class="details-inner"><div class="details-body">
+          <div class="dt-section">
+            <div class="dt-label">最近提交</div>
+            <div class="commit-row"><span class="msg">fix: 修复歌单解析空指针</span><span class="t mono">2小时前</span></div>
+            <div class="commit-row"><span class="msg">feat: 支持 QQ 歌单批量导入</span><span class="t mono">昨天 22:14</span></div>
+            <div class="commit-row"><span class="msg">refactor: 拆分登录模块</span><span class="t mono">2天前</span></div>
+            <div class="commit-row"><span class="msg">wip: 迁移脚本联调</span><span class="t mono">3天前</span></div>
+          </div>
+          <div class="dt-section">
+            <div class="dt-label">未提交文件</div>
+            <div class="dirty">
+              <code>_t7_migrate.py</code><code>_t3_login.py</code><code>README.md</code>
+            </div>
+          </div>
+        </div></div></div>
+      </article>
+
+      <article class="card" data-spark="0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,1,2,1,0">
+        <div class="card-top">
+          <span class="name">devboard</span>
+          <span class="when mono">1天前</span>
+        </div>
+        <p class="memo">概况板本体，刚定完设计方向</p>
+        <div class="meta">
+          <span class="branch">main</span>
+          <span class="commits7">近7天 <b class="mono">6</b> 提交</span>
+        </div>
+        <div class="spark"></div>
+        <div class="pills">
+          <span class="pill note">2 个开放 issue</span>
+        </div>
+        <div class="details"><div class="details-inner"><div class="details-body">
+          <div class="dt-section">
+            <div class="dt-label">最近提交</div>
+            <div class="commit-row"><span class="msg">docs: 确认设计方向与分带规则</span><span class="t mono">1天前</span></div>
+            <div class="commit-row"><span class="msg">feat: 项目扫描脚本初版</span><span class="t mono">3天前</span></div>
+          </div>
+        </div></div></div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- 活跃: 3-7天 -->
+  <section class="band">
+    <h2 class="band-title">活跃 <span class="count">3-7 天 · 1 个项目</span></h2>
+    <div class="grid wide">
+
+      <article class="card" data-spark="0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,0,0">
+        <div class="card-top">
+          <span class="name">chat-analysis</span>
+          <span class="when mono">5天前</span>
+        </div>
+        <p class="memo">报告模板第二版待确认</p>
+        <div class="meta">
+          <span class="branch">feat/pdf-v2</span>
+          <span class="commits7">近7天 <b class="mono">4</b> 提交</span>
+        </div>
+        <div class="spark"></div>
+        <div class="pills">
+          <span class="pill warn">1 文件未提交</span>
+          <span class="pill note">PR #7 开放</span>
+        </div>
+        <p class="ai-hint">AI 会话 · 3天前</p>
+        <div class="details"><div class="details-inner"><div class="details-body">
+          <div class="dt-section">
+            <div class="dt-label">最近提交</div>
+            <div class="commit-row"><span class="msg">style: 调整报告卡片间距</span><span class="t mono">5天前</span></div>
+            <div class="commit-row"><span class="msg">feat: PDF 导出第二版模板</span><span class="t mono">6天前</span></div>
+          </div>
+        </div></div></div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- 冷却: 7-30天 -->
+  <section class="band">
+    <h2 class="band-title">冷却 <span class="count">7-30 天 · 2 个项目</span></h2>
+    <div class="grid compact">
+
+      <article class="card" data-spark="0,1,1,0,1,0,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0">
+        <div class="card-top">
+          <span class="name">corpgraph-tool</span>
+          <span class="when mono">12天前</span>
+        </div>
+        <p class="memo empty">暂无备忘</p>
+        <div class="meta">
+          <span class="commits7">近7天 <b class="mono">0</b> 提交</span>
+        </div>
+        <div class="spark"></div>
+        <div class="details"><div class="details-inner"><div class="details-body">
+          <div class="dt-section">
+            <div class="dt-label">最近提交</div>
+            <div class="commit-row"><span class="msg">feat: 批量关系查询接口</span><span class="t mono">12天前</span></div>
+            <div class="commit-row"><span class="msg">fix: xlsx 空行解析</span><span class="t mono">14天前</span></div>
+          </div>
+        </div></div></div>
+      </article>
+
+      <article class="card" data-spark="1,0,0,1,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0">
+        <div class="card-top">
+          <span class="name">kimi-skill-lab</span>
+          <span class="when mono">18天前</span>
+        </div>
+        <p class="memo">实验性 skill 集合</p>
+        <div class="meta">
+          <span class="commits7">近7天 <b class="mono">0</b> 提交</span>
+        </div>
+        <div class="spark"></div>
+        <div class="pills">
+          <span class="pill warn">5 文件未提交超3天</span>
+        </div>
+        <div class="details"><div class="details-inner"><div class="details-body">
+          <div class="dt-section">
+            <div class="dt-label">最近提交</div>
+            <div class="commit-row"><span class="msg">chore: 新增两个实验 skill</span><span class="t mono">18天前</span></div>
+            <div class="commit-row"><span class="msg">docs: 记录实验结论</span><span class="t mono">20天前</span></div>
+          </div>
+        </div></div></div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- 搁浅: 30天+ -->
+  <section class="band">
+    <h2 class="band-title">搁浅 <span class="count">30 天以上 · 2 个项目</span></h2>
+    <div class="grid compact">
+
+      <article class="card" data-spark="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0">
+        <div class="card-top">
+          <span class="name">httpie-cli</span>
+          <span class="when mono">3个月前</span>
+        </div>
+        <p class="memo">fork 上游，仅学习源码</p>
+        <div class="meta">
+          <span class="commits7">近7天 <b class="mono">0</b> 提交</span>
+        </div>
+        <div class="spark"></div>
+        <div class="pills">
+          <span class="pill tag">上游仓库</span>
+        </div>
+        <div class="details"><div class="details-inner"><div class="details-body">
+          <div class="dt-section">
+            <div class="dt-label">最近提交</div>
+            <div class="commit-row"><span class="msg">merge: 同步上游 main</span><span class="t mono">3个月前</span></div>
+            <div class="commit-row"><span class="msg">docs: 阅读笔记</span><span class="t mono">3个月前</span></div>
+          </div>
+        </div></div></div>
+      </article>
+
+      <article class="card" data-spark="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0">
+        <div class="card-top">
+          <span class="name">old-crawler</span>
+          <span class="when mono">74天前</span>
+        </div>
+        <p class="memo empty">暂无备忘</p>
+        <div class="meta">
+          <span class="commits7">近7天 <b class="mono">0</b> 提交</span>
+        </div>
+        <div class="spark"></div>
+        <div class="pills">
+          <span class="pill warn">8 文件未提交超3天</span>
+        </div>
+        <div class="details"><div class="details-inner"><div class="details-body">
+          <div class="dt-section">
+            <div class="dt-label">最近提交</div>
+            <div class="commit-row"><span class="msg">fix: 选择器失效兜底</span><span class="t mono">74天前</span></div>
+            <div class="commit-row"><span class="msg">feat: 增量抓取模式</span><span class="t mono">80天前</span></div>
+          </div>
+        </div></div></div>
+      </article>
+
+    </div>
+  </section>
+
+</div>
+
+<script>
+  // 生成 30 天 sparkline
+  document.querySelectorAll('.card[data-spark]').forEach(function (card) {
+    var data = card.dataset.spark.split(',').map(Number);
+    var max = Math.max.apply(null, data.concat([1]));
+    var spark = card.querySelector('.spark');
+    data.forEach(function (v) {
+      var bar = document.createElement('i');
+      var h = v === 0 ? 2 : Math.round(6 + (v / max) * 22);
+      bar.style.height = h + 'px';
+      if (v > 0) bar.className = 'hot';
+      spark.appendChild(bar);
+    });
+  });
+
+  // 点击卡片展开 / 收起
+  document.querySelectorAll('.card').forEach(function (card) {
+    card.addEventListener('click', function () {
+      card.classList.toggle('open');
+    });
+  });
+
+  // 刷新按钮: 更新扫描时间 + 卡片闪烁反馈
+  document.getElementById('refreshBtn').addEventListener('click', function () {
+    var now = new Date();
+    var hh = String(now.getHours()).padStart(2, '0');
+    var mm = String(now.getMinutes()).padStart(2, '0');
+    document.getElementById('scanTime').textContent = hh + ':' + mm;
+    document.querySelectorAll('.card').forEach(function (card, i) {
+      setTimeout(function () {
+        card.classList.remove('flash');
+        void card.offsetWidth;
+        card.classList.add('flash');
+      }, i * 40);
+    });
+  });
+</script>
+</body>
+</html>

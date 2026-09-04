@@ -1,0 +1,15 @@
+{
+  "name": "devboard",
+  "version": "0.1.0",
+  "description": "本地桌面端项目概况板",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "test:scan": "node scripts/test-scan.js",
+    "shot": "electron scripts/screenshot.js"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^39.8.10"
+  }
+}

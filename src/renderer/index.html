@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<title>devboard</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- 自定义标题栏 -->
+  <div class="titlebar">
+    <span class="tb-name mono">devboard</span>
+    <div class="win-controls">
+      <button class="wc min" id="winMin" title="最小化" tabindex="-1"><i></i></button>
+      <button class="wc max" id="winMax" title="最大化" tabindex="-1"><i></i></button>
+      <button class="wc close" id="winClose" title="关闭" tabindex="-1"><i></i></button>
+    </div>
+  </div>
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <span class="logo mono">devboard</span>
+    <nav class="nav" id="nav">
+      <button class="active" data-band="all">全部</button>
+      <button data-band="hot">热</button>
+      <button data-band="active">活跃</button>
+      <button data-band="cooling">冷却</button>
+      <button data-band="stale">搁浅</button>
+    </nav>
+    <span class="scan mono">最后扫描 <span id="scanTime">--:--</span></span>
+    <button class="icon-btn" id="settingsBtn" title="设置"><span class="ic-set"><b></b><b></b></span></button>
+    <button class="icon-btn" title="需要关注"><span class="ic-bell"></span><span class="badge hidden" id="attnBadge">0</span></button>
+    <button class="icon-btn" id="refreshBtn" title="刷新"><span class="ic-ref"></span></button>
+  </header>
+
+  <!-- 统计行 -->
+  <section class="stats">
+    <div class="stat"><div class="stat-num mono" id="statTotal">0<span class="unit">个</span></div><div class="stat-label">项目</div></div>
+    <div class="stat"><div class="stat-num mono" id="statCommits">0<span class="unit">次</span></div><div class="stat-label">近7天提交</div></div>
+    <div class="stat"><div class="stat-num mono" id="statAttn">0<span class="unit">项</span></div><div class="stat-label">待关注</div></div>
+  </section>
+
+  <!-- 主网格 -->
+  <main class="grid" id="grid"></main>
+
+  <!-- 设置视图 -->
+  <section class="settings-view" id="settingsView">
+    <div class="settings-card">
+      <h2>设置</h2>
+      <div class="field">
+        <label>扫描根目录（一行一个）</label>
+        <textarea id="fRoots" spellcheck="false"></textarea>
+      </div>
+      <div class="field">
+        <label>黑名单目录（一行一个）</label>
+        <textarea id="fBlacklist" spellcheck="false"></textarea>
+      </div>
+      <div class="field">
+        <label>GitHub Token</label>
+        <input type="password" id="fToken" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>GitHub 用户名</label>
+        <input type="text" id="fUsername" spellcheck="false">
+      </div>
+      <div class="field">
+        <label>编辑器命令</label>
+        <input type="text" id="fEditor" spellcheck="false">
+      </div>
+      <div class="field">
+        <label>全局热键</label>
+        <input type="text" id="fHotkey" spellcheck="false">
+      </div>
+      <div class="field check">
+        <input type="checkbox" id="fAutoStart">
+        <label for="fAutoStart">开机自启</label>
+      </div>
+      <div class="settings-actions">
+        <button class="back" id="settingsBack">返回</button>
+        <button class="save" id="settingsSave">保存</button>
+        <span class="settings-msg" id="settingsMsg"></span>
+      </div>
+    </div>
+  </section>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>

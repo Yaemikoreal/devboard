@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>devboard · 变体C Bento 杂志感</title>
+<style>
+  :root{
+    --bg:#fafaf8;
+    --card:#fdfdf9;
+    --card-border:rgba(23,23,26,.09);
+    --ink:#1c1c1f;
+    --ink-2:#63636a;
+    --ink-3:#9a9aa0;
+    --accent:#f5860a;
+    --accent-ink:#a85604;
+    --accent-soft:rgba(245,134,10,.08);
+    --accent-softer:rgba(245,134,10,.14);
+    --neutral-soft:rgba(23,23,26,.06);
+    --tile-dark:#1d1d21;
+    --tile-dark-ink:#f2f1ec;
+    --tile-dark-ink2:#a7a7ad;
+    --shadow-1:0 1px 2px rgba(23,23,26,.05),0 10px 28px rgba(23,23,26,.06);
+    --shadow-2:0 2px 6px rgba(23,23,26,.07),0 18px 44px rgba(23,23,26,.11);
+    --r:20px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#17171a;
+      --card:#202024;
+      --card-border:rgba(242,241,236,.09);
+      --ink:#f2f1ec;
+      --ink-2:#a7a7ad;
+      --ink-3:#6f6f76;
+      --accent:#ff9f0a;
+      --accent-ink:#ff9f0a;
+      --accent-soft:rgba(255,159,10,.10);
+      --accent-softer:rgba(255,159,10,.18);
+      --neutral-soft:rgba(242,241,236,.08);
+      --tile-dark:#101013;
+      --shadow-1:0 1px 2px rgba(0,0,0,.28),0 10px 28px rgba(0,0,0,.30);
+      --shadow-2:0 2px 6px rgba(0,0,0,.34),0 18px 44px rgba(0,0,0,.42);
+    }
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:14px;line-height:1.55;
+    padding:40px 32px 64px;
+  }
+  .mono{font-family:ui-monospace,"SF Mono",Consolas,monospace}
+  .wrap{max-width:1120px;margin:0 auto}
+
+  /* Header */
+  header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:24px}
+  .brand h1{font-size:26px;font-weight:700;letter-spacing:-.02em}
+  .brand p{font-size:13px;color:var(--ink-2);margin-top:2px}
+  .brand p .mono{font-size:12px}
+  #refresh{
+    appearance:none;border:1px solid var(--card-border);
+    background:var(--accent-soft);color:var(--accent-ink);
+    font:600 13px/1 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    padding:10px 20px;border-radius:999px;cursor:pointer;
+    transition:transform .15s ease,background .2s ease;
+  }
+  #refresh:hover{background:var(--accent-softer)}
+  #refresh:active{transform:scale(.98)}
+
+  /* Bento grid */
+  .grid{
+    display:grid;gap:16px;
+    grid-template-columns:repeat(4,1fr);
+    grid-auto-rows:minmax(120px,auto);
+    grid-template-areas:
+      "wyy wyy dev dev"
+      "wyy wyy dev dev"
+      "wyy wyy chat chat"
+      "http old chat chat"
+      "http old corp corp"
+      "kimi kimi stat stat";
+  }
+  .card{
+    position:relative;
+    background:var(--card);
+    border:1px solid var(--card-border);
+    border-radius:var(--r);
+    box-shadow:var(--shadow-1);
+    padding:18px 20px;
+    display:flex;flex-direction:column;gap:10px;
+    cursor:pointer;overflow:hidden;
+    transition:transform .25s ease,box-shadow .25s ease;
+  }
+  .card:hover{transform:translateY(-2px);box-shadow:var(--shadow-2)}
+  .card:active{transform:scale(.98)}
+  .card .chev{
+    position:absolute;top:20px;right:20px;width:8px;height:8px;
+    border-right:1.5px solid var(--ink-3);border-bottom:1.5px solid var(--ink-3);
+    transform:rotate(45deg);transition:transform .25s ease;
+  }
+  .card.open .chev{transform:rotate(225deg)}
+
+  /* 背景视觉变化：大卡用强调色渐变底 */
+  #wyy{
+    grid-area:wyy;
+    background:linear-gradient(155deg,var(--accent-soft) 0%,transparent 55%),var(--card);
+  }
+  #dev{grid-area:dev}
+  #chat{grid-area:chat}
+  #corp{grid-area:corp}
+  #kimi{grid-area:kimi}
+  #http{grid-area:http}
+  #old{grid-area:old}
+
+  /* 背景视觉变化：深色统计格 */
+  .stat{
+    grid-area:stat;border-radius:var(--r);
+    background:var(--tile-dark);color:var(--tile-dark-ink);
+    box-shadow:var(--shadow-1);
+    padding:18px 22px;display:flex;align-items:center;justify-content:space-between;gap:16px;
+  }
+  .stat .num{font-size:32px;font-weight:700;letter-spacing:-.02em}
+  .stat .lab{font-size:12px;color:var(--tile-dark-ink2)}
+  .stat .sub{font-size:12px;color:var(--tile-dark-ink2);text-align:right}
+
+  /* 卡片内部 */
+  .card-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding-right:20px}
+  .card h2{font-size:16px;font-weight:650;letter-spacing:-.01em}
+  .band{
+    font-size:10.5px;font-weight:600;letter-spacing:.1em;
+    color:var(--ink-3);white-space:nowrap;text-transform:uppercase;
+  }
+  .memo{font-size:12.5px;font-style:italic;color:var(--ink-2)}
+  .memo.empty{font-style:normal;color:var(--ink-3)}
+  .meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--ink-2)}
+  .branch{
+    font-family:ui-monospace,"SF Mono",Consolas,monospace;font-size:11px;
+    background:var(--neutral-soft);border-radius:999px;padding:2px 9px;color:var(--ink-2);
+  }
+  .numrow{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-top:auto}
+  .numblock .num{font-size:28px;font-weight:700;letter-spacing:-.02em;line-height:1.05}
+  .numblock .cap{font-size:11px;color:var(--ink-3);margin-top:2px}
+  .spark{display:flex;align-items:flex-end;gap:2px;height:30px;flex:0 0 108px}
+  .spark i{flex:1;background:var(--accent);opacity:.32;border-radius:1.5px 1.5px 0 0;min-height:1px}
+  .spark i.hot{opacity:1}
+  .pills{display:flex;flex-wrap:wrap;gap:6px}
+  .pill{
+    display:inline-flex;align-items:center;gap:6px;
+    font-size:11px;font-weight:600;border-radius:999px;padding:3px 10px;
+  }
+  .pill.warn{background:var(--accent-soft);color:var(--accent-ink)}
+  .pill.warn::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent)}
+  .pill.neutral{background:var(--neutral-soft);color:var(--ink-2)}
+  .ai{font-size:11.5px;color:var(--ink-2)}
+  .ai::before{
+    content:"";display:inline-block;width:5px;height:5px;border-radius:50%;
+    background:var(--accent);margin-right:6px;vertical-align:1px;
+  }
+
+  /* 展开详情 */
+  .details{display:grid;grid-template-rows:0fr;transition:grid-template-rows .35s ease}
+  .details>div{overflow:hidden;min-height:0}
+  .card.open .details{grid-template-rows:1fr}
+  .details h3{
+    font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--ink-3);
+    text-transform:uppercase;margin:10px 0 6px;
+  }
+  .commit{display:flex;justify-content:space-between;gap:14px;font-size:12.5px;padding:3px 0}
+  .commit .msg{font-weight:500}
+  .commit .t{font-family:ui-monospace,"SF Mono",Consolas,monospace;font-size:11px;color:var(--ink-3);white-space:nowrap}
+  .dirty{display:flex;flex-wrap:wrap;gap:6px}
+  .dirty code{
+    font-family:ui-monospace,"SF Mono",Consolas,monospace;font-size:11px;
+    background:var(--accent-soft);color:var(--accent-ink);
+    border-radius:8px;padding:2px 8px;
+  }
+
+  /* 小卡压缩 */
+  .compact{padding:14px 18px;gap:6px}
+  .compact .numblock .num{font-size:24px}
+  .compact .spark{flex-basis:88px;height:22px}
+
+  /* 刷新闪烁反馈 */
+  .grid.flash .card,.grid.flash .stat{animation:blink .45s ease}
+  @keyframes blink{50%{opacity:.55}}
+
+  @media (max-width:768px){
+    body{padding:24px 16px 48px}
+    header{align-items:flex-start}
+    .grid{grid-template-columns:1fr;grid-template-areas:none;grid-auto-rows:auto}
+    .grid>*{grid-area:auto !important}
+    .spark{flex-basis:96px}
+  }
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation:none !important;transition:none !important}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>devboard</h1>
+      <p>8 个项目 · 最后扫描 <span class="mono" id="scan-time">14:32</span></p>
+    </div>
+    <button id="refresh" type="button">刷新</button>
+  </header>
+
+  <main class="grid" id="grid">
+
+    <article class="card open" id="wyy">
+      <span class="chev"></span>
+      <div class="card-top"><h2>wyy2qqmusic</h2><span class="band">热 · 3天内</span></div>
+      <p class="memo">迁移脚本联调中，QQ 登录 cookie 老失效</p>
+      <div class="meta"><span class="branch">main</span><span class="mono">2小时前</span></div>
+      <div class="pills">
+        <span class="pill warn">未推送 2 提交</span>
+        <span class="pill warn">3 文件未提交</span>
+      </div>
+      <p class="ai">AI 会话 · 40分钟前</p>
+      <div class="numrow">
+        <div class="numblock"><div class="num mono">14</div><div class="cap">近7天提交</div></div>
+        <div class="spark" data-spark="0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,2,3,1,4,2"></div>
+      </div>
+      <div class="details"><div>
+        <h3>最近提交</h3>
+        <div class="commit"><span class="msg">fix: 修复歌单解析空指针</span><span class="t">2小时前</span></div>
+        <div class="commit"><span class="msg">feat: 支持 QQ 歌单批量导入</span><span class="t">5小时前</span></div>
+        <div class="commit"><span class="msg">refactor: 拆分登录模块</span><span class="t">昨天</span></div>
+        <div class="commit"><span class="msg">wip: 迁移脚本联调</span><span class="t">昨天</span></div>
+        <h3>未提交文件</h3>
+        <div class="dirty"><code>_t7_migrate.py</code><code>_t3_login.py</code><code>README.md</code></div>
+      </div></div>
+    </article>
+
+    <article class="card" id="dev">
+      <span class="chev"></span>
+      <div class="card-top"><h2>devboard</h2><span class="band">热 · 3天内</span></div>
+      <p class="memo">概况板本体，刚定完设计方向</p>
+      <div class="meta"><span class="branch">main</span><span class="mono">1天前</span></div>
+      <div class="pills"><span class="pill neutral">2 个开放 issue</span></div>
+      <div class="numrow">
+        <div class="numblock"><div class="num mono">6</div><div class="cap">近7天提交</div></div>
+        <div class="spark" data-spark="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,1,2,1"></div>
+      </div>
+      <div class="details"><div>
+        <h3>最近提交</h3>
+        <div class="commit"><span class="msg">docs: 确认设计方向与变体</span><span class="t">1天前</span></div>
+        <div class="commit"><span class="msg">feat: 扫描器输出项目分带</span><span class="t">2天前</span></div>
+      </div></div>
+    </article>
+
+    <article class="card" id="chat">
+      <span class="chev"></span>
+      <div class="card-top"><h2>chat-analysis</h2><span class="band">活跃 · 3-7天</span></div>
+      <p class="memo">报告模板第二版待确认</p>
+      <div class="meta"><span class="branch">feat/pdf-v2</span><span class="mono">5天前</span></div>
+      <div class="pills">
+        <span class="pill warn">1 文件未提交</span>
+        <span class="pill neutral">PR #7 开放</span>
+      </div>
+      <p class="ai">AI 会话 · 3天前</p>
+      <div class="numrow">
+        <div class="numblock"><div class="num mono">4</div><div class="cap">近7天提交</div></div>
+        <div class="spark" data-spark="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1"></div>
+      </div>
+      <div class="details"><div>
+        <h3>最近提交</h3>
+        <div class="commit"><span class="msg">feat: 报告模板 v2 骨架</span><span class="t">5天前</span></div>
+        <div class="commit"><span class="msg">fix: 长图分页溢出</span><span class="t">6天前</span></div>
+      </div></div>
+    </article>
+
+    <article class="card compact" id="http">
+      <span class="chev"></span>
+      <div class="card-top"><h2>httpie-cli</h2><span class="band">搁浅 · 30天+</span></div>
+      <p class="memo">fork 上游，仅学习源码</p>
+      <div class="meta"><span class="mono">3个月前</span></div>
+      <div class="pills"><span class="pill neutral">上游仓库</span></div>
+      <div class="numrow">
+        <div class="numblock"><div class="num mono">0</div><div class="cap">近7天提交</div></div>
+        <div class="spark" data-spark="0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"></div>
+      </div>
+      <div class="details"><div>
+        <h3>最近提交</h3>
+        <div class="commit"><span class="msg">study: 阅读源码笔记</span><span class="t">3个月前</span></div>
+        <div class="commit"><span class="msg">chore: 同步上游</span><span class="t">3个月前</span></div>
+      </div></div>
+    </article>
+
+    <article class="card compact" id="old">
+      <span class="chev"></span>
+      <div class="card-top"><h2>old-crawler</h2><span class="band">搁浅 · 30天+</span></div>
+      <p class="memo empty">暂无备忘</p>
+      <div class="meta"><span class="mono">74天前</span></div>
+      <div class="pills"><span class="pill warn">8 文件未提交超3天</span></div>
+      <div class="numrow">
+        <div class="numblock"><div class="num mono">0</div><div class="cap">近7天提交</div></div>
+        <div class="spark" data-spark="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"></div>
+      </div>
+      <div class="details"><div>
+        <h3>最近提交</h3>
+        <div class="commit"><span class="msg">fix: 选择器失效</span><span class="t">74天前</span></div>
+        <div class="commit"><span class="msg">chore: 停用定时任务</span><span class="t">75天前</span></div>
+      </div></div>
+    </article>
+
+    <article class="card compact" id="corp">
+      <span class="chev"></span>
+      <div class="card-top"><h2>corpgraph-tool</h2><span class="band">冷却 · 7-30天</span></div>
+      <p class="memo empty">暂无备忘</p>
+      <div class="meta"><span class="mono">12天前</span></div>
+      <div class="numrow">
+        <div class="numblock"><div class="num mono">0</div><div class="cap">近7天提交</div></div>
+        <div class="spark" data-spark="0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"></div>
+      </div>
+      <div class="details"><div>
+        <h3>最近提交</h3>
+        <div class="commit"><span class="msg">feat: 批量关系查询</span><span class="t">12天前</span></div>
+        <div class="commit"><span class="msg">chore: 更新依赖</span><span class="t">12天前</span></div>
+      </div></div>
+    </article>
+
+    <article class="card compact" id="kimi">
+      <span class="chev"></span>
+      <div class="card-top"><h2>kimi-skill-lab</h2><span class="band">冷却 · 7-30天</span></div>
+      <p class="memo">实验性 skill 集合</p>
+      <div class="meta"><span class="mono">18天前</span></div>
+      <div class="pills"><span class="pill warn">5 文件未提交超3天</span></div>
+      <div class="numrow">
+        <div class="numblock"><div class="num mono">0</div><div class="cap">近7天提交</div></div>
+        <div class="spark" data-spark="0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"></div>
+      </div>
+      <div class="details"><div>
+        <h3>最近提交</h3>
+        <div class="commit"><span class="msg">wip: skill 实验草稿</span><span class="t">18天前</span></div>
+        <div class="commit"><span class="msg">docs: 记录实验结论</span><span class="t">19天前</span></div>
+      </div></div>
+    </article>
+
+    <div class="stat">
+      <div>
+        <div class="num mono">24</div>
+        <div class="lab">近7天全站提交</div>
+      </div>
+      <div class="sub">3 个项目活跃中<br>2 个项目有未推送提交</div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+  // sparkline: 30 天柱状迷你图
+  document.querySelectorAll('.spark').forEach(function(el){
+    var data = el.dataset.spark.split(',').map(Number);
+    var max = Math.max.apply(null, data.concat([1]));
+    data.forEach(function(v, i){
+      var bar = document.createElement('i');
+      bar.style.height = Math.max(1, Math.round(v / max * 100)) + '%';
+      if (i === data.length - 1 && v > 0) bar.className = 'hot';
+      el.appendChild(bar);
+    });
+  });
+
+  // 卡片展开 / 收起
+  document.querySelectorAll('.card').forEach(function(c){
+    c.addEventListener('click', function(){ c.classList.toggle('open'); });
+  });
+
+  // 刷新按钮: 更新时间 + 卡片闪烁反馈
+  document.getElementById('refresh').addEventListener('click', function(){
+    var d = new Date();
+    var hh = String(d.getHours()).padStart(2, '0');
+    var mm = String(d.getMinutes()).padStart(2, '0');
+    document.getElementById('scan-time').textContent = hh + ':' + mm;
+    var grid = document.getElementById('grid');
+    grid.classList.remove('flash');
+    void grid.offsetWidth;
+    grid.classList.add('flash');
+  });
+</script>
+</body>
+</html>

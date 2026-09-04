@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>devboard · 变体E Crextio 桌面应用</title>
+<style>
+  :root{
+    --bg:#f5f2e8;
+    --card:#fdfcf8;
+    --well:#ece9dd;
+    --ink:#181818;
+    --ink-2:#5f584e;
+    --ink-3:#9a917f;
+    --line:rgba(24,24,24,.09);
+    --accent:#f5d90a;
+    --tile:#181818;
+    --tile-ink:#fdfcf8;
+    --tile-ink2:#a89f8e;
+    --close-red:#e81123;
+    --shadow-1:0 1px 2px rgba(24,24,24,.04),0 14px 34px rgba(24,24,24,.05);
+    --shadow-2:0 2px 6px rgba(24,24,24,.06),0 22px 48px rgba(24,24,24,.09);
+    --r-card:24px;
+    --r-chip:10px;
+    --r-pill:999px;
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"PingFang SC","Microsoft YaHei",-apple-system,sans-serif;
+    font-size:14px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  @media (min-width:1280px) and (min-height:800px){
+    html,body{overflow:hidden}
+  }
+  .mono{font-family:ui-monospace,"SF Mono",Consolas,"Courier New",monospace}
+  .app{max-width:1440px;height:100vh;margin:0 auto;display:flex;flex-direction:column}
+
+  /* ---------- 自定义标题栏 ---------- */
+  .titlebar{
+    height:40px;flex:none;display:flex;align-items:center;
+    border-bottom:1px solid var(--line);
+  }
+  .tb-name{
+    flex:1;padding-left:16px;font-size:11px;letter-spacing:.06em;color:var(--ink-2);
+  }
+  .win-controls{display:flex;height:100%}
+  .wc{
+    width:46px;height:100%;border:0;background:transparent;cursor:default;
+    display:flex;align-items:center;justify-content:center;position:relative;
+    transition:background-color .15s ease;
+  }
+  .wc:hover{background:rgba(24,24,24,.06)}
+  .wc.close:hover{background:var(--close-red)}
+  .wc i{position:relative;display:block}
+  .wc.min i{width:10px;height:1px;background:var(--ink)}
+  .wc.max i{width:9px;height:9px;border:1px solid var(--ink)}
+  .wc.close i{width:12px;height:12px}
+  .wc.close i::before,.wc.close i::after{
+    content:"";position:absolute;left:0;top:5.5px;width:12px;height:1px;background:var(--ink);
+  }
+  .wc.close i::before{transform:rotate(45deg)}
+  .wc.close i::after{transform:rotate(-45deg)}
+  .wc.close:hover i::before,.wc.close:hover i::after{background:var(--tile-ink)}
+
+  /* ---------- 顶栏 ---------- */
+  .topbar{
+    flex:none;display:flex;align-items:center;gap:20px;
+    padding:10px 24px 0;
+  }
+  .logo{
+    border:1.5px solid var(--ink);border-radius:var(--r-pill);
+    padding:7px 18px;font-size:13px;font-weight:700;letter-spacing:.05em;
+  }
+  .nav{
+    margin:0 auto;display:flex;gap:2px;background:var(--well);
+    border-radius:var(--r-pill);padding:4px;
+  }
+  .nav button{
+    border:0;background:transparent;border-radius:var(--r-pill);
+    padding:7px 18px;font-size:13px;color:var(--ink-2);cursor:pointer;
+    font-family:inherit;
+    transition:background-color .18s ease,color .18s ease,transform .18s ease;
+  }
+  .nav button:hover{color:var(--ink)}
+  .nav button.active{background:var(--tile);color:var(--tile-ink);font-weight:600}
+  .scan{font-size:11px;color:var(--ink-3);letter-spacing:.03em}
+  .icon-btn{
+    width:38px;height:38px;flex:none;border:0;border-radius:50%;cursor:pointer;
+    background:var(--tile);position:relative;
+    display:flex;align-items:center;justify-content:center;
+    transition:transform .15s ease,opacity .15s ease;
+  }
+  .icon-btn:hover{opacity:.85}
+  .icon-btn:active{transform:scale(.98)}
+  /* 设置：双滑杆 */
+  .ic-set{width:14px;height:12px;position:relative}
+  .ic-set::before,.ic-set::after{
+    content:"";position:absolute;left:0;width:14px;height:1.5px;background:var(--tile-ink);
+  }
+  .ic-set::before{top:2px}.ic-set::after{bottom:2px}
+  .ic-set b{
+    position:absolute;width:4px;height:4px;border-radius:50%;background:var(--tile-ink);
+  }
+  .ic-set b:nth-child(1){left:3px;top:0.5px}
+  .ic-set b:nth-child(2){right:2px;bottom:0.5px}
+  /* 通知：铃 */
+  .ic-bell{
+    width:11px;height:10px;background:var(--tile-ink);
+    border-radius:6px 6px 2px 2px;position:relative;margin-top:-2px;
+  }
+  .ic-bell::after{
+    content:"";position:absolute;left:3.5px;bottom:-4px;
+    width:4px;height:4px;border-radius:50%;background:var(--tile-ink);
+  }
+  .badge{
+    position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;
+    border-radius:var(--r-pill);background:var(--accent);color:var(--ink);
+    font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;
+    padding:0 4px;font-family:ui-monospace,"SF Mono",Consolas,monospace;
+  }
+  /* 刷新：断口圆弧加箭头 */
+  .ic-ref{
+    width:12px;height:12px;border:1.5px solid var(--tile-ink);
+    border-top-color:transparent;border-radius:50%;position:relative;
+  }
+  .ic-ref::after{
+    content:"";position:absolute;top:-3px;right:-2px;
+    border:3px solid transparent;border-left-color:var(--tile-ink);
+    transform:rotate(-30deg);
+  }
+
+  /* ---------- 统计行 ---------- */
+  .stats{
+    flex:none;display:flex;gap:64px;padding:12px 32px 12px;
+  }
+  .stat-num{font-size:50px;font-weight:700;letter-spacing:-.02em;line-height:1}
+  .stat-num .unit{font-size:15px;font-weight:500;color:var(--ink-3);margin-left:4px}
+  .stat-label{font-size:12px;color:var(--ink-2);margin-top:6px}
+
+  /* ---------- 主网格 ---------- */
+  .grid{
+    flex:1;min-height:0;
+    display:grid;grid-template-columns:repeat(12,1fr);gap:12px;
+    padding:4px 24px 12px;
+    transition:opacity .3s ease;
+  }
+  .grid.flash{opacity:.55}
+  .col{display:flex;flex-direction:column;gap:12px;min-height:0}
+  .col-mid .card{flex:1}
+  .big{grid-column:span 5}
+  .col-mid{grid-column:span 4}
+  .col-right{grid-column:span 3}
+
+  .card{
+    background:var(--card);border-radius:var(--r-card);
+    box-shadow:var(--shadow-1);padding:18px 20px;position:relative;
+    transition:transform .2s ease,box-shadow .2s ease,opacity .22s ease;
+  }
+  .card:hover{transform:translateY(-2px);box-shadow:var(--shadow-2)}
+  .card.gone{opacity:0;transform:scale(.985);pointer-events:none}
+  .card.clickable{cursor:pointer}
+  .card.compact{padding:10px 14px}
+
+  /* 分带 pill */
+  .bp{
+    position:absolute;top:14px;right:16px;
+    border-radius:var(--r-pill);padding:3px 11px;
+    font-size:10px;font-weight:600;letter-spacing:.04em;
+  }
+  .bp-hot{background:var(--accent);color:var(--ink)}
+  .bp-active{background:var(--tile);color:var(--tile-ink)}
+  .bp-cool{border:1px solid var(--line);color:var(--ink-2);background:var(--bg)}
+  .bp-stall{background:#e8e5d9;color:var(--ink-2)}
+
+  .proj-name{font-size:21px;font-weight:700;letter-spacing:-.01em}
+  .compact .proj-name{font-size:14px}
+  .memo{
+    margin-top:8px;font-size:12.5px;color:var(--ink-2);
+  }
+  .compact .memo{margin-top:2px;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .memo.empty{color:var(--ink-3);font-style:normal}
+  .kv-row{
+    display:flex;flex-wrap:wrap;gap:4px 20px;margin-top:10px;
+    font-size:11.5px;color:var(--ink-2);
+  }
+  .kv-row b{
+    color:var(--ink);font-weight:600;
+    font-family:ui-monospace,"SF Mono",Consolas,monospace;
+  }
+  .compact .kv-row{margin-top:4px;gap:2px 14px;font-size:11px}
+
+  /* 30 天柱状活动图 */
+  .bars{
+    display:flex;align-items:flex-end;gap:3px;height:52px;margin-top:14px;
+  }
+  .bars.mini{height:32px;margin-top:10px}
+  .bars i{
+    flex:1;border-radius:3px;background:var(--tile);min-height:4px;
+    display:block;
+  }
+  .bars i.z{background:#e3dfd2}
+  .bars i.hi{background:var(--accent)}
+
+  /* 条纹进度轨道 */
+  .track-wrap{margin-top:12px;display:flex;align-items:center;gap:12px}
+  .track-label{font-size:10.5px;color:var(--ink-3);white-space:nowrap;letter-spacing:.04em}
+  .track{
+    flex:1;height:10px;border-radius:var(--r-pill);background:#efeadf;overflow:hidden;
+  }
+  .track i{
+    display:block;height:100%;border-radius:var(--r-pill);
+    background:repeating-linear-gradient(-55deg,var(--ink) 0 5px,var(--accent) 5px 10px);
+  }
+
+  /* 警示 pill 与描边 pill */
+  .warns{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .warn{
+    background:var(--accent);color:var(--ink);
+    border-radius:var(--r-pill);padding:4px 12px;
+    font-size:11.5px;font-weight:600;
+  }
+  .compact .warns{margin-top:4px}
+  .compact .warn{padding:3px 10px;font-size:10.5px}
+  .outline-pill{
+    display:inline-block;margin-top:6px;
+    border:1px solid var(--line);color:var(--ink-2);
+    border-radius:var(--r-pill);padding:3px 10px;font-size:10.5px;
+  }
+
+  /* 展开区 */
+  .detail{display:grid;grid-template-rows:0fr;transition:grid-template-rows .35s ease}
+  .card.open .detail{grid-template-rows:1fr}
+  .detail-in{overflow:hidden;min-height:0}
+  .detail-pad{padding-top:12px}
+  .sec-title{font-size:10px;color:var(--ink-3);letter-spacing:.1em;margin-bottom:6px}
+  .commit{
+    display:flex;align-items:baseline;gap:10px;
+    padding:6px 0;border-top:1px solid var(--line);font-size:12.5px;
+  }
+  .commit:first-of-type{border-top:0}
+  .commit .msg{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .commit .ago{font-size:10.5px;color:var(--ink-3);white-space:nowrap}
+  .dirty{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .dirty span{
+    background:var(--well);color:var(--ink);
+    border-radius:var(--r-chip);padding:3px 10px;font-size:11px;
+  }
+
+  /* 快捷打开按钮 */
+  .quick{display:flex;gap:8px;margin-top:12px}
+  .quick button{
+    border:0;background:var(--tile);color:var(--tile-ink);
+    border-radius:var(--r-pill);padding:6px 14px;font-size:11.5px;font-weight:600;
+    cursor:pointer;font-family:inherit;
+    transition:background-color .18s ease,color .18s ease,transform .15s ease;
+  }
+  .quick button:hover{background:var(--accent);color:var(--ink)}
+  .quick button:active{transform:scale(.98)}
+  .quick button.ok{background:var(--accent);color:var(--ink)}
+  .expand-hint{
+    margin-top:10px;font-size:10px;color:var(--ink-3);
+    letter-spacing:.05em;user-select:none;
+  }
+
+  /* 需要关注 黑卡 */
+  .attn{
+    background:var(--tile);color:var(--tile-ink);
+    border-radius:var(--r-card);box-shadow:var(--shadow-1);
+    padding:14px 16px;flex:none;
+    transition:transform .2s ease,box-shadow .2s ease;
+  }
+  .attn:hover{transform:translateY(-2px);box-shadow:var(--shadow-2)}
+  .attn-head{display:flex;align-items:baseline;justify-content:space-between}
+  .attn-title{font-size:13px;font-weight:600}
+  .attn-num{font-size:30px;font-weight:700;letter-spacing:-.02em;margin:4px 0 2px;line-height:1}
+  .attn-sub{font-size:10.5px;color:var(--tile-ink2);margin-bottom:6px}
+  .attn-item{
+    display:flex;align-items:center;gap:10px;
+    padding:6px 0;border-top:1px solid rgba(253,252,248,.12);
+  }
+  .attn-item .ic{
+    width:18px;height:18px;flex:none;border-radius:50%;
+    border:1px solid rgba(253,252,248,.35);
+    display:flex;align-items:center;justify-content:center;
+  }
+  .attn-item .ic::after{content:"";width:5px;height:5px;border-radius:50%;background:var(--tile-ink)}
+  .attn-item .nm{font-weight:600;font-size:12px;white-space:nowrap}
+  .attn-item .ds{flex:1;font-size:10.5px;color:var(--tile-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .attn-item .mk{width:8px;height:8px;flex:none;border-radius:50%;background:var(--accent)}
+
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{transition:none !important;animation:none !important}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- 自定义标题栏 -->
+  <div class="titlebar">
+    <span class="tb-name mono">devboard</span>
+    <div class="win-controls">
+      <button class="wc min" title="最小化" tabindex="-1"><i></i></button>
+      <button class="wc max" title="最大化" tabindex="-1"><i></i></button>
+      <button class="wc close" title="关闭" tabindex="-1"><i></i></button>
+    </div>
+  </div>
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <span class="logo mono">devboard</span>
+    <nav class="nav" id="nav">
+      <button class="active" data-band="all">全部</button>
+      <button data-band="hot">热</button>
+      <button data-band="active">活跃</button>
+      <button data-band="cool">冷却</button>
+      <button data-band="stalled">搁浅</button>
+    </nav>
+    <span class="scan mono">最后扫描 <span id="scanTime">14:32</span></span>
+    <button class="icon-btn" title="设置"><span class="ic-set"><b></b><b></b></span></button>
+    <button class="icon-btn" title="通知"><span class="ic-bell"></span><span class="badge">4</span></button>
+    <button class="icon-btn" id="refreshBtn" title="刷新"><span class="ic-ref"></span></button>
+  </header>
+
+  <!-- 统计行 -->
+  <section class="stats">
+    <div class="stat"><div class="stat-num mono">8<span class="unit">个</span></div><div class="stat-label">项目</div></div>
+    <div class="stat"><div class="stat-num mono">24<span class="unit">次</span></div><div class="stat-label">近7天提交</div></div>
+    <div class="stat"><div class="stat-num mono">4<span class="unit">项</span></div><div class="stat-label">待关注</div></div>
+  </section>
+
+  <!-- 主网格 -->
+  <main class="grid" id="grid">
+
+    <!-- 左：wyy2qqmusic 大卡 -->
+    <article class="card big clickable open" data-band="hot">
+      <span class="bp bp-hot">热</span>
+      <h2 class="proj-name mono">wyy2qqmusic</h2>
+      <p class="memo">迁移脚本联调中，QQ 登录 cookie 老失效</p>
+      <div class="kv-row">
+        <span>最后提交 <b>2小时前</b></span>
+        <span>近7天 <b>14 提交</b></span>
+        <span>分支 <b>main</b></span>
+        <span>AI 会话 <b>40分钟前</b></span>
+      </div>
+      <div class="bars" data-bars="0,0,1,0,2,1,0,1,2,1,0,2,1,3,2,1,2,3,2,4,1,2,3,4,3,4,2,3,4,4"></div>
+      <div class="track-wrap">
+        <span class="track-label">近7天活跃度</span>
+        <div class="track"><i style="width:58%"></i></div>
+        <span class="track-label mono">14/24</span>
+      </div>
+      <div class="warns">
+        <span class="warn">未推送 2 提交</span>
+        <span class="warn">3 文件未提交</span>
+      </div>
+      <div class="detail"><div class="detail-in"><div class="detail-pad">
+        <div class="sec-title">最近提交</div>
+        <div class="commit"><span class="msg">fix: 修复歌单解析空指针</span><span class="ago mono">2小时前</span></div>
+        <div class="commit"><span class="msg">feat: 支持 QQ 歌单批量导入</span><span class="ago mono">5小时前</span></div>
+        <div class="commit"><span class="msg">refactor: 拆分登录模块</span><span class="ago mono">昨天</span></div>
+        <div class="commit"><span class="msg">wip: 迁移脚本联调</span><span class="ago mono">昨天</span></div>
+        <div class="sec-title" style="margin-top:10px">未提交文件</div>
+        <div class="dirty mono">
+          <span>_t7_migrate.py</span><span>_t3_login.py</span><span>README.md</span>
+        </div>
+        <div class="quick">
+          <button data-cmd="open folder">打开文件夹</button>
+          <button data-cmd="code .">VS Code</button>
+          <button data-cmd="open terminal">终端</button>
+        </div>
+      </div></div></div>
+      <div class="expand-hint mono">- 收起</div>
+    </article>
+
+    <!-- 中列 -->
+    <div class="col col-mid">
+      <article class="card clickable" data-band="active">
+        <span class="bp bp-active">活跃</span>
+        <h2 class="proj-name mono">devboard</h2>
+        <p class="memo">概况板本体，刚定完设计方向</p>
+        <div class="kv-row">
+          <span>最后提交 <b>1天前</b></span>
+          <span>近7天 <b>6 提交</b></span>
+          <span>开放 issue <b>2</b></span>
+        </div>
+        <div class="bars mini" data-bars="0,1,0,2,1,0,2,3,1,2,0,3,2,1,2,0,1,2,0,1,3,2,1,0,2,1,3,2,1,0"></div>
+        <div class="detail"><div class="detail-in"><div class="detail-pad">
+          <div class="sec-title">最近提交</div>
+          <div class="commit"><span class="msg">docs: 确定设计方向与色彩规范</span><span class="ago mono">1天前</span></div>
+          <div class="commit"><span class="msg">feat: 项目扫描器初版</span><span class="ago mono">2天前</span></div>
+          <div class="quick">
+            <button data-cmd="open folder">打开文件夹</button>
+            <button data-cmd="code .">VS Code</button>
+            <button data-cmd="open terminal">终端</button>
+          </div>
+        </div></div></div>
+        <div class="expand-hint mono">+ 展开</div>
+      </article>
+
+      <article class="card clickable" data-band="active">
+        <span class="bp bp-active">活跃</span>
+        <h2 class="proj-name mono">chat-analysis</h2>
+        <p class="memo">报告模板第二版待确认</p>
+        <div class="kv-row">
+          <span>分支 <b>feat/pdf-v2</b></span>
+          <span>最后提交 <b>5天前</b></span>
+          <span>近7天 <b>4 提交</b></span>
+          <span>PR <b>#7 开放</b></span>
+          <span>AI 会话 <b>3天前</b></span>
+        </div>
+        <div class="detail"><div class="detail-in"><div class="detail-pad">
+          <div class="sec-title">最近提交</div>
+          <div class="commit"><span class="msg">feat: PDF 模板 v2 布局</span><span class="ago mono">5天前</span></div>
+          <div class="commit"><span class="msg">fix: 长图分页溢出</span><span class="ago mono">6天前</span></div>
+          <div class="quick">
+            <button data-cmd="open folder">打开文件夹</button>
+            <button data-cmd="code .">VS Code</button>
+            <button data-cmd="open terminal">终端</button>
+          </div>
+        </div></div></div>
+        <div class="expand-hint mono">+ 展开</div>
+      </article>
+    </div>
+
+    <!-- 右列 -->
+    <div class="col col-right">
+      <aside class="attn">
+        <div class="attn-head">
+          <span class="attn-title">需要关注</span>
+          <span class="mono" style="font-size:10px;color:var(--tile-ink2)">4 个项目</span>
+        </div>
+        <div class="attn-num mono">4/8</div>
+        <div class="attn-sub">存在未推送提交或滞留改动</div>
+        <div class="attn-item">
+          <span class="ic"></span><span class="nm mono">wyy2qqmusic</span>
+          <span class="ds">2 提交未推送</span><span class="mk"></span>
+        </div>
+        <div class="attn-item">
+          <span class="ic"></span><span class="nm mono">chat-analysis</span>
+          <span class="ds">PR #7 待处理</span><span class="mk"></span>
+        </div>
+        <div class="attn-item">
+          <span class="ic"></span><span class="nm mono">kimi-skill-lab</span>
+          <span class="ds">5 文件未提交超3天</span><span class="mk"></span>
+        </div>
+        <div class="attn-item">
+          <span class="ic"></span><span class="nm mono">old-crawler</span>
+          <span class="ds">8 文件未提交超3天</span><span class="mk"></span>
+        </div>
+      </aside>
+
+      <article class="card compact" data-band="cool">
+        <span class="bp bp-cool">冷却</span>
+        <h2 class="proj-name mono">corpgraph-tool</h2>
+        <p class="memo empty">暂无备忘</p>
+        <div class="kv-row">
+          <span>最后提交 <b>12天前</b></span>
+          <span>近7天 <b>0 提交</b></span>
+        </div>
+      </article>
+
+      <article class="card compact" data-band="cool">
+        <span class="bp bp-cool">冷却</span>
+        <h2 class="proj-name mono">kimi-skill-lab</h2>
+        <p class="memo">实验性 skill 集合</p>
+        <div class="kv-row"><span>最后提交 <b>18天前</b></span></div>
+        <div class="warns"><span class="warn">5 文件未提交超3天</span></div>
+      </article>
+
+      <article class="card compact" data-band="stalled">
+        <span class="bp bp-stall">搁浅</span>
+        <h2 class="proj-name mono">httpie-cli</h2>
+        <p class="memo">fork 上游，仅学习源码</p>
+        <div class="kv-row"><span>最后提交 <b>3个月前</b></span></div>
+        <span class="outline-pill">上游仓库</span>
+      </article>
+
+      <article class="card compact" data-band="stalled">
+        <span class="bp bp-stall">搁浅</span>
+        <h2 class="proj-name mono">old-crawler</h2>
+        <p class="memo empty">暂无备忘</p>
+        <div class="kv-row"><span>最后提交 <b>74天前</b></span></div>
+        <div class="warns"><span class="warn">8 文件未提交超3天</span></div>
+      </article>
+    </div>
+
+  </main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* 30 天柱状图：0 零值灰短柱，1-2 近黑，3-4 明黄 */
+  var heights = [10, 30, 48, 72, 100];
+  document.querySelectorAll(".bars").forEach(function(el){
+    var vals = (el.getAttribute("data-bars") || "").split(",");
+    vals.forEach(function(v){
+      var n = parseInt(v, 10) || 0;
+      var bar = document.createElement("i");
+      bar.style.height = heights[Math.min(n, 4)] + "%";
+      if(n === 0){ bar.className = "z"; }
+      else if(n >= 3){ bar.className = "hi"; }
+      el.appendChild(bar);
+    });
+  });
+
+  /* 卡片展开 / 收起 */
+  document.querySelectorAll(".card.clickable").forEach(function(card){
+    card.addEventListener("click", function(){
+      card.classList.toggle("open");
+      var hint = card.querySelector(".expand-hint");
+      if(hint){
+        hint.textContent = card.classList.contains("open") ? "- 收起" : "+ 展开";
+      }
+    });
+  });
+
+  /* 快捷打开按钮：阻止冒泡 + 轻微反馈 */
+  document.querySelectorAll(".quick button").forEach(function(btn){
+    btn.addEventListener("click", function(e){
+      e.stopPropagation();
+      if(btn.classList.contains("ok")){ return; }
+      var orig = btn.textContent;
+      btn.classList.add("ok");
+      btn.textContent = "已复制命令";
+      setTimeout(function(){
+        btn.classList.remove("ok");
+        btn.textContent = orig;
+      }, 900);
+    });
+  });
+
+  /* 分带筛选 */
+  var navBtns = document.querySelectorAll("#nav button");
+  var cards = document.querySelectorAll("#grid .card");
+  navBtns.forEach(function(btn){
+    btn.addEventListener("click", function(){
+      navBtns.forEach(function(b){ b.classList.remove("active"); });
+      btn.classList.add("active");
+      var band = btn.getAttribute("data-band");
+      cards.forEach(function(card){
+        var show = (band === "all") || (card.getAttribute("data-band") === band);
+        if(show){
+          card.style.display = "";
+          requestAnimationFrame(function(){
+            requestAnimationFrame(function(){ card.classList.remove("gone"); });
+          });
+        }else{
+          card.classList.add("gone");
+          setTimeout(function(){
+            if(card.classList.contains("gone")){ card.style.display = "none"; }
+          }, 240);
+        }
+      });
+    });
+  });
+
+  /* 刷新：更新扫描时间 + 网格闪烁 */
+  var grid = document.getElementById("grid");
+  var scanTime = document.getElementById("scanTime");
+  document.getElementById("refreshBtn").addEventListener("click", function(){
+    var now = new Date();
+    scanTime.textContent =
+      String(now.getHours()).padStart(2, "0") + ":" +
+      String(now.getMinutes()).padStart(2, "0");
+    grid.classList.add("flash");
+    setTimeout(function(){ grid.classList.remove("flash"); }, 320);
+  });
+})();
+</script>
+</body>
+</html>

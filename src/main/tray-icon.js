@@ -1,0 +1,7 @@
+// 内嵌托盘图标：16x16 明黄底 + 近黑圆点
+'use strict';
+
+const TRAY_ICON_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAANElEQVR4nGP4epPrPyWYYRgbICEhgYJJMgBdMz5DMAzApRmXIcPRAIoDkSrRODhSIt0MAAD/BYXfXxJtNwAAAABJRU5ErkJggg==';
+
+module.exports = { TRAY_ICON_BASE64 };

@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>devboard · 变体D 粉彩桌面仪表盘</title>
+<style>
+  :root{
+    --bg:#f7f2ea;
+    --card:#fdfcf8;
+    --ink:#181818;
+    --ink-2:#5f584e;
+    --ink-3:#948b7d;
+    --line:rgba(24,24,24,.08);
+    --accent:#f5d90a;
+    --accent-ink:#181818;
+    --dark-tile:#181818;
+    --dark-tile-ink:#fdfcf8;
+    --dark-tile-ink2:#b9b2a6;
+    --band-ink:#181818;
+    --pastel-brown:#dfcdbd;
+    --pastel-sage:#c4dcc9;
+    --pastel-blue:#ccd6e4;
+    --pastel-pink:#e6cfc9;
+    --shadow-1:0 1px 2px rgba(24,24,24,.04),0 12px 32px rgba(24,24,24,.05);
+    --shadow-2:0 2px 6px rgba(24,24,24,.06),0 20px 44px rgba(24,24,24,.09);
+    --r-card:20px;
+    --r-chip:9px;
+    --r-pill:999px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1b1a17;
+      --card:#26241f;
+      --ink:#f1efe9;
+      --ink-2:#a39c90;
+      --ink-3:#6f695f;
+      --line:rgba(241,239,233,.10);
+      --accent:#f5d90a;
+      --accent-ink:#181818;
+      --dark-tile:#f1efe9;
+      --dark-tile-ink:#181818;
+      --dark-tile-ink2:#5f584e;
+      --band-ink:#f1efe9;
+      --pastel-brown:#6b5d4f;
+      --pastel-sage:#4a5d4f;
+      --pastel-blue:#4b5866;
+      --pastel-pink:#5d4b49;
+      --shadow-1:0 1px 2px rgba(0,0,0,.20),0 12px 32px rgba(0,0,0,.24);
+      --shadow-2:0 2px 6px rgba(0,0,0,.26),0 20px 44px rgba(0,0,0,.32);
+    }
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{min-width:1100px}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"PingFang SC","Microsoft YaHei",-apple-system,sans-serif;
+    font-size:14px;
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    padding:20px 32px 56px;
+  }
+  .mono{font-family:ui-monospace,"SF Mono",Consolas,"Courier New",monospace}
+  .wrap{max-width:1440px;margin:0 auto}
+
+  /* ---------- 顶栏 ---------- */
+  .topbar{
+    height:64px;display:flex;align-items:center;gap:20px;
+    position:sticky;top:0;z-index:20;
+    background:var(--bg);
+  }
+  .brand{
+    background:var(--dark-tile);color:var(--dark-tile-ink);
+    border-radius:var(--r-pill);padding:9px 20px;
+    font-size:15px;font-weight:700;letter-spacing:.04em;
+  }
+  .chips{display:flex;gap:8px;margin:0 auto}
+  .chip{
+    border:1px solid var(--line);background:var(--card);color:var(--ink-2);
+    border-radius:var(--r-pill);padding:7px 16px;font-size:13px;cursor:pointer;
+    font-family:inherit;
+    transition:transform .18s ease,background-color .18s ease,color .18s ease,border-color .18s ease;
+  }
+  .chip:hover{transform:translateY(-1px);color:var(--ink)}
+  .chip.active{border-color:transparent;color:var(--band-ink);font-weight:600}
+  .chip.active[data-band="all"]{background:var(--dark-tile);color:var(--dark-tile-ink)}
+  .chip.active[data-band="hot"]{background:var(--pastel-brown)}
+  .chip.active[data-band="active"]{background:var(--pastel-sage)}
+  .chip.active[data-band="cool"]{background:var(--pastel-blue)}
+  .chip.active[data-band="stalled"]{background:var(--pastel-pink)}
+  .scan{font-size:12px;color:var(--ink-3);letter-spacing:.02em}
+  .refresh{
+    width:44px;height:44px;border-radius:50%;border:0;cursor:pointer;
+    background:var(--dark-tile);color:var(--dark-tile-ink);
+    font-family:inherit;font-size:11px;font-weight:600;
+    transition:transform .15s ease,opacity .15s ease;
+  }
+  .refresh:hover{opacity:.86}
+  .refresh:active{transform:scale(.98)}
+
+  /* ---------- 统计行 ---------- */
+  .stats{
+    display:flex;gap:56px;padding:26px 8px 30px;
+  }
+  .stat-num{font-size:48px;font-weight:700;letter-spacing:-.02em;line-height:1.05}
+  .stat-label{font-size:13px;color:var(--ink-2);margin-top:6px}
+  .stat-num .unit{font-size:16px;font-weight:500;color:var(--ink-3);margin-left:4px}
+
+  /* ---------- 主网格 ---------- */
+  .grid{
+    display:grid;grid-template-columns:repeat(12,1fr);gap:16px;
+    transition:opacity .3s ease;
+  }
+  .grid.flash{opacity:.55}
+  .card{
+    background:var(--card);border-radius:var(--r-card);
+    box-shadow:var(--shadow-1);
+    padding:22px 24px;position:relative;
+    transition:transform .2s ease,box-shadow .2s ease,opacity .22s ease;
+  }
+  .card:hover{transform:translateY(-2px);box-shadow:var(--shadow-2)}
+  .card.gone{opacity:0;transform:scale(.985);pointer-events:none}
+  .s7{grid-column:span 7}.s6{grid-column:span 6}.s5{grid-column:span 5}.s4{grid-column:span 4}
+  .card.compact{padding:18px 22px}
+
+  /* 卡片分带色调 */
+  .card[data-tint="brown"]{--tint:var(--pastel-brown)}
+  .card[data-tint="sage"]{--tint:var(--pastel-sage)}
+  .card[data-tint="blue"]{--tint:var(--pastel-blue)}
+  .card[data-tint="pink"]{--tint:var(--pastel-pink)}
+  .card{--tint:var(--pastel-blue)}
+
+  .band-pill{
+    position:absolute;top:18px;right:20px;
+    border-radius:var(--r-pill);padding:4px 12px;
+    font-size:11px;font-weight:600;color:var(--band-ink);
+    background:var(--tint);
+  }
+
+  .proj-name{font-size:21px;font-weight:700;letter-spacing:-.01em}
+  .card.compact .proj-name{font-size:17px}
+  .memo{
+    margin-top:12px;background:var(--tint);
+    border-radius:var(--r-chip);padding:9px 13px;
+    font-size:13px;color:var(--band-ink);max-width:520px;
+  }
+  .memo.empty{background:transparent;border:1px dashed var(--line);color:var(--ink-3)}
+
+  .kv-row{
+    display:flex;flex-wrap:wrap;gap:8px 26px;margin-top:14px;
+    font-size:12px;color:var(--ink-2);
+  }
+  .kv-row b{color:var(--ink);font-weight:600;font-family:ui-monospace,"SF Mono",Consolas,monospace}
+
+  /* 热力图 */
+  .heat{
+    display:grid;grid-template-columns:repeat(15,1fr);gap:5px;margin-top:16px;
+    max-width:560px;
+  }
+  .heat.mini{grid-template-columns:repeat(15,1fr);gap:4px;max-width:300px;margin-top:12px}
+  .heat span{aspect-ratio:1;border-radius:5px;background:var(--h0)}
+  .heat.mini span{border-radius:4px}
+  .heat .l1{background:var(--h1)}.heat .l2{background:var(--h2)}
+  .heat .l3{background:var(--h3)}.heat .l4{background:var(--h4)}
+  .heat-w{
+    --h0:#f1e9db;--h1:#e9dac6;--h2:#dfcdbd;--h3:#c9a986;--h4:#a87f52;
+  }
+  .heat-g{
+    --h0:#ecf3ee;--h1:#d9e9de;--h2:#c4dcc9;--h3:#9cc6a6;--h4:#74a983;
+  }
+  .heat-b{
+    --h0:#eef1f6;--h1:#dde4ee;--h2:#ccd6e4;--h3:#a4b6cc;--h4:#7d94b2;
+  }
+  @media (prefers-color-scheme: dark){
+    .heat-w{--h0:#33302a;--h1:#4a4136;--h2:#6b5d4f;--h3:#8a7458;--h4:#b08d60}
+    .heat-g{--h0:#2c2f2b;--h1:#3d4a40;--h2:#4a5d4f;--h3:#5f7a64;--h4:#7da487}
+    .heat-b{--h0:#2b2e33;--h1:#3c4450;--h2:#4b5866;--h3:#627187;--h4:#8093ad}
+  }
+
+  /* 警示 pill */
+  .warns{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  .warn{
+    background:var(--accent);color:var(--accent-ink);
+    border-radius:var(--r-pill);padding:5px 13px;
+    font-size:12px;font-weight:600;
+  }
+  .neutral-pill{
+    display:inline-block;margin-top:14px;
+    border:1px solid var(--line);color:var(--ink-2);
+    border-radius:var(--r-pill);padding:5px 13px;font-size:12px;
+  }
+
+  /* 展开区 */
+  .detail{display:grid;grid-template-rows:0fr;transition:grid-template-rows .35s ease}
+  .card.open .detail{grid-template-rows:1fr}
+  .detail-in{overflow:hidden;min-height:0}
+  .detail-pad{padding-top:16px}
+  .sec-title{font-size:11px;color:var(--ink-3);letter-spacing:.08em;margin-bottom:8px}
+  .commit{
+    display:flex;align-items:baseline;gap:12px;
+    padding:8px 0;border-top:1px solid var(--line);font-size:13px;
+  }
+  .commit:first-of-type{border-top:0}
+  .commit .msg{flex:1}
+  .commit .ago{font-size:11px;color:var(--ink-3);white-space:nowrap}
+  .dirty{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .dirty span{
+    background:var(--tint);color:var(--band-ink);
+    border-radius:var(--r-chip);padding:4px 11px;font-size:12px;
+  }
+  .expand-hint{
+    margin-top:14px;font-size:11px;color:var(--ink-3);cursor:pointer;
+    user-select:none;letter-spacing:.04em;
+  }
+  .card.clickable{cursor:pointer}
+
+  /* 需要关注 黑卡 */
+  .attn{
+    background:var(--dark-tile);color:var(--dark-tile-ink);
+    border-radius:var(--r-card);box-shadow:var(--shadow-1);
+    padding:24px 26px;
+    transition:transform .2s ease,box-shadow .2s ease;
+  }
+  .attn:hover{transform:translateY(-2px);box-shadow:var(--shadow-2)}
+  .attn-head{display:flex;align-items:baseline;justify-content:space-between}
+  .attn-title{font-size:14px;font-weight:600;letter-spacing:.02em}
+  .attn-num{font-size:46px;font-weight:700;letter-spacing:-.02em;margin:10px 0 6px}
+  .attn-sub{font-size:12px;color:var(--dark-tile-ink2);margin-bottom:16px}
+  .attn-item{
+    display:flex;align-items:center;gap:12px;
+    padding:11px 0;border-top:1px solid var(--line);
+  }
+  .attn-item .ic{
+    width:12px;height:12px;border-radius:4px;flex:none;
+  }
+  .attn-item .nm{font-weight:600;font-size:13px;white-space:nowrap}
+  .attn-item .ds{flex:1;font-size:12px;color:var(--dark-tile-ink2)}
+  .attn-item .mk{
+    width:9px;height:9px;border-radius:3px;background:var(--accent);flex:none;
+  }
+  .attn .band-tag{
+    border-radius:var(--r-pill);padding:3px 10px;font-size:10px;
+    color:var(--band-ink);background:var(--tint);font-weight:600;
+  }
+  .attn[data-tint="brown"]{--tint:var(--pastel-brown)}
+
+  /* 行标签 */
+  .row-label{
+    grid-column:1/-1;font-size:11px;color:var(--ink-3);
+    letter-spacing:.12em;padding:6px 4px 0;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{transition:none !important;animation:none !important}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <span class="brand mono">devboard</span>
+    <nav class="chips" id="chips">
+      <button class="chip active" data-band="all">全部</button>
+      <button class="chip" data-band="hot">热</button>
+      <button class="chip" data-band="active">活跃</button>
+      <button class="chip" data-band="cool">冷却</button>
+      <button class="chip" data-band="stalled">搁浅</button>
+    </nav>
+    <span class="scan mono">最后扫描 <span id="scanTime">14:32</span></span>
+    <button class="refresh" id="refreshBtn" title="重新扫描">刷新</button>
+  </header>
+
+  <!-- 统计行 -->
+  <section class="stats">
+    <div class="stat"><div class="stat-num mono">8<span class="unit">个</span></div><div class="stat-label">项目</div></div>
+    <div class="stat"><div class="stat-num mono">24<span class="unit">次</span></div><div class="stat-label">近7天提交</div></div>
+    <div class="stat"><div class="stat-num mono">4<span class="unit">项</span></div><div class="stat-label">待关注</div></div>
+    <div class="stat"><div class="stat-num mono">3<span class="unit">个</span></div><div class="stat-label">开放 issues / PRs</div></div>
+  </section>
+
+  <!-- 主网格 -->
+  <main class="grid" id="grid">
+
+    <!-- 第一行：热 -->
+    <article class="card clickable open s7" data-band="hot" data-tint="brown">
+      <span class="band-pill">热</span>
+      <h2 class="proj-name mono">wyy2qqmusic</h2>
+      <p class="memo">迁移脚本联调中，QQ 登录 cookie 老失效</p>
+      <div class="kv-row">
+        <span>最后提交 <b>2小时前</b></span>
+        <span>近7天 <b>14 提交</b></span>
+        <span>分支 <b>main</b></span>
+        <span>AI 会话 <b>40分钟前</b></span>
+      </div>
+      <div class="heat heat-w" data-heat="0,0,1,0,2,1,0,1,2,1,0,2,1,3,2,1,2,3,2,4,1,2,3,4,3,4,2,3,4,4"></div>
+      <div class="warns">
+        <span class="warn">未推送 2 提交</span>
+        <span class="warn">3 文件未提交</span>
+      </div>
+      <div class="detail"><div class="detail-in"><div class="detail-pad">
+        <div class="sec-title">最近提交</div>
+        <div class="commit"><span class="msg">fix: 修复歌单解析空指针</span><span class="ago mono">2小时前</span></div>
+        <div class="commit"><span class="msg">feat: 支持 QQ 歌单批量导入</span><span class="ago mono">5小时前</span></div>
+        <div class="commit"><span class="msg">refactor: 拆分登录模块</span><span class="ago mono">昨天</span></div>
+        <div class="commit"><span class="msg">wip: 迁移脚本联调</span><span class="ago mono">昨天</span></div>
+        <div class="sec-title" style="margin-top:14px">未提交文件</div>
+        <div class="dirty mono">
+          <span>_t7_migrate.py</span><span>_t3_login.py</span><span>README.md</span>
+        </div>
+      </div></div></div>
+      <div class="expand-hint mono">- 收起</div>
+    </article>
+
+    <aside class="attn s5" data-tint="brown">
+      <div class="attn-head">
+        <span class="attn-title">需要关注</span>
+        <span class="band-tag">4 个项目</span>
+      </div>
+      <div class="attn-num mono">4/8</div>
+      <div class="attn-sub">以下项目存在未推送提交或滞留改动</div>
+      <div class="attn-item">
+        <span class="ic" style="background:var(--pastel-brown)"></span>
+        <span class="nm mono">wyy2qqmusic</span>
+        <span class="ds">2 提交未推送</span>
+        <span class="mk"></span>
+      </div>
+      <div class="attn-item">
+        <span class="ic" style="background:var(--pastel-sage)"></span>
+        <span class="nm mono">chat-analysis</span>
+        <span class="ds">PR #7 待处理</span>
+        <span class="mk"></span>
+      </div>
+      <div class="attn-item">
+        <span class="ic" style="background:var(--pastel-blue)"></span>
+        <span class="nm mono">kimi-skill-lab</span>
+        <span class="ds">5 文件未提交超3天</span>
+        <span class="mk"></span>
+      </div>
+      <div class="attn-item">
+        <span class="ic" style="background:var(--pastel-pink)"></span>
+        <span class="nm mono">old-crawler</span>
+        <span class="ds">8 文件未提交超3天</span>
+        <span class="mk"></span>
+      </div>
+    </aside>
+
+    <!-- 第二行：活跃 -->
+    <article class="card clickable s6" data-band="active" data-tint="sage">
+      <span class="band-pill">活跃</span>
+      <h2 class="proj-name mono">devboard</h2>
+      <p class="memo">概况板本体，刚定完设计方向</p>
+      <div class="kv-row">
+        <span>最后提交 <b>1天前</b></span>
+        <span>近7天 <b>6 提交</b></span>
+        <span>开放 issue <b>2</b></span>
+      </div>
+      <div class="heat mini heat-g" data-heat="0,1,0,2,1,0,2,3,1,2,0,3,2,1,2,0,1,2,0,1,3,2,1,0,2,1,3,2,1,0"></div>
+      <div class="detail"><div class="detail-in"><div class="detail-pad">
+        <div class="sec-title">最近提交</div>
+        <div class="commit"><span class="msg">docs: 确定设计方向与色彩规范</span><span class="ago mono">1天前</span></div>
+        <div class="commit"><span class="msg">feat: 项目扫描器初版</span><span class="ago mono">2天前</span></div>
+      </div></div></div>
+      <div class="expand-hint mono">+ 展开</div>
+    </article>
+
+    <article class="card clickable s6" data-band="active" data-tint="blue">
+      <span class="band-pill">活跃</span>
+      <h2 class="proj-name mono">chat-analysis</h2>
+      <p class="memo">报告模板第二版待确认</p>
+      <div class="kv-row">
+        <span>最后提交 <b>5天前</b></span>
+        <span>近7天 <b>4 提交</b></span>
+        <span>分支 <b>feat/pdf-v2</b></span>
+        <span>PR <b>#7 开放</b></span>
+        <span>AI 会话 <b>3天前</b></span>
+      </div>
+      <div class="detail"><div class="detail-in"><div class="detail-pad">
+        <div class="sec-title">最近提交</div>
+        <div class="commit"><span class="msg">feat: PDF 模板 v2 布局</span><span class="ago mono">5天前</span></div>
+        <div class="commit"><span class="msg">fix: 长图分页溢出</span><span class="ago mono">6天前</span></div>
+      </div></div></div>
+      <div class="expand-hint mono">+ 展开</div>
+    </article>
+
+    <!-- 第三行：冷却 -->
+    <div class="row-label">冷却</div>
+    <article class="card compact s6" data-band="cool" data-tint="blue">
+      <span class="band-pill">冷却</span>
+      <h2 class="proj-name mono">corpgraph-tool</h2>
+      <p class="memo empty">暂无备忘</p>
+      <div class="kv-row">
+        <span>最后提交 <b>12天前</b></span>
+        <span>近7天 <b>0 提交</b></span>
+      </div>
+      <div class="heat mini heat-b" data-heat="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"></div>
+    </article>
+
+    <article class="card compact s6" data-band="cool" data-tint="blue">
+      <span class="band-pill">冷却</span>
+      <h2 class="proj-name mono">kimi-skill-lab</h2>
+      <p class="memo">实验性 skill 集合</p>
+      <div class="kv-row">
+        <span>最后提交 <b>18天前</b></span>
+        <span>近7天 <b>0 提交</b></span>
+      </div>
+      <div class="warns"><span class="warn">5 文件未提交超3天</span></div>
+    </article>
+
+    <!-- 第四行：搁浅 -->
+    <div class="row-label">搁浅</div>
+    <article class="card compact s6" data-band="stalled" data-tint="pink">
+      <span class="band-pill">搁浅</span>
+      <h2 class="proj-name mono">httpie-cli</h2>
+      <p class="memo">fork 上游，仅学习源码</p>
+      <div class="kv-row">
+        <span>最后提交 <b>3个月前</b></span>
+      </div>
+      <span class="neutral-pill">上游仓库</span>
+    </article>
+
+    <article class="card compact s6" data-band="stalled" data-tint="pink">
+      <span class="band-pill">搁浅</span>
+      <h2 class="proj-name mono">old-crawler</h2>
+      <p class="memo empty">暂无备忘</p>
+      <div class="kv-row">
+        <span>最后提交 <b>74天前</b></span>
+      </div>
+      <div class="warns"><span class="warn">8 文件未提交超3天</span></div>
+    </article>
+
+  </main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* 热力图渲染：data-heat 为 30 个 0-4 等级值 */
+  document.querySelectorAll(".heat").forEach(function(el){
+    var vals = (el.getAttribute("data-heat") || "").split(",");
+    vals.forEach(function(v){
+      var s = document.createElement("span");
+      var n = parseInt(v, 10);
+      if(n > 0){ s.className = "l" + n; }
+      el.appendChild(s);
+    });
+  });
+
+  /* 卡片展开 / 收起 */
+  document.querySelectorAll(".card.clickable").forEach(function(card){
+    card.addEventListener("click", function(){
+      card.classList.toggle("open");
+      var hint = card.querySelector(".expand-hint");
+      if(hint){
+        hint.textContent = card.classList.contains("open") ? "- 收起" : "+ 展开";
+      }
+    });
+  });
+
+  /* 分带筛选 */
+  var chips = document.querySelectorAll("#chips .chip");
+  var cards = document.querySelectorAll("#grid .card");
+  var rowLabels = {
+    cool: "冷却",
+    stalled: "搁浅"
+  };
+  chips.forEach(function(chip){
+    chip.addEventListener("click", function(){
+      chips.forEach(function(c){ c.classList.remove("active"); });
+      chip.classList.add("active");
+      var band = chip.getAttribute("data-band");
+      cards.forEach(function(card){
+        var show = (band === "all") || (card.getAttribute("data-band") === band);
+        if(show){
+          card.style.display = "";
+          requestAnimationFrame(function(){
+            requestAnimationFrame(function(){ card.classList.remove("gone"); });
+          });
+        }else{
+          card.classList.add("gone");
+          setTimeout(function(){
+            if(card.classList.contains("gone")){ card.style.display = "none"; }
+          }, 240);
+        }
+      });
+      /* 行标签随分带显隐 */
+      document.querySelectorAll(".row-label").forEach(function(lab){
+        var match = (band === "all") || (rowLabels[band] === lab.textContent.trim());
+        lab.style.display = match ? "" : "none";
+      });
+    });
+  });
+
+  /* 刷新按钮：更新扫描时间 + 网格闪烁 */
+  var btn = document.getElementById("refreshBtn");
+  var grid = document.getElementById("grid");
+  var scanTime = document.getElementById("scanTime");
+  btn.addEventListener("click", function(){
+    var now = new Date();
+    var hh = String(now.getHours()).padStart(2, "0");
+    var mm = String(now.getMinutes()).padStart(2, "0");
+    scanTime.textContent = hh + ":" + mm;
+    grid.classList.add("flash");
+    setTimeout(function(){ grid.classList.remove("flash"); }, 320);
+  });
+})();
+</script>
+</body>
+</html>
