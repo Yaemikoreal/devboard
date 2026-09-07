@@ -19,7 +19,8 @@ function git(projectPath, args, timeout = 15000) {
 }
 
 // 递归找含 .git 的目录，深度上限 MAX_DEPTH；跳过黑名单与 . 开头目录（.git 本身只探测不进入）
-function discover(roots, blacklist) {
+// extraPaths 为逐项指定的补充路径，要求自身含 .git
+function discover(roots, blacklist, extraPaths) {
   const skip = new Set(blacklist.map((s) => s.toLowerCase()));
   const found = new Map();
 
@@ -47,6 +48,12 @@ function discover(roots, blacklist) {
   for (const root of roots) {
     if (root && fs.existsSync(root)) walk(path.resolve(root), 0);
   }
+  // 补充路径：逐项指定、含 .git 才收，不再深入
+  for (const extra of extraPaths || []) {
+    if (!extra || !fs.existsSync(extra)) continue;
+    if (!fs.existsSync(path.join(extra, '.git'))) continue;
+    found.set(path.resolve(extra).toLowerCase(), path.resolve(extra));
+  }
   return [...found.values()].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 }
 
@@ -60,11 +67,13 @@ function emptyProject(projectPath) {
     recentCommits: [],
     dirtyCount: 0,
     dirtyFiles: [],
+    dirtyAt: null,
     ahead: 0,
     behind: 0,
     hasUpstream: false,
     activity30: new Array(30).fill(0),
     aiSessionAt: null,
+    lastActivityAt: null,
     memo: '',
     band: 'stale',
     warnings: [],
@@ -117,13 +126,30 @@ function buildActivity30(logOutput, now) {
   return counts;
 }
 
-function bandOf(lastCommitAt, now) {
-  if (!lastCommitAt) return 'stale';
-  const days = (now.getTime() - Date.parse(lastCommitAt)) / DAY_MS;
+function bandOf(lastActivityAt, now) {
+  if (!lastActivityAt) return 'archive';
+  const days = (now.getTime() - Date.parse(lastActivityAt)) / DAY_MS;
   if (days <= 3) return 'hot';
   if (days <= 7) return 'active';
   if (days <= 30) return 'cooling';
-  return 'stale';
+  if (days <= 90) return 'stale';
+  return 'archive';
+}
+
+// 未提交改动里最近的文件修改时间（取前 20 个脏文件，改名条目取新路径）
+function dirtyMtime(projectPath, dirtyLines) {
+  let latest = 0;
+  for (const line of dirtyLines.slice(0, 20)) {
+    let rel = line.slice(3).trim();
+    const arrow = rel.indexOf(' -> ');
+    if (arrow >= 0) rel = rel.slice(arrow + 4);
+    if (rel.startsWith('"') && rel.endsWith('"')) rel = rel.slice(1, -1);
+    try {
+      const st = fs.statSync(path.join(projectPath, rel));
+      if (st.mtimeMs > latest) latest = st.mtimeMs;
+    } catch { /* 已删除或不可读 */ }
+  }
+  return latest > 0 ? new Date(latest).toISOString() : null;
 }
 
 // 警示标记。github 数据在扫描后由 github.js 挂接，PR 警示由调用方补充。
@@ -168,6 +194,7 @@ async function scanProject(projectPath, now) {
     const dirtyLines = status ? status.split('\n').filter(Boolean) : [];
     p.dirtyCount = dirtyLines.length;
     p.dirtyFiles = dirtyLines.slice(0, 8).map((l) => l.slice(3).trim());
+    p.dirtyAt = dirtyLines.length ? dirtyMtime(projectPath, dirtyLines) : null;
     if (aheadBehind) {
       const m = aheadBehind.match(/(\d+)\s+(\d+)/);
       if (m) {
@@ -182,14 +209,19 @@ async function scanProject(projectPath, now) {
     // 坏仓库降级为 only-path 条目
   }
   p.aiSessionAt = aiSessionAt(projectPath);
-  p.band = bandOf(p.lastCommitAt, now);
+  // 最后活动时间 = max(最后提交, AI 会话, 脏文件修改时间)
+  p.lastActivityAt = [p.lastCommitAt, p.aiSessionAt, p.dirtyAt]
+    .filter(Boolean)
+    .sort()
+    .pop() || null;
+  p.band = bandOf(p.lastActivityAt, now);
   p.warnings = localWarnings(p, now);
   return p;
 }
 
-async function scan(roots, blacklist) {
+async function scan(roots, blacklist, extraPaths) {
   const now = new Date();
-  const paths = discover(roots, blacklist);
+  const paths = discover(roots, blacklist, extraPaths);
   return Promise.all(paths.map((p) => scanProject(p, now)));
 }
 

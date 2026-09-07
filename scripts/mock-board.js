@@ -1,4 +1,4 @@
-// 截图密度验证用：8 个 mock 项目，覆盖四个分带与各类警示。仅 DEVBOARD_MOCK=1 时使用。
+// 截图密度验证用：8 个 mock 项目，覆盖五个分带与各类警示。仅 DEVBOARD_MOCK=1 时使用。
 'use strict';
 
 function isoDaysAgo(days, hours = 0) {
@@ -99,11 +99,11 @@ function mockBoard() {
     },
     {
       path: 'E:\\myproject\\note-dump', name: 'note-dump', branch: 'main',
-      lastCommitAt: isoDaysAgo(45), commits7d: 0,
-      recentCommits: commits([['docs: 杂记归档', '45天前']]),
+      lastCommitAt: isoDaysAgo(120), commits7d: 0,
+      recentCommits: commits([['docs: 杂记归档', '4个月前']]),
       dirtyCount: 0, dirtyFiles: [], ahead: 0, behind: 0, hasUpstream: false,
       activity30: new Array(30).fill(0), aiSessionAt: null, memo: '',
-      band: 'stale', warnings: [], github: null,
+      band: 'archive', warnings: [], github: null,
     },
   ];
 

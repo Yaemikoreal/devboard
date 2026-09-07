@@ -6,12 +6,21 @@ const path = require('path');
 
 const DEFAULT_CONFIG = {
   roots: ['E:\\myproject'],
+  extraPaths: [],
   blacklist: ['node_modules', '$RECYCLE.BIN', '.git'],
   githubToken: '',
   githubUsername: '',
   editorCmd: 'code',
+  terminalCmd: '',
   hotkey: 'Ctrl+Shift+D',
   autoStart: true,
+};
+
+const DEFAULT_PREFS = {
+  pinned: null, // 主攻项目路径
+  cardOrder: [], // 用户自由重排的卡片位序（路径数组，优先生效）
+  snoozes: {}, // 警示消音：path -> { warningType: label 签名 }
+  windowBounds: null,
 };
 
 class Store {
@@ -44,6 +53,7 @@ class Store {
     const cfg = Object.assign({}, DEFAULT_CONFIG, raw);
     if (!Array.isArray(cfg.roots) || cfg.roots.length === 0) cfg.roots = DEFAULT_CONFIG.roots.slice();
     if (!Array.isArray(cfg.blacklist)) cfg.blacklist = DEFAULT_CONFIG.blacklist.slice();
+    if (!Array.isArray(cfg.extraPaths)) cfg.extraPaths = [];
     return cfg;
   }
 
@@ -51,6 +61,20 @@ class Store {
     const cfg = Object.assign(this.getConfig(), patch || {});
     this.writeJson('config.json', cfg);
     return cfg;
+  }
+
+  getPrefs() {
+    const raw = this.readJson('prefs.json', {});
+    const prefs = Object.assign({}, DEFAULT_PREFS, raw);
+    if (!Array.isArray(prefs.cardOrder)) prefs.cardOrder = [];
+    if (!prefs.snoozes || typeof prefs.snoozes !== 'object') prefs.snoozes = {};
+    return prefs;
+  }
+
+  setPrefs(patch) {
+    const prefs = Object.assign(this.getPrefs(), patch || {});
+    this.writeJson('prefs.json', prefs);
+    return prefs;
   }
 
   getMemos() {
@@ -85,4 +109,4 @@ class Store {
   }
 }
 
-module.exports = { Store, DEFAULT_CONFIG };
+module.exports = { Store, DEFAULT_CONFIG, DEFAULT_PREFS };

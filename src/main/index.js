@@ -2,7 +2,7 @@
 'use strict';
 
 const path = require('path');
-const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, Notification } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, Notification, screen } = require('electron');
 const { Store } = require('./store');
 const { registerIpc } = require('./ipc');
 const { TRAY_ICON_BASE64 } = require('./tray-icon');
@@ -13,9 +13,26 @@ let store = null;
 let buildBoard = null;
 let quitting = false;
 let tickTimer = null;
+let lastHotkeyError = '';
+
+function debounce(fn, ms) {
+  let t = null;
+  return function () {
+    clearTimeout(t);
+    t = setTimeout(fn, ms);
+  };
+}
+
+// 记住的窗口位置至少要有 50px 落在某块显示器工作区内，否则丢弃（防拔显示器后窗口丢失）
+function boundsVisible(b) {
+  return screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return b.x < a.x + a.width - 50 && b.x + b.width > a.x + 50 && b.y >= a.y - 10 && b.y < a.y + a.height - 50;
+  });
+}
 
 function createWindow() {
-  win = new BrowserWindow({
+  const opts = {
     width: 1440,
     height: 900,
     minWidth: 1280,
@@ -28,9 +45,31 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-  });
+  };
+  const b = store.getPrefs().windowBounds;
+  if (b && b.width >= 1280 && b.height >= 800 && boundsVisible(b)) {
+    opts.width = b.width;
+    opts.height = b.height;
+    opts.x = b.x;
+    opts.y = b.y;
+  }
+  win = new BrowserWindow(opts);
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   win.once('ready-to-show', () => win.show());
+
+  const saveBounds = debounce(() => {
+    if (win && !win.isMaximized() && !win.isMinimized()) {
+      store.setPrefs({ windowBounds: win.getBounds() });
+    }
+  }, 500);
+  win.on('resize', saveBounds);
+  win.on('move', saveBounds);
+
+  // 唤出即主动重扫（渲染层自己也做了防重入）
+  win.on('show', () => {
+    if (win) win.webContents.send('board:tick');
+  });
+
   win.on('close', (e) => {
     if (!quitting) {
       e.preventDefault(); // 关闭即隐藏到托盘
@@ -56,20 +95,32 @@ function createTray() {
   tray.setToolTip('devboard');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开', click: () => { if (win) { win.show(); win.focus(); } else createWindow(); } },
+    {
+      label: '立即扫描',
+      click: () => {
+        if (win) {
+          win.show();
+          win.focus();
+          win.webContents.send('board:tick');
+        }
+      },
+    },
     { type: 'separator' },
     { label: '退出', click: () => { quitting = true; app.quit(); } },
   ]));
   tray.on('click', toggleWindow);
 }
 
-// 设置即时生效：重注册热键 + 开机自启
+// 设置即时生效：重注册热键 + 开机自启；失败原因记录供设置页展示
 function applySettings(cfg) {
   globalShortcut.unregisterAll();
+  lastHotkeyError = '';
   if (cfg.hotkey) {
     try {
-      globalShortcut.register(cfg.hotkey, toggleWindow);
+      const ok = globalShortcut.register(cfg.hotkey, toggleWindow);
+      if (!ok) lastHotkeyError = '热键注册失败：格式无效或已被其他程序占用';
     } catch (err) {
-      console.error('[devboard] 热键注册失败:', cfg.hotkey, err.message);
+      lastHotkeyError = '热键注册失败：' + err.message;
     }
   }
   app.setLoginItemSettings({ openAtLogin: !!cfg.autoStart });
@@ -109,6 +160,7 @@ if (!gotLock) {
       store,
       getWindow: () => win,
       applySettings,
+      getHotkeyError: () => lastHotkeyError,
     }));
 
     applySettings(store.getConfig());
@@ -116,10 +168,10 @@ if (!gotLock) {
     createTray();
     maybeNotify();
 
-    // 每 10 分钟通知渲染层刷新
+    // 每 20 分钟静默刷新一次（唤出窗口时另有主动重扫）
     tickTimer = setInterval(() => {
       if (win) win.webContents.send('board:tick');
-    }, 10 * 60 * 1000);
+    }, 20 * 60 * 1000);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

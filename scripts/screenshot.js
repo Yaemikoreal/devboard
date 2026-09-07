@@ -37,11 +37,19 @@ app.whenReady().then(() => {
     ipcMain.handle('quickopen', () => true);
     ipcMain.handle('shell:openExternal', () => true);
     ipcMain.handle('settings:get', () => ({
-      roots: ['E:\\myproject'], blacklist: ['node_modules'],
-      githubToken: 'mock', githubUsername: 'me', editorCmd: 'code',
+      roots: ['E:\\myproject'], extraPaths: [], blacklist: ['node_modules'],
+      githubToken: 'mock', githubUsername: 'me', editorCmd: 'code', terminalCmd: '',
       hotkey: 'Ctrl+Shift+D', autoStart: true,
     }));
     ipcMain.handle('settings:set', () => ({}));
+    ipcMain.handle('settings:hotkeyError', () => '');
+    ipcMain.handle('prefs:get', () => ({ pinned: null, cardOrder: [], snoozes: {}, windowBounds: null }));
+    ipcMain.handle('prefs:set', () => ({}));
+    ipcMain.handle('snooze:set', () => true);
+    ipcMain.handle('dialog:pick', () => null);
+    ipcMain.handle('util:checkCommand', () => ({ ok: true, reason: 'mock' }));
+    ipcMain.handle('github:test', () => ({ ok: true, login: 'me' }));
+    ipcMain.handle('scan:preview', () => ({ count: 8, names: [], invalidRoots: [], invalidExtra: [] }));
     ipcMain.handle('win:min', () => {});
     ipcMain.handle('win:max', () => {});
     ipcMain.handle('win:close', () => {});
@@ -69,6 +77,19 @@ app.whenReady().then(() => {
   // 渲染层首次 board:get 渲染完成时会打标记
   win.webContents.on('console-message', (e) => {
     if (e.message && e.message.includes('[devboard] rendered')) {
+      if (process.env.DEVBOARD_SHOT_SETTINGS === '1') {
+        // 设置页截图：展开设置视图再拍
+        win.webContents.executeJavaScript(
+          "document.getElementById('settingsBtn').click(); void 0"
+        ).then(() => setTimeout(capture, 1200));
+        return;
+      }
+      if (process.env.DEVBOARD_SHOT_JS) {
+        // 自定义前置脚本（如点击分带筛选）后再拍
+        win.webContents.executeJavaScript(process.env.DEVBOARD_SHOT_JS + '; void 0')
+          .then(() => setTimeout(capture, 1200));
+        return;
+      }
       setTimeout(capture, 1500); // 等展开动画与柱图稳定
     }
   });

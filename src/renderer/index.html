@@ -15,7 +15,7 @@
     <div class="win-controls">
       <button class="wc min" id="winMin" title="最小化" tabindex="-1"><i></i></button>
       <button class="wc max" id="winMax" title="最大化" tabindex="-1"><i></i></button>
-      <button class="wc close" id="winClose" title="关闭" tabindex="-1"><i></i></button>
+      <button class="wc close" id="winClose" title="隐藏到托盘 (Esc)" tabindex="-1"><i></i></button>
     </div>
   </div>
 
@@ -24,22 +24,26 @@
     <span class="logo mono">devboard</span>
     <nav class="nav" id="nav">
       <button class="active" data-band="all">全部</button>
-      <button data-band="hot">热</button>
-      <button data-band="active">活跃</button>
-      <button data-band="cooling">冷却</button>
-      <button data-band="stale">搁浅</button>
+      <button data-band="hot">活跃</button>
+      <button data-band="active">近期</button>
+      <button data-band="cooling">渐冷</button>
+      <button data-band="stale">沉睡</button>
+      <button data-band="archive">归档</button>
     </nav>
+    <span class="search" title="按名称或备忘过滤">
+      <input type="text" id="searchInput" placeholder="搜索项目" spellcheck="false">
+      <span class="kbd">/</span>
+    </span>
     <span class="scan mono">最后扫描 <span id="scanTime">--:--</span></span>
     <button class="icon-btn" id="settingsBtn" title="设置"><span class="ic-set"><b></b><b></b></span></button>
     <button class="icon-btn" title="需要关注"><span class="ic-bell"></span><span class="badge hidden" id="attnBadge">0</span></button>
     <button class="icon-btn" id="refreshBtn" title="刷新"><span class="ic-ref"></span></button>
   </header>
 
-  <!-- 统计行 -->
+  <!-- 统计行（背景信息，降权） -->
   <section class="stats">
     <div class="stat"><div class="stat-num mono" id="statTotal">0<span class="unit">个</span></div><div class="stat-label">项目</div></div>
     <div class="stat"><div class="stat-num mono" id="statCommits">0<span class="unit">次</span></div><div class="stat-label">近7天提交</div></div>
-    <div class="stat"><div class="stat-num mono" id="statAttn">0<span class="unit">项</span></div><div class="stat-label">待关注</div></div>
   </section>
 
   <!-- 主网格 -->
@@ -49,38 +53,84 @@
   <section class="settings-view" id="settingsView">
     <div class="settings-card">
       <h2>设置</h2>
-      <div class="field">
-        <label>扫描根目录（一行一个）</label>
-        <textarea id="fRoots" spellcheck="false"></textarea>
+
+      <div class="set-group">
+        <h3>扫描</h3>
+        <div class="group-desc">递归发现根目录中含 .git 的项目（深度上限 4，跳过黑名单与 . 开头目录）</div>
+        <div class="field">
+          <label>扫描根目录</label>
+          <div id="rootsList"></div>
+          <button class="add-row" id="addRoot" type="button">+ 添加根目录</button>
+        </div>
+        <div class="field">
+          <label>补充路径（扫描范围之外，逐个指定，目录内需含 .git）</label>
+          <div id="extraList"></div>
+          <button class="add-row" id="addExtra" type="button">+ 添加补充路径</button>
+        </div>
+        <div class="field">
+          <label>黑名单目录（一行一个）</label>
+          <textarea id="fBlacklist" spellcheck="false"></textarea>
+        </div>
+        <div class="inline-check">
+          <button id="previewBtn" type="button">扫描预览</button>
+          <span class="res" id="previewRes"></span>
+        </div>
       </div>
-      <div class="field">
-        <label>黑名单目录（一行一个）</label>
-        <textarea id="fBlacklist" spellcheck="false"></textarea>
+
+      <div class="set-group">
+        <h3>GitHub</h3>
+        <div class="group-desc">仅拉取 owner 是本人的仓库的开放 issues/PR（10 分钟缓存）；fork 的上游仓库自动跳过</div>
+        <div class="field">
+          <label>GitHub Token</label>
+          <input type="password" id="fToken" autocomplete="off">
+          <div class="inline-check">
+            <button id="testGhBtn" type="button">测试连接</button>
+            <span class="res" id="testGhRes"></span>
+          </div>
+        </div>
+        <div class="field">
+          <label>GitHub 用户名</label>
+          <input type="text" id="fUsername" spellcheck="false">
+        </div>
       </div>
-      <div class="field">
-        <label>GitHub Token</label>
-        <input type="password" id="fToken" autocomplete="off">
+
+      <div class="set-group">
+        <h3>系统</h3>
+        <div class="field">
+          <label>编辑器命令</label>
+          <div class="path-row">
+            <input type="text" id="fEditor" spellcheck="false" placeholder="code">
+            <button class="browse" id="browseEditor" type="button">浏览…</button>
+          </div>
+          <div class="inline-check">
+            <button id="checkEditor" type="button">校验</button>
+            <span class="res" id="checkEditorRes"></span>
+          </div>
+        </div>
+        <div class="field">
+          <label>终端命令（在项目目录下执行；留空用 Windows Terminal / cmd 兜底）</label>
+          <input type="text" id="fTerminal" spellcheck="false" placeholder="留空自动兜底">
+          <div class="inline-check">
+            <button id="checkTerminal" type="button">校验</button>
+            <span class="res" id="checkTerminalRes"></span>
+          </div>
+        </div>
+        <div class="field">
+          <label>全局热键（点击输入框后按下组合键）</label>
+          <input type="text" id="fHotkey" spellcheck="false" placeholder="例如 Ctrl+Shift+D">
+          <div class="hint" id="hotkeyHint">修改保存后即时生效；若被其他程序占用会在此处报错</div>
+          <div class="err" id="hotkeyErr"></div>
+        </div>
+        <div class="field check">
+          <input type="checkbox" id="fAutoStart">
+          <label for="fAutoStart">开机自启</label>
+        </div>
       </div>
-      <div class="field">
-        <label>GitHub 用户名</label>
-        <input type="text" id="fUsername" spellcheck="false">
-      </div>
-      <div class="field">
-        <label>编辑器命令</label>
-        <input type="text" id="fEditor" spellcheck="false">
-      </div>
-      <div class="field">
-        <label>全局热键</label>
-        <input type="text" id="fHotkey" spellcheck="false">
-      </div>
-      <div class="field check">
-        <input type="checkbox" id="fAutoStart">
-        <label for="fAutoStart">开机自启</label>
-      </div>
+
       <div class="settings-actions">
-        <button class="back" id="settingsBack">返回</button>
-        <button class="save" id="settingsSave">保存</button>
         <span class="settings-msg" id="settingsMsg"></span>
+        <button class="btn" id="settingsBack">返回</button>
+        <button class="btn solid" id="settingsSave">保存</button>
       </div>
     </div>
   </section>

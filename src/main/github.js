@@ -87,4 +87,24 @@ function applyPrWarnings(projects) {
   }
 }
 
-module.exports = { parseGitHubRemote, fetchIssues, attachFromCache, refreshCache, applyPrWarnings };
+// 设置页「测试连接」：验证 token 有效性并返回实际登录名
+async function testConnection(token) {
+  try {
+    const res = await fetch('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'devboard',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    if (res.status === 401) return { ok: false, reason: 'Token 无效或已过期' };
+    if (!res.ok) return { ok: false, reason: `GitHub API ${res.status}` };
+    const data = await res.json();
+    return { ok: true, login: data.login };
+  } catch {
+    return { ok: false, reason: '网络错误，无法连接 GitHub' };
+  }
+}
+
+module.exports = { parseGitHubRemote, fetchIssues, attachFromCache, refreshCache, applyPrWarnings, testConnection };
