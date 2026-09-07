@@ -71,7 +71,7 @@ function emptyProject(projectPath) {
     ahead: 0,
     behind: 0,
     hasUpstream: false,
-    activity30: new Array(30).fill(0),
+    activity365: new Array(365).fill(0),
     aiSessionAt: null,
     lastActivityAt: null,
     memo: '',
@@ -113,15 +113,15 @@ function aiSessionAt(projectPath) {
   return latest > 0 ? new Date(latest).toISOString() : null;
 }
 
-// log --since="30 days ago" 按天聚合，今天在最后
-function buildActivity30(logOutput, now) {
-  const counts = new Array(30).fill(0);
+// log --since="365 days ago" 按天聚合，今天在最后
+function buildActivity365(logOutput, now) {
+  const counts = new Array(365).fill(0);
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   for (const line of logOutput.split('\n')) {
     const t = Date.parse(line.trim());
     if (!Number.isFinite(t)) continue;
-    const idx = 29 - Math.floor((todayStart + DAY_MS - 1 - t) / DAY_MS);
-    if (idx >= 0 && idx < 30) counts[idx]++;
+    const idx = 364 - Math.floor((todayStart + DAY_MS - 1 - t) / DAY_MS);
+    if (idx >= 0 && idx < 365) counts[idx]++;
   }
   return counts;
 }
@@ -176,7 +176,7 @@ async function scanProject(projectPath, now) {
         git(projectPath, ['log', '-5', '--format=%s|%cr']).catch(() => ''),
         git(projectPath, ['status', '--porcelain']).catch(() => ''),
         git(projectPath, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}']).catch(() => null),
-        git(projectPath, ['log', '--since=30 days ago', '--format=%cI']).catch(() => ''),
+        git(projectPath, ['log', '--since=365 days ago', '--format=%cI']).catch(() => ''),
         git(projectPath, ['remote', 'get-url', 'origin']).catch(() => ''),
       ]);
 
@@ -203,7 +203,7 @@ async function scanProject(projectPath, now) {
         p.behind = parseInt(m[2], 10);
       }
     }
-    p.activity30 = buildActivity30(activityLog, now);
+    p.activity365 = buildActivity365(activityLog, now);
     p.originUrl = origin || null;
   } catch {
     // 坏仓库降级为 only-path 条目

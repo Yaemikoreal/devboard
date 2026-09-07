@@ -17,6 +17,7 @@
     expanded: {}, // path -> bool
     dragPath: null,
     lastLayout: [], // 当前视觉顺序（大卡 → 中列 → 右列）
+    attnFull: false, // 关注卡是否展开全部条目
   };
 
   var grid = document.getElementById('grid');
@@ -86,6 +87,19 @@
     return tb - ta;
   }
 
+  // 卡片高度粗估（px）：贪心填充三列时用，允许误差
+  function estH(p, kind) {
+    var h = kind === 'big' ? 250 : kind === 'mid' ? 205 : 118;
+    if (p.warnings && p.warnings.length) h += kind === 'compact' ? 26 : 32;
+    if (state.expanded[p.path]) {
+      h += 24 + (p.recentCommits ? p.recentCommits.length : 0) * 27; // 最近提交
+      if (p.dirtyFiles && p.dirtyFiles.length) h += 26; // 未提交文件摘要行
+      h += p.github ? 44 + p.github.items.length * 27 : 26; // GitHub 区
+      h += 48; // 快捷按钮行
+    }
+    return h;
+  }
+
   function queryMatch(p) {
     if (!state.query) return true;
     return (p.name + ' ' + (p.memo || '')).toLowerCase().indexOf(state.query) >= 0;
@@ -98,14 +112,14 @@
   function canDrag() { return state.band === 'all' && !state.query; }
 
   /* ---------- 卡片 ---------- */
-  // 近 30 天活跃：GitHub 风格月历热力图，默认收起，点击展开（issue #1）
+  // 近一年活跃：GitHub 风格全年贡献热力图，默认收起，点击展开
   function renderActivity(parent, p) {
-    var activity = p.activity30 || [];
+    var activity = p.activity365 || [];
     var total = activity.reduce(function (s, n) { return s + n; }, 0);
     var tog = el('button', 'sec-title dirty-toggle');
     tog.type = 'button';
     tog.appendChild(el('span', 'caret', '▸'));
-    tog.appendChild(document.createTextNode('近 30 天活跃 · ' + total + ' 次提交'));
+    tog.appendChild(document.createTextNode('近一年活跃 · ' + total + ' 次提交'));
     var wrap = el('div', 'dirty-wrap');
     var din = el('div', 'dirty-in');
     din.appendChild(buildHeatmap(activity));
@@ -119,32 +133,34 @@
     parent.appendChild(wrap);
   }
 
-  // activity[29] = 今天；周一在最上一行，按周列 × 周日行落位
+  // activity 末位 = 今天；周一在最上一行，周列 × 周日行，占满卡片宽度
   function buildHeatmap(activity) {
     var DAY = 86400000;
+    var days = activity.length;
     var box = el('div', 'heat');
     var gridEl = el('div', 'heat-grid');
     var today = new Date();
     today.setHours(0, 0, 0, 0);
-    var first = today.getTime() - 29 * DAY;
+    var first = today.getTime() - (days - 1) * DAY;
     var lead = (new Date(first).getDay() + 6) % 7; // 窗口第一天距周一的偏移
     var b;
     for (b = 0; b < lead; b++) gridEl.appendChild(el('i', 'cell blank'));
     activity.forEach(function (n, i) {
       var d = new Date(first + i * DAY);
-      var cell = el('i', 'cell l' + (n === 0 ? 0 : n >= 3 ? 3 : n));
+      var lvl = n === 0 ? 0 : n < 3 ? 1 : n < 6 ? 2 : n < 10 ? 3 : 4;
+      var cell = el('i', 'cell l' + lvl);
       cell.title = (d.getMonth() + 1) + '月' + d.getDate() + '日 · ' + (n ? n + ' 次提交' : '无提交');
       gridEl.appendChild(cell);
     });
     box.appendChild(gridEl);
 
-    // 底部轴：月份切换列标注「X 月」，右端标注「今天」（按列百分比定位，随卡片宽度伸缩）
-    var cols = Math.ceil((lead + activity.length) / 7);
+    // 底部轴：每月首列标注「X 月」，右端标注「今天」（按列百分比定位）
+    var cols = Math.ceil((lead + days) / 7);
     var axis = el('div', 'heat-axis');
     var prevMonth = -1;
     for (var cix = 0; cix < cols; cix++) {
       var dayIdx = Math.max(0, cix * 7 - lead);
-      if (dayIdx >= activity.length) break;
+      if (dayIdx >= days) break;
       var dd = new Date(first + dayIdx * DAY);
       if (dd.getMonth() !== prevMonth) {
         var m = el('span', 'mon', (dd.getMonth() + 1) + '月');
@@ -433,7 +449,10 @@
     aside.appendChild(head);
     aside.appendChild(el('div', 'attn-num mono', board.stats.attentionCount + '/' + board.stats.total));
     aside.appendChild(el('div', 'attn-sub', board.attention.length ? '存在未推送提交或滞留改动' : '一切正常，暂无警示'));
-    board.attention.forEach(function (a) {
+    // 列表上限 5 条，避免长列表把右列顶穿；点击「展开全部」查看剩余
+    var CAP = 5;
+    var items = state.attnFull ? board.attention : board.attention.slice(0, CAP);
+    items.forEach(function (a) {
       var item = el('div', 'attn-item');
       item.appendChild(el('span', 'ic'));
       item.appendChild(el('span', 'nm mono', a.name));
@@ -448,6 +467,16 @@
       });
       aside.appendChild(item);
     });
+    if (board.attention.length > CAP) {
+      var more = el('button', 'attn-more', state.attnFull ? '收起' : '展开全部 ' + board.attention.length + ' 条');
+      more.type = 'button';
+      more.addEventListener('click', function (e) {
+        e.stopPropagation();
+        state.attnFull = !state.attnFull;
+        renderAll();
+      });
+      aside.appendChild(more);
+    }
     return aside;
   }
 
@@ -506,46 +535,34 @@
     var bigProj = pinned || hotActive.slice().sort(byActivityDesc)[0] || all.slice().sort(byActivityDesc)[0];
     var rest = all.filter(function (p) { return p !== bigProj; });
 
-    // 中列：活跃/近期；右列：渐冷/沉睡/归档紧凑卡。无热项目时提两个最前的进中列保持饱满
-    var midList = rest.filter(function (p) { return FOCUS_BANDS[p.band]; });
-    var compactList = rest.filter(function (p) { return !FOCUS_BANDS[p.band]; });
-    if (midList.length === 0 && compactList.length > 0) {
-      midList = compactList.slice(0, 2);
-      compactList = compactList.slice(2);
-    }
-    state.lastLayout = [bigProj.path].concat(
-      midList.map(function (p) { return p.path; }),
-      compactList.map(function (p) { return p.path; })
-    );
+    state.lastLayout = [bigProj.path].concat(rest.map(function (p) { return p.path; }));
 
-    // 左：大卡
-    if (state.expanded[bigProj.path] === undefined) state.expanded[bigProj.path] = true;
+    // 贪心填充三列：大卡固定左上、关注卡固定右上，其余卡片进当前最矮列，优先充满
     var colL = el('div', 'col big');
+    var colM = el('div', 'col col-mid');
+    var colR = el('div', 'col col-right');
+    var cols = [colL, colM, colR];
+    var hs = [0, 0, 0];
+
+    if (state.expanded[bigProj.path] === undefined) state.expanded[bigProj.path] = true;
     var bigCard = projectCard(bigProj, 'big');
     bigCard.setAttribute('data-path', bigProj.path);
     colL.appendChild(bigCard);
-    grid.appendChild(colL);
+    hs[0] = estH(bigProj, 'big');
 
-    // 中列：无项目时整列收起，网格用 no-mid 加宽大卡与右列
-    grid.classList.toggle('no-mid', midList.length === 0);
-    if (midList.length > 0) {
-      var colM = el('div', 'col col-mid');
-      midList.forEach(function (p) {
-        var c = projectCard(p, 'mid');
-        c.setAttribute('data-path', p.path);
-        colM.appendChild(c);
-      });
-      grid.appendChild(colM);
-    }
-
-    // 右列：需要关注黑卡 + 紧凑卡
-    var colR = el('div', 'col col-right');
     colR.appendChild(attentionCard(board));
-    compactList.forEach(function (p) {
-      var c = projectCard(p, 'compact');
+    hs[2] = 130 + Math.min(board.attention.length, 5) * 31 + (board.attention.length > 5 ? 32 : 0);
+
+    rest.forEach(function (p) {
+      var kind = FOCUS_BANDS[p.band] ? 'mid' : 'compact';
+      var c = projectCard(p, kind);
       c.setAttribute('data-path', p.path);
-      colR.appendChild(c);
+      var i = hs[0] <= hs[1] && hs[0] <= hs[2] ? 0 : hs[1] <= hs[2] ? 1 : 2;
+      cols[i].appendChild(c);
+      hs[i] += estH(p, kind) + 12;
     });
+    grid.appendChild(colL);
+    grid.appendChild(colM);
     grid.appendChild(colR);
 
     // 内容不足一屏时垂直居中，避免重心上浮

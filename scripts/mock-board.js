@@ -5,10 +5,18 @@ function isoDaysAgo(days, hours = 0) {
   return new Date(Date.now() - days * 86400000 - hours * 3600000).toISOString();
 }
 
-function activity(seed) {
-  // 生成确定性的 30 天活动数组
-  const arr = new Array(30).fill(0);
-  for (let i = 0; i < 30; i++) arr[i] = (i * 7 + seed * 13) % 5 === 0 ? 0 : ((i * 7 + seed * 13) % 5);
+function yearActivity(seed, hotRecently = false) {
+  // 生成确定性的全年活动数组：老底子稀疏，hotRecently 时近几周加密
+  const arr = new Array(365).fill(0);
+  for (let i = 0; i < 365; i++) {
+    const v = (i * 7 + seed * 13) % 9;
+    arr[i] = v < 5 ? 0 : v - 4; // 0~4 量级
+  }
+  if (hotRecently) {
+    for (let i = 365 - 28; i < 365; i++) {
+      arr[i] = (i + seed) % 4 === 0 ? 0 : ((i * 3 + seed) % 8) + 1; // 近 4 周高量
+    }
+  }
   return arr;
 }
 
@@ -27,8 +35,7 @@ function mockBoard() {
       ]),
       dirtyCount: 3, dirtyFiles: ['_t7_migrate.py', '_t3_login.py', 'README.md'],
       ahead: 2, behind: 0, hasUpstream: true,
-      activity30: [0, 0, 1, 0, 2, 1, 0, 1, 2, 1, 0, 2, 1, 3, 2, 1, 2, 3, 2, 4, 1, 2, 3, 4, 3, 4, 2, 3, 4, 4],
-      aiSessionAt: isoDaysAgo(0, 1), memo: '迁移脚本联调中，QQ 登录 cookie 老失效',
+      activity365: yearActivity(1, true), aiSessionAt: isoDaysAgo(0, 1), memo: '迁移脚本联调中，QQ 登录 cookie 老失效',
       band: 'hot',
       warnings: [{ type: 'ahead', label: '2 提交未推送' }],
       github: {
@@ -45,7 +52,7 @@ function mockBoard() {
       lastCommitAt: isoDaysAgo(1), commits7d: 6,
       recentCommits: commits([['docs: 确定设计方向与色彩规范', '1天前'], ['feat: 项目扫描器初版', '2天前']]),
       dirtyCount: 0, dirtyFiles: [], ahead: 0, behind: 0, hasUpstream: true,
-      activity30: activity(2), aiSessionAt: isoDaysAgo(0, 3), memo: '概况板本体，刚定完设计方向',
+      activity365: yearActivity(2, true), aiSessionAt: isoDaysAgo(0, 3), memo: '概况板本体，刚定完设计方向',
       band: 'active', warnings: [], github: null,
     },
     {
@@ -53,7 +60,7 @@ function mockBoard() {
       lastCommitAt: isoDaysAgo(5), commits7d: 4,
       recentCommits: commits([['feat: PDF 模板 v2 布局', '5天前'], ['fix: 长图分页溢出', '6天前']]),
       dirtyCount: 0, dirtyFiles: [], ahead: 0, behind: 1, hasUpstream: true,
-      activity30: activity(3), aiSessionAt: isoDaysAgo(3), memo: '报告模板第二版待确认',
+      activity365: yearActivity(3, true), aiSessionAt: isoDaysAgo(3), memo: '报告模板第二版待确认',
       band: 'active',
       warnings: [{ type: 'pr', label: '1 个开放 PR' }],
       github: {
@@ -66,7 +73,7 @@ function mockBoard() {
       lastCommitAt: isoDaysAgo(12), commits7d: 0,
       recentCommits: commits([['feat: 批量关系查询', '12天前']]),
       dirtyCount: 0, dirtyFiles: [], ahead: 0, behind: 0, hasUpstream: false,
-      activity30: activity(4), aiSessionAt: null, memo: '',
+      activity365: yearActivity(4), aiSessionAt: null, memo: '',
       band: 'cooling', warnings: [], github: null,
     },
     {
@@ -75,7 +82,7 @@ function mockBoard() {
       recentCommits: commits([['feat: 新增 skill 骨架', '18天前']]),
       dirtyCount: 5, dirtyFiles: ['a.md', 'b.md', 'c.md', 'd.md', 'e.md'],
       ahead: 0, behind: 0, hasUpstream: true,
-      activity30: activity(5), aiSessionAt: isoDaysAgo(10), memo: '实验性 skill 集合',
+      activity365: yearActivity(5), aiSessionAt: isoDaysAgo(10), memo: '实验性 skill 集合',
       band: 'cooling',
       warnings: [{ type: 'dirty', label: '5 文件未提交超3天' }], github: null,
     },
@@ -84,7 +91,7 @@ function mockBoard() {
       lastCommitAt: isoDaysAgo(90), commits7d: 0,
       recentCommits: commits([['chore: upstream sync', '3个月前']]),
       dirtyCount: 0, dirtyFiles: [], ahead: 0, behind: 0, hasUpstream: true,
-      activity30: new Array(30).fill(0), aiSessionAt: null, memo: 'fork 上游，仅学习源码',
+      activity365: new Array(365).fill(0), aiSessionAt: null, memo: 'fork 上游，仅学习源码',
       band: 'stale', warnings: [], github: null,
     },
     {
@@ -93,7 +100,7 @@ function mockBoard() {
       recentCommits: commits([['fix: 反爬绕过', '74天前']]),
       dirtyCount: 8, dirtyFiles: ['spider.py', 'proxy.py'],
       ahead: 0, behind: 0, hasUpstream: false,
-      activity30: new Array(30).fill(0), aiSessionAt: null, memo: '',
+      activity365: new Array(365).fill(0), aiSessionAt: null, memo: '',
       band: 'stale',
       warnings: [{ type: 'dirty', label: '8 文件未提交超3天' }], github: null,
     },
@@ -102,7 +109,7 @@ function mockBoard() {
       lastCommitAt: isoDaysAgo(120), commits7d: 0,
       recentCommits: commits([['docs: 杂记归档', '4个月前']]),
       dirtyCount: 0, dirtyFiles: [], ahead: 0, behind: 0, hasUpstream: false,
-      activity30: new Array(30).fill(0), aiSessionAt: null, memo: '',
+      activity365: new Array(365).fill(0), aiSessionAt: null, memo: '',
       band: 'archive', warnings: [], github: null,
     },
   ];

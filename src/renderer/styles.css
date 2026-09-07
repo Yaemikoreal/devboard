@@ -184,12 +184,10 @@ body{
 .grid.sparse{align-content:center;padding-top:12px;padding-bottom:24px}
 .grid.flash{opacity:.55}
 .col{display:flex;flex-direction:column;gap:12px;min-height:0}
+/* 贪心填充三列：大卡 5 格、中列 4 格、右列 3 格，卡片进最矮列优先充满 */
 .big{grid-column:span 5}
 .col-mid{grid-column:span 4}
 .col-right{grid-column:span 3}
-/* 中列无项目时收起：大卡加宽，右列随之加宽，保持左锚定饱满布局 */
-.grid.no-mid .big{grid-column:span 8}
-.grid.no-mid .col-right{grid-column:span 4}
 /* 筛选/搜索态：平铺统一尺寸卡片，一律从左上角起排（issue #5） */
 .grid.flat{align-content:start;padding-top:12px}
 .grid.flat .card{grid-column:span 4}
@@ -270,17 +268,18 @@ body{
 }
 .compact .kv-row{margin-top:4px;gap:2px 14px;font-size:11.5px}
 
-/* 近 30 天活跃热力图：月历格（周日行 × 周列），默认收起（issue #1） */
+/* 近一年活跃热力图：全年贡献格（周日行 × 周列），默认收起，占满卡宽 */
 .heat{margin-top:10px}
 .heat-grid{
-  display:grid;grid-template-rows:repeat(7, 15px);
-  grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;width:100%;
+  display:grid;grid-template-rows:repeat(7, 9px);
+  grid-auto-flow:column;grid-auto-columns:1fr;gap:3px;width:100%;
 }
-.heat-grid .cell{border-radius:4px;background:#e7e3d5}
+.heat-grid .cell{border-radius:2px;background:#e7e3d5}
 .heat-grid .cell.blank{visibility:hidden}
-.heat-grid .cell.l1{background:#a89f8e}
-.heat-grid .cell.l2{background:#4d463c}
-.heat-grid .cell.l3{background:var(--accent)}
+.heat-grid .cell.l1{background:#b5ad9b}
+.heat-grid .cell.l2{background:#7d7663}
+.heat-grid .cell.l3{background:#3f3a30}
+.heat-grid .cell.l4{background:var(--accent)}
 .heat-axis{position:relative;height:14px;margin-top:6px}
 .heat-axis .mon{position:absolute;top:0;font-size:9.5px;color:var(--ink-3);white-space:nowrap}
 .heat-axis .today{position:absolute;right:0;top:0;font-size:9.5px;color:var(--ink-3)}
@@ -407,6 +406,14 @@ body{
 .attn-item .nm{font-weight:600;font-size:12.5px;white-space:nowrap}
 .attn-item .ds{flex:1;font-size:11px;color:var(--tile-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .attn-item .mk{width:8px;height:8px;flex:none;border-radius:50%;background:var(--accent)}
+.attn-more{
+  width:100%;margin-top:4px;padding:6px 0 2px;border:0;
+  border-top:1px solid rgba(253,252,248,.12);background:transparent;
+  color:var(--tile-ink2);font:inherit;font-size:11px;cursor:pointer;
+  letter-spacing:.04em;text-align:center;
+  transition:color .15s ease;
+}
+.attn-more:hover{color:var(--accent)}
 
 /* 骨架屏 */
 .skel{
