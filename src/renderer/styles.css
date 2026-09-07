@@ -270,17 +270,20 @@ body{
 }
 .compact .kv-row{margin-top:4px;gap:2px 14px;font-size:11.5px}
 
-/* 30 天柱状活动图：零值也有明确浅灰短柱，活跃柱按提交数分级 */
-.bars{
-  display:flex;align-items:flex-end;gap:2px;height:32px;margin-top:10px;
+/* 近 30 天活跃热力图：月历格（周日行 × 周列），默认收起（issue #1） */
+.heat{margin-top:10px}
+.heat-grid{
+  display:grid;grid-template-rows:repeat(7, 15px);
+  grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;width:100%;
 }
-.bars.mini{height:28px;margin-top:8px}
-.bars i{
-  flex:1;border-radius:3px;background:var(--tile);min-height:5px;
-  display:block;
-}
-.bars i.z{background:#e3dfd2;min-height:5px}
-.bars i.hi{background:var(--accent)}
+.heat-grid .cell{border-radius:4px;background:#e7e3d5}
+.heat-grid .cell.blank{visibility:hidden}
+.heat-grid .cell.l1{background:#a89f8e}
+.heat-grid .cell.l2{background:#4d463c}
+.heat-grid .cell.l3{background:var(--accent)}
+.heat-axis{position:relative;height:14px;margin-top:6px}
+.heat-axis .mon{position:absolute;top:0;font-size:9.5px;color:var(--ink-3);white-space:nowrap}
+.heat-axis .today{position:absolute;right:0;top:0;font-size:9.5px;color:var(--ink-3)}
 
 /* 警示 pill（hover 显示消音 ×） */
 .warns{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}

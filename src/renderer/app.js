@@ -98,17 +98,64 @@
   function canDrag() { return state.band === 'all' && !state.query; }
 
   /* ---------- 卡片 ---------- */
-  function renderBars(parent, activity, mini) {
-    var bars = el('div', 'bars' + (mini ? ' mini' : ''));
-    var heights = [18, 38, 58, 80, 100]; // 零值浅灰短柱；1-2 近黑分级；3+ 明黄
-    (activity || []).forEach(function (n) {
-      var bar = document.createElement('i');
-      bar.style.height = heights[Math.min(n, 4)] + '%';
-      if (n === 0) bar.className = 'z';
-      else if (n >= 3) bar.className = 'hi';
-      bars.appendChild(bar);
+  // 近 30 天活跃：GitHub 风格月历热力图，默认收起，点击展开（issue #1）
+  function renderActivity(parent, p) {
+    var activity = p.activity30 || [];
+    var total = activity.reduce(function (s, n) { return s + n; }, 0);
+    var tog = el('button', 'sec-title dirty-toggle');
+    tog.type = 'button';
+    tog.appendChild(el('span', 'caret', '▸'));
+    tog.appendChild(document.createTextNode('近 30 天活跃 · ' + total + ' 次提交'));
+    var wrap = el('div', 'dirty-wrap');
+    var din = el('div', 'dirty-in');
+    din.appendChild(buildHeatmap(activity));
+    wrap.appendChild(din);
+    tog.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var open = wrap.classList.toggle('open');
+      tog.classList.toggle('open', open);
     });
-    parent.appendChild(bars);
+    parent.appendChild(tog);
+    parent.appendChild(wrap);
+  }
+
+  // activity[29] = 今天；周一在最上一行，按周列 × 周日行落位
+  function buildHeatmap(activity) {
+    var DAY = 86400000;
+    var box = el('div', 'heat');
+    var gridEl = el('div', 'heat-grid');
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    var first = today.getTime() - 29 * DAY;
+    var lead = (new Date(first).getDay() + 6) % 7; // 窗口第一天距周一的偏移
+    var b;
+    for (b = 0; b < lead; b++) gridEl.appendChild(el('i', 'cell blank'));
+    activity.forEach(function (n, i) {
+      var d = new Date(first + i * DAY);
+      var cell = el('i', 'cell l' + (n === 0 ? 0 : n >= 3 ? 3 : n));
+      cell.title = (d.getMonth() + 1) + '月' + d.getDate() + '日 · ' + (n ? n + ' 次提交' : '无提交');
+      gridEl.appendChild(cell);
+    });
+    box.appendChild(gridEl);
+
+    // 底部轴：月份切换列标注「X 月」，右端标注「今天」（按列百分比定位，随卡片宽度伸缩）
+    var cols = Math.ceil((lead + activity.length) / 7);
+    var axis = el('div', 'heat-axis');
+    var prevMonth = -1;
+    for (var cix = 0; cix < cols; cix++) {
+      var dayIdx = Math.max(0, cix * 7 - lead);
+      if (dayIdx >= activity.length) break;
+      var dd = new Date(first + dayIdx * DAY);
+      if (dd.getMonth() !== prevMonth) {
+        var m = el('span', 'mon', (dd.getMonth() + 1) + '月');
+        m.style.left = (cix / cols * 100) + '%';
+        axis.appendChild(m);
+        prevMonth = dd.getMonth();
+      }
+    }
+    axis.appendChild(el('span', 'today', '今天'));
+    box.appendChild(axis);
+    return box;
   }
 
   function renderWarns(parent, p) {
@@ -357,7 +404,7 @@
     }
     card.appendChild(kvRow);
 
-    if (kind !== 'compact') renderBars(card, p.activity30, kind === 'mid');
+    if (kind !== 'compact') renderActivity(card, p);
     renderWarns(card, p);
 
     renderDetail(card, p);
