@@ -17,11 +17,21 @@
     expanded: {}, // path -> bool
     dragPath: null,
     lastLayout: [], // 当前视觉顺序（大卡 → 中列 → 右列）
-    attnFull: false, // 关注卡是否展开全部条目
+    attnOpen: false, // 「需要关注」面板开合（issue #7）
+    branchSel: {}, // path -> 选中分支名（issue #4，持久化在 prefs.branchSel）
+    branchDetail: {}, // path + '' + branch -> { lastCommitAt, commits } | 'loading'
+    suggestIdx: -1, // 搜索补全键盘选中项（issue #6）
   };
+
+  // keyed DOM 复用：path -> { node, sig }，签名一致的卡片在重渲染时直接搬用（issue #8）
+  var cardCache = {};
 
   var grid = document.getElementById('grid');
   var appEl = document.getElementById('app');
+  var searchInput = document.getElementById('searchInput');
+  var suggestEl = document.getElementById('suggest');
+  var attnPanel = document.getElementById('attnPanel');
+  var bellBtn = document.getElementById('bellBtn');
 
   /* ---------- 工具 ---------- */
   function el(tag, cls, text) {
@@ -65,6 +75,32 @@
     }, 900);
   }
 
+  // 命中片段高亮：返回 DocumentFragment，命中部分包 <b>
+  function hlFrag(text, query) {
+    var frag = document.createDocumentFragment();
+    var lower = text.toLowerCase();
+    var i = query ? lower.indexOf(query) : -1;
+    if (i < 0) {
+      frag.appendChild(document.createTextNode(text));
+      return frag;
+    }
+    if (i > 0) frag.appendChild(document.createTextNode(text.slice(0, i)));
+    var b = el('b', null, text.slice(i, i + query.length));
+    frag.appendChild(b);
+    if (i + query.length < text.length) frag.appendChild(document.createTextNode(text.slice(i + query.length)));
+    return frag;
+  }
+
+  /* ---------- 通用浮层：下拉菜单 (.drop) 的开合 ---------- */
+  // 分支下拉与搜索补全共用一套 .drop 样式与动效（issue #4/#6）
+  function closeDrops() {
+    document.querySelectorAll('.drop.open').forEach(function (d) { d.classList.remove('open'); });
+  }
+
+  function anyDropOpen() {
+    return !!document.querySelector('.drop.open');
+  }
+
   /* ---------- 排序与过滤 ---------- */
   // 卡片位序：自由重排结果优先，未记录的按项目名稳定排序（不随时间漂移）
   function projectOrder(projects) {
@@ -87,13 +123,92 @@
     return tb - ta;
   }
 
+  /* ---------- 分支选择（issue #4） ---------- */
+  function selBranch(p) {
+    return state.branchSel[p.path] || p.branch;
+  }
+
+  function branchDetailOf(p) {
+    var sel = selBranch(p);
+    if (!sel || sel === p.branch) {
+      return { lastCommitAt: p.lastCommitAt, commits: p.recentCommits };
+    }
+    var d = state.branchDetail[p.path + ' ' + sel];
+    if (d === 'loading') return null; // 懒取中
+    return d || null;
+  }
+
+  function isCurrentBranch(p) {
+    return selBranch(p) === p.branch;
+  }
+
+  function selectBranch(p, name) {
+    if (name === p.branch) delete state.branchSel[p.path];
+    else state.branchSel[p.path] = name;
+    api.setPrefs({ branchSel: state.branchSel });
+    if (name !== p.branch && !state.branchDetail[p.path + ' ' + name]) {
+      state.branchDetail[p.path + ' ' + name] = 'loading';
+      api.branchCommits(p.path, name).then(function (d) {
+        state.branchDetail[p.path + ' ' + name] = d || { lastCommitAt: null, commits: [] };
+        renderAll();
+      });
+    }
+    renderAll();
+  }
+
+  // 分支下拉：kv 区的「分支」改为可开合菜单，列出本地分支及各自最后提交时间
+  function renderBranchKv(kvRow, p) {
+    var branches = p.branches && p.branches.length
+      ? p.branches
+      : (p.branch ? [{ name: p.branch, at: p.lastCommitAt }] : []);
+    if (!branches.length) return;
+
+    var sel = selBranch(p);
+    var wrap = el('span', 'bdrop');
+    wrap.appendChild(document.createTextNode('分支 '));
+    var btn = el('button', 'bdrop-btn mono', sel || '?');
+    btn.type = 'button';
+    btn.appendChild(el('span', 'caret', '▸'));
+    wrap.appendChild(btn);
+    if (!isCurrentBranch(p)) {
+      var nc = el('span', 'outline-pill nc', '非当前分支');
+      wrap.appendChild(nc);
+    }
+
+    var menu = el('div', 'drop bdrop-menu');
+    branches.forEach(function (b) {
+      var item = el('button', 'drop-item' + (b.name === sel ? ' active' : ''));
+      item.type = 'button';
+      item.appendChild(el('span', 'nm mono', b.name));
+      item.appendChild(el('span', 'rt', relTime(b.at)));
+      if (b.name === p.branch) item.appendChild(el('span', 'cur', '当前'));
+      item.addEventListener('click', function (e) {
+        e.stopPropagation();
+        closeDrops();
+        selectBranch(p, b.name);
+      });
+      menu.appendChild(item);
+    });
+    wrap.appendChild(menu);
+
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var willOpen = !menu.classList.contains('open');
+      closeDrops();
+      if (willOpen) menu.classList.add('open');
+    });
+    kvRow.appendChild(wrap);
+  }
+
+  /* ---------- 卡片 ---------- */
   // 卡片高度粗估（px）：贪心填充三列时用，允许误差
   function estH(p, kind) {
     var h = kind === 'big' ? 250 : kind === 'mid' ? 205 : 118;
-    if (p.warnings && p.warnings.length) h += kind === 'compact' ? 26 : 32;
+    if (p.warnings && p.warnings.length && isCurrentBranch(p)) h += kind === 'compact' ? 26 : 32;
     if (state.expanded[p.path]) {
-      h += 24 + (p.recentCommits ? p.recentCommits.length : 0) * 27; // 最近提交
-      if (p.dirtyFiles && p.dirtyFiles.length) h += 26; // 未提交文件摘要行
+      var bd = branchDetailOf(p);
+      h += 24 + (bd && bd.commits ? bd.commits.length : 0) * 27; // 最近提交
+      if (p.dirtyFiles && p.dirtyFiles.length && isCurrentBranch(p)) h += 26; // 未提交文件摘要行
       h += p.github ? 44 + p.github.items.length * 27 : 26; // GitHub 区
       h += 48; // 快捷按钮行
     }
@@ -111,7 +226,6 @@
 
   function canDrag() { return state.band === 'all' && !state.query; }
 
-  /* ---------- 卡片 ---------- */
   // 近一年活跃：GitHub 风格全年贡献热力图，默认收起，点击展开
   function renderActivity(parent, p) {
     var activity = p.activity365 || [];
@@ -241,7 +355,7 @@
     detailPad.appendChild(el('div', 'sec-title', 'GitHub'));
     var gh = p.github;
     if (!gh) {
-      var noToken = state.settings && (!state.settings.githubToken || !state.settings.githubUsername);
+      var noToken = state.settings && !(state.settings.hasGithubToken || state.settings.githubToken);
       detailPad.appendChild(el('div', 'gh-empty', noToken ? '未配置 GitHub' : '无 GitHub 数据（非本人仓库或尚未同步）'));
       return;
     }
@@ -265,20 +379,25 @@
     var detail = el('div', 'detail');
     var din = el('div', 'detail-in');
     var pad = el('div', 'detail-pad');
+    var current = isCurrentBranch(p);
+    var bd = branchDetailOf(p);
 
-    pad.appendChild(el('div', 'sec-title', '最近提交'));
-    if (p.recentCommits.length === 0) {
+    pad.appendChild(el('div', 'sec-title', current ? '最近提交' : '最近提交 · ' + selBranch(p)));
+    if (!bd) {
+      pad.appendChild(el('div', 'gh-empty', '加载分支数据…'));
+    } else if (bd.commits.length === 0) {
       pad.appendChild(el('div', 'gh-empty', '暂无提交记录'));
+    } else {
+      bd.commits.forEach(function (c) {
+        var row = el('div', 'commit');
+        row.appendChild(el('span', 'msg', c.msg));
+        row.appendChild(el('span', 'ago mono', c.rel));
+        pad.appendChild(row);
+      });
     }
-    p.recentCommits.forEach(function (c) {
-      var row = el('div', 'commit');
-      row.appendChild(el('span', 'msg', c.msg));
-      row.appendChild(el('span', 'ago mono', c.rel));
-      pad.appendChild(row);
-    });
 
-    // 未提交文件默认收起：摘要行点击后展开为列表（issue #3）
-    if (p.dirtyFiles.length > 0) {
+    // 未提交文件默认收起：摘要行点击后展开为列表（issue #3）；工作区信息只对当前分支显示（issue #4）
+    if (current && p.dirtyFiles.length > 0) {
       var dt = el('button', 'sec-title dirty-toggle');
       dt.type = 'button';
       dt.appendChild(el('span', 'caret', '▸'));
@@ -405,15 +524,17 @@
     card.appendChild(el('h2', 'proj-name mono', p.name));
     renderMemo(card, p);
 
+    var bd = branchDetailOf(p);
     var kvRow = el('div', 'kv-row');
-    kv(kvRow, '最后提交', relTime(p.lastCommitAt));
+    // 切到非当前分支时，「最后提交」显示该分支的最后提交时间（issue #4）
+    kv(kvRow, '最后提交', relTime(bd ? bd.lastCommitAt : p.lastCommitAt));
     // 分带依据是「最后活动时间」：与最后提交不一致时亮出原因，避免 pill 与提交时间打架
     if (p.lastActivityAt && p.lastActivityAt !== p.lastCommitAt) {
       kv(kvRow, '最近动静', relTime(p.lastActivityAt));
     }
     kv(kvRow, '近7天', p.commits7d + ' 提交');
     if (kind !== 'compact') {
-      if (p.branch) kv(kvRow, '分支', p.branch);
+      renderBranchKv(kvRow, p);
       if (p.aiSessionAt) kv(kvRow, 'AI 会话', relTime(p.aiSessionAt));
       if (p.github && p.github.openIssues > 0) kv(kvRow, '开放 issue', String(p.github.openIssues));
       if (p.hasUpstream && p.behind > 0) kv(kvRow, '落后远程', p.behind + ' 提交');
@@ -421,7 +542,8 @@
     card.appendChild(kvRow);
 
     if (kind !== 'compact') renderActivity(card, p);
-    renderWarns(card, p);
+    // 工作区类信息（警示）只对当前分支显示（issue #4）
+    if (isCurrentBranch(p)) renderWarns(card, p);
 
     renderDetail(card, p);
 
@@ -439,45 +561,148 @@
     return card;
   }
 
-  function attentionCard(board) {
-    var aside = el('aside', 'attn');
+  // 卡片签名：影响 DOM 的输入全在里面，一致则重渲染时复用节点（issue #8）
+  function cardSig(p, kind) {
+    var sel = selBranch(p);
+    var bd = sel !== p.branch ? (state.branchDetail[p.path + ' ' + sel] || null) : null;
+    return JSON.stringify([
+      kind,
+      state.prefs && state.prefs.pinned === p.path,
+      sel,
+      bd,
+      state.settings && (state.settings.hasGithubToken || state.settings.githubToken) ? 1 : 0,
+      p,
+    ]);
+  }
+
+  function getCard(p, kind) {
+    var sig = cardSig(p, kind);
+    var hit = cardCache[p.path];
+    if (hit && hit.sig === sig) return hit.node;
+    var node = projectCard(p, kind);
+    node.setAttribute('data-path', p.path);
+    cardCache[p.path] = { node: node, sig: sig };
+    return node;
+  }
+
+  /* ---------- 「需要关注」面板（issue #7） ---------- */
+  function renderAttnPanel() {
+    attnPanel.innerHTML = '';
+    var board = state.board;
+    if (!board) return;
     var head = el('div', 'attn-head');
     head.appendChild(el('span', 'attn-title', '需要关注'));
-    head.appendChild(el('span', 'mono', board.attention.length + ' 个项目'));
-    head.lastChild.style.fontSize = '11px';
-    head.lastChild.style.color = 'var(--tile-ink2)';
-    aside.appendChild(head);
-    aside.appendChild(el('div', 'attn-num mono', board.stats.attentionCount + '/' + board.stats.total));
-    aside.appendChild(el('div', 'attn-sub', board.attention.length ? '存在未推送提交或滞留改动' : '一切正常，暂无警示'));
-    // 列表上限 5 条，避免长列表把右列顶穿；点击「展开全部」查看剩余
-    var CAP = 5;
-    var items = state.attnFull ? board.attention : board.attention.slice(0, CAP);
-    items.forEach(function (a) {
+    var cnt = el('span', 'mono', board.attention.length + ' 个项目');
+    cnt.style.fontSize = '11px';
+    cnt.style.color = 'var(--tile-ink2)';
+    head.appendChild(cnt);
+    attnPanel.appendChild(head);
+    attnPanel.appendChild(el('div', 'attn-sub', board.attention.length ? '存在未推送提交或滞留改动' : '一切正常，暂无警示'));
+    board.attention.forEach(function (a) {
       var item = el('div', 'attn-item');
       item.appendChild(el('span', 'ic'));
       item.appendChild(el('span', 'nm mono', a.name));
       item.appendChild(el('span', 'ds', a.label));
       item.appendChild(el('span', 'mk'));
       item.addEventListener('click', function () {
-        // 跳到对应卡片并展开
-        state.expanded[a.path] = true;
-        renderAll();
-        var target = grid.querySelector('[data-path="' + CSS.escape(a.path) + '"]');
-        if (target && target.scrollIntoView) target.scrollIntoView({ block: 'nearest' });
+        jumpToProject(a.path);
       });
-      aside.appendChild(item);
+      attnPanel.appendChild(item);
     });
-    if (board.attention.length > CAP) {
-      var more = el('button', 'attn-more', state.attnFull ? '收起' : '展开全部 ' + board.attention.length + ' 条');
-      more.type = 'button';
-      more.addEventListener('click', function (e) {
-        e.stopPropagation();
-        state.attnFull = !state.attnFull;
-        renderAll();
-      });
-      aside.appendChild(more);
+  }
+
+  function setAttnOpen(open) {
+    state.attnOpen = open;
+    attnPanel.classList.toggle('hidden', !open);
+    bellBtn.classList.toggle('on', open);
+    if (open) renderAttnPanel();
+  }
+
+  // 面板/卡片跳转：切回「全部」、清搜索、展开目标卡片并滚动到位
+  function jumpToProject(path) {
+    state.band = 'all';
+    document.querySelectorAll('#nav button').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-band') === 'all');
+    });
+    state.query = '';
+    searchInput.value = '';
+    closeSuggest();
+    setAttnOpen(false);
+    hideSettings();
+    state.expanded[path] = true;
+    renderAll();
+    var target = grid.querySelector('[data-path="' + CSS.escape(path) + '"]');
+    if (target && target.scrollIntoView) target.scrollIntoView({ block: 'nearest' });
+  }
+
+  /* ---------- 搜索自动补全（issue #6） ---------- */
+  function suggestCandidates() {
+    var q = state.query;
+    if (!q || !state.board) return [];
+    var nameHit = [];
+    var memoHit = [];
+    state.board.projects.forEach(function (p) {
+      if (p.name.toLowerCase().indexOf(q) >= 0) nameHit.push(p);
+      else if ((p.memo || '').toLowerCase().indexOf(q) >= 0) memoHit.push(p);
+    });
+    return nameHit.concat(memoHit).slice(0, 8);
+  }
+
+  function closeSuggest() {
+    suggestEl.classList.add('hidden');
+    suggestEl.classList.remove('open');
+    state.suggestIdx = -1;
+  }
+
+  function renderSuggest() {
+    var q = state.query;
+    if (!q || document.activeElement !== searchInput) {
+      closeSuggest();
+      return;
     }
-    return aside;
+    var cands = suggestCandidates();
+    suggestEl.innerHTML = '';
+    if (!cands.length) {
+      suggestEl.appendChild(el('div', 'drop-empty', '无匹配项目'));
+    } else {
+      cands.forEach(function (p, i) {
+        var item = el('button', 'drop-item suggest-item' + (i === state.suggestIdx ? ' active' : ''));
+        item.type = 'button';
+        var nm = el('span', 'nm mono');
+        nm.appendChild(hlFrag(p.name, q));
+        item.appendChild(nm);
+        var inName = p.name.toLowerCase().indexOf(q) >= 0;
+        if (!inName && p.memo) {
+          var sn = el('span', 'rt snip');
+          sn.appendChild(hlFrag(p.memo.slice(0, 40), q));
+          item.appendChild(sn);
+        }
+        // mousedown 抢先于 input blur，保证点击可选中
+        item.addEventListener('mousedown', function (e) {
+          e.preventDefault();
+          pickSuggestion(p);
+        });
+        suggestEl.appendChild(item);
+      });
+    }
+    suggestEl.classList.remove('hidden');
+    suggestEl.classList.add('open');
+  }
+
+  function pickSuggestion(p) {
+    searchInput.value = p.name;
+    state.query = p.name.toLowerCase();
+    state.expanded[p.path] = true;
+    closeSuggest();
+    if (state.band !== 'all' && p.band !== state.band) {
+      state.band = 'all';
+      document.querySelectorAll('#nav button').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute('data-band') === 'all');
+      });
+    }
+    renderAll();
+    var target = grid.querySelector('[data-path="' + CSS.escape(p.path) + '"]');
+    if (target && target.scrollIntoView) target.scrollIntoView({ block: 'nearest' });
   }
 
   /* ---------- 渲染 ---------- */
@@ -492,6 +717,13 @@
     var badge = document.getElementById('attnBadge');
     badge.textContent = board.stats.attentionCount;
     badge.classList.toggle('hidden', board.stats.attentionCount === 0);
+    bellBtn.classList.toggle('grey', board.stats.attentionCount === 0); // issue #7：为 0 置灰
+    if (state.attnOpen) renderAttnPanel();
+
+    // keyed 复用的缓存清理：已不在板上的卡片节点丢弃
+    var alive = {};
+    board.projects.forEach(function (p) { alive[p.path] = 1; });
+    Object.keys(cardCache).forEach(function (k) { if (!alive[k]) delete cardCache[k]; });
 
     if (board.projects.length === 0) {
       var empty = el('div', 'board-empty');
@@ -499,7 +731,6 @@
       empty.appendChild(el('div', null, '在设置里添加扫描根目录，devboard 会自动找出其中含 .git 的项目'));
       var go = el('button', 'btn solid', '去设置');
       go.addEventListener('click', showSettings);
-      empty.appendChild(go);
       grid.appendChild(empty);
       return;
     }
@@ -519,9 +750,7 @@
         return;
       }
       vlist.forEach(function (p) {
-        var c = projectCard(p, 'mid');
-        c.setAttribute('data-path', p.path);
-        grid.appendChild(c);
+        grid.appendChild(getCard(p, 'mid'));
       });
       return;
     }
@@ -537,7 +766,7 @@
 
     state.lastLayout = [bigProj.path].concat(rest.map(function (p) { return p.path; }));
 
-    // 贪心填充三列：大卡固定左上、关注卡固定右上，其余卡片进当前最矮列，优先充满
+    // 贪心填充三列：大卡固定左上，其余卡片进当前最矮列，优先充满（关注卡已移入铃铛面板，issue #7）
     var colL = el('div', 'col big');
     var colM = el('div', 'col col-mid');
     var colR = el('div', 'col col-right');
@@ -545,20 +774,13 @@
     var hs = [0, 0, 0];
 
     if (state.expanded[bigProj.path] === undefined) state.expanded[bigProj.path] = true;
-    var bigCard = projectCard(bigProj, 'big');
-    bigCard.setAttribute('data-path', bigProj.path);
-    colL.appendChild(bigCard);
+    colL.appendChild(getCard(bigProj, 'big'));
     hs[0] = estH(bigProj, 'big');
-
-    colR.appendChild(attentionCard(board));
-    hs[2] = 130 + Math.min(board.attention.length, 5) * 31 + (board.attention.length > 5 ? 32 : 0);
 
     rest.forEach(function (p) {
       var kind = FOCUS_BANDS[p.band] ? 'mid' : 'compact';
-      var c = projectCard(p, kind);
-      c.setAttribute('data-path', p.path);
       var i = hs[0] <= hs[1] && hs[0] <= hs[2] ? 0 : hs[1] <= hs[2] ? 1 : 2;
-      cols[i].appendChild(c);
+      cols[i].appendChild(getCard(p, kind));
       hs[i] += estH(p, kind) + 12;
     });
     grid.appendChild(colL);
@@ -589,9 +811,16 @@
   }
 
   /* ---------- 数据 ---------- */
+  // 扫描指示：顶栏细 spinner +「扫描中…」，期间现有卡片保持不动（issue #8）
+  function setScanning(on) {
+    document.getElementById('scanSpin').classList.toggle('hidden', !on);
+    document.getElementById('scanLabel').textContent = on ? '扫描中' : '最后扫描';
+  }
+
   function load(force) {
     if (state.loading) return Promise.resolve(); // 唤出重扫与定时 tick 去重
     state.loading = true;
+    setScanning(true);
     var promise = force ? api.rescan() : api.getBoard();
     return promise.then(function (board) {
       state.board = board;
@@ -601,16 +830,15 @@
       console.error('board 加载失败', err);
     }).finally(function () {
       state.loading = false;
+      setScanning(false);
     });
   }
 
   function refresh(manual) {
     var btn = document.getElementById('refreshBtn');
     if (manual) btn.classList.add('spin');
-    grid.classList.add('flash');
     load(manual).finally(function () {
       btn.classList.remove('spin');
-      setTimeout(function () { grid.classList.remove('flash'); }, 200);
     });
   }
 
@@ -623,6 +851,8 @@
   var fTerminal = document.getElementById('fTerminal');
   var fHotkey = document.getElementById('fHotkey');
   var fAutoStart = document.getElementById('fAutoStart');
+  var deviceBox = document.getElementById('deviceBox');
+  var deviceTimer = null;
   fHotkey.readOnly = true; // 热键通过按键捕捉录入
 
   function lines(id) {
@@ -669,6 +899,79 @@
     });
   }
 
+  /* ----- GitHub 鉴权（issue #12） ----- */
+  function ghStateText() {
+    var e = document.getElementById('ghConnState');
+    if (state.settings && state.settings.hasGithubToken) {
+      e.textContent = '已连接 · token 经系统加密存储（输入新 token 可更换）';
+    } else {
+      e.textContent = '未连接 · 推荐「设备码授权」或「从 gh CLI 导入」';
+    }
+    fToken.placeholder = (state.settings && state.settings.hasGithubToken) ? '已保存（输入以更换）' : '粘贴 token';
+  }
+
+  function ghAuthResult(ok, text) {
+    var res = document.getElementById('ghAuthRes');
+    res.textContent = text;
+    res.className = 'res ' + (ok ? 'ok' : 'bad');
+  }
+
+  function stopDeviceFlow() {
+    if (deviceTimer) {
+      clearTimeout(deviceTimer);
+      deviceTimer = null;
+    }
+    deviceBox.classList.add('hidden');
+  }
+
+  function pollDevice(deviceCode, intervalSec, deadline) {
+    deviceTimer = setTimeout(function () {
+      api.githubDevicePoll(deviceCode).then(function (r) {
+        if (r.status === 'success') {
+          stopDeviceFlow();
+          state.settings = Object.assign({}, state.settings, { hasGithubToken: true });
+          if (!fUsername.value.trim()) fUsername.value = r.login || '';
+          ghStateText();
+          ghAuthResult(true, '授权成功 · 登录名 ' + (r.login || ''));
+          return;
+        }
+        if (r.status === 'error') {
+          stopDeviceFlow();
+          ghAuthResult(false, r.reason || '授权失败');
+          return;
+        }
+        var next = intervalSec + (r.status === 'slow_down' ? 5 : 0);
+        document.getElementById('dcStatus').textContent = '等待授权…（' + Math.max(0, Math.round((deadline - Date.now()) / 1000)) + 's 后过期）';
+        if (Date.now() < deadline) pollDevice(deviceCode, next, deadline);
+        else {
+          stopDeviceFlow();
+          ghAuthResult(false, '设备码已过期，请重新开始');
+        }
+      }).catch(function () {
+        if (Date.now() < deadline) pollDevice(deviceCode, intervalSec, deadline);
+      });
+    }, intervalSec * 1000);
+  }
+
+  function startDeviceFlow() {
+    var res = document.getElementById('ghAuthRes');
+    res.textContent = '请求设备码…';
+    res.className = 'res';
+    api.githubDeviceStart().then(function (r) {
+      if (!r.ok) {
+        ghAuthResult(false, r.reason || '无法开始设备码授权');
+        return;
+      }
+      res.textContent = '';
+      document.getElementById('dcCode').textContent = r.userCode;
+      document.getElementById('dcStatus').textContent = '等待授权…';
+      deviceBox.classList.remove('hidden');
+      document.getElementById('dcOpen').onclick = function () { api.openExternal(r.verificationUri); };
+      api.openExternal(r.verificationUri);
+      pollDevice(r.deviceCode, r.interval + 1, Date.now() + r.expiresIn * 1000);
+    });
+  }
+
   function showSettings() {
     appEl.classList.add('show-settings');
     api.getSettings().then(function (cfg) {
@@ -678,24 +981,32 @@
       extraList.innerHTML = '';
       (cfg.extraPaths || []).forEach(function (r) { pathRow(extraList, r); });
       document.getElementById('fBlacklist').value = (cfg.blacklist || []).join('\n');
-      fToken.value = cfg.githubToken || '';
+      fToken.value = ''; // token 不下发；留空 = 不改动（issue #12）
       fUsername.value = cfg.githubUsername || '';
       fEditor.value = cfg.editorCmd || '';
       fTerminal.value = cfg.terminalCmd || '';
       fHotkey.value = cfg.hotkey || '';
       fAutoStart.checked = !!cfg.autoStart;
+      ghStateText();
       document.getElementById('settingsMsg').textContent = '';
       document.getElementById('hotkeyErr').textContent = '';
-      ['previewRes', 'testGhRes', 'checkEditorRes', 'checkTerminalRes'].forEach(function (id) {
+      ['previewRes', 'testGhRes', 'checkEditorRes', 'checkTerminalRes', 'ghAuthRes'].forEach(function (id) {
         var e = document.getElementById(id);
         e.textContent = '';
         e.className = 'res';
+      });
+      stopDeviceFlow();
+      // 鉴权入口能力：设备码需应用配置 Client ID，gh 导入需本机 gh CLI
+      api.githubAuthCaps().then(function (caps) {
+        document.getElementById('ghDeviceBtn').style.display = caps.deviceFlow ? '' : 'none';
+        document.getElementById('ghImportBtn').style.display = caps.ghCli ? '' : 'none';
       });
     });
   }
 
   function hideSettings() {
     appEl.classList.remove('show-settings');
+    stopDeviceFlow();
   }
 
   function saveSettings() {
@@ -703,15 +1014,18 @@
       roots: collectPaths(rootsList),
       extraPaths: collectPaths(extraList),
       blacklist: lines('fBlacklist'),
-      githubToken: fToken.value.trim(),
       githubUsername: fUsername.value.trim(),
       editorCmd: fEditor.value.trim() || 'code',
       terminalCmd: fTerminal.value.trim(),
       hotkey: fHotkey.value.trim(),
       autoStart: fAutoStart.checked,
     };
+    var typedToken = fToken.value.trim();
+    if (typedToken) patch.githubToken = typedToken; // 留空 = 保持已存 token（issue #12）
     api.setSettings(patch).then(function (cfg) {
       state.settings = cfg;
+      ghStateText();
+      fToken.value = '';
       return Promise.all([api.getHotkeyError(), api.scanPreview({})]);
     }).then(function (rs) {
       var hkErr = rs[0];
@@ -771,6 +1085,26 @@
       res.classList.add(r.ok ? 'ok' : 'bad');
     });
   });
+  document.getElementById('ghDeviceBtn').addEventListener('click', startDeviceFlow);
+  document.getElementById('dcCancel').addEventListener('click', function () {
+    stopDeviceFlow();
+    ghAuthResult(false, '已取消授权');
+  });
+  document.getElementById('ghImportBtn').addEventListener('click', function () {
+    var res = document.getElementById('ghAuthRes');
+    res.textContent = '导入中…';
+    res.className = 'res';
+    api.githubImportGh().then(function (r) {
+      if (r.ok) {
+        state.settings = Object.assign({}, state.settings, { hasGithubToken: true });
+        if (!fUsername.value.trim() && r.login) fUsername.value = r.login;
+        ghStateText();
+        ghAuthResult(true, '已从 gh 导入 · 登录名 ' + (r.login || ''));
+      } else {
+        ghAuthResult(false, r.reason || '导入失败');
+      }
+    });
+  });
   document.getElementById('checkEditor').addEventListener('click', function () {
     runCheck(fEditor.value || 'code', document.getElementById('checkEditorRes'));
   });
@@ -802,23 +1136,45 @@
     fHotkey.value = parts.join('+');
   });
 
-  document.getElementById('attnBadge').parentElement.addEventListener('click', function () {
-    // 点击铃铛：切到全部并滚动到需要关注卡
+  // 铃铛：开合「需要关注」面板（issue #7）
+  bellBtn.addEventListener('click', function (e) {
+    e.stopPropagation();
     hideSettings();
-    var attn = grid.querySelector('.attn');
-    if (attn && attn.scrollIntoView) attn.scrollIntoView({ block: 'nearest' });
+    setAttnOpen(!state.attnOpen);
   });
 
-  // 搜索框
-  var searchInput = document.getElementById('searchInput');
+  // 搜索框：输入即过滤 + 自动补全（issue #6）
   searchInput.addEventListener('input', function () {
     state.query = searchInput.value.trim().toLowerCase();
+    state.suggestIdx = -1;
     renderAll();
+    renderSuggest();
   });
+  searchInput.addEventListener('focus', function () { renderSuggest(); });
+  searchInput.addEventListener('blur', function () { closeSuggest(); });
   searchInput.addEventListener('keydown', function (e) {
+    var cands = suggestCandidates();
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!cands.length) return;
+      e.preventDefault();
+      var step = e.key === 'ArrowDown' ? 1 : -1;
+      state.suggestIdx = (state.suggestIdx + step + cands.length) % cands.length;
+      renderSuggest();
+      return;
+    }
+    if (e.key === 'Enter') {
+      var pick = state.suggestIdx >= 0 ? cands[state.suggestIdx] : cands[0];
+      if (pick) {
+        e.preventDefault();
+        pickSuggestion(pick);
+      }
+      return;
+    }
     if (e.key === 'Escape') {
       e.stopPropagation();
-      if (searchInput.value) {
+      if (!suggestEl.classList.contains('hidden')) {
+        closeSuggest();
+      } else if (searchInput.value) {
         searchInput.value = '';
         state.query = '';
         renderAll();
@@ -838,12 +1194,20 @@
     });
   });
 
-  // 键盘流：Esc 隐藏到托盘；/ 聚焦搜索（输入框内不劫持）
+  // 点击空白处：关闭浮层（分支下拉 / 补全 / 关注面板）
+  document.addEventListener('click', function (e) {
+    if (anyDropOpen() && !e.target.closest('.bdrop') && !e.target.closest('.search')) closeDrops();
+    if (state.attnOpen && !e.target.closest('#attnPanel') && !e.target.closest('#bellBtn')) setAttnOpen(false);
+  });
+
+  // 键盘流：Esc 逐层关闭（补全/下拉 → 关注面板 → 设置 → 隐藏到托盘）；/ 聚焦搜索
   document.addEventListener('keydown', function (e) {
     var tag = (e.target.tagName || '').toLowerCase();
     var typing = tag === 'input' || tag === 'textarea' || e.target.isContentEditable;
     if (e.key === 'Escape') {
       if (typing) return; // 输入框内的 Esc 由各控件自理
+      if (anyDropOpen()) { closeDrops(); return; }
+      if (state.attnOpen) { setAttnOpen(false); return; }
       if (appEl.classList.contains('show-settings')) hideSettings();
       else api.winClose();
       return;
@@ -855,12 +1219,14 @@
   });
 
   api.onTick(function () { refresh(false); });
+  api.onShowSettings(function () { showSettings(); });
 
   /* ---------- 启动 ---------- */
   renderSkeleton();
   api.getSettings().then(function (cfg) { state.settings = cfg; });
   api.getPrefs().then(function (p) {
     state.prefs = p;
+    state.branchSel = (p && p.branchSel) || {};
     if (state.board) renderAll();
   });
   load(false);

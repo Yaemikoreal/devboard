@@ -1,5 +1,6 @@
 // IPC 注册：board:get / board:rescan / memo:set / quickopen / settings:* / prefs:* / snooze:set
 // 设置页辅助：dialog:pick / util:checkCommand / github:test / scan:preview / win:*
+// 分支详情按需懒取：branch:commits（issue #4）；GitHub 鉴权：github:authCaps / deviceStart / devicePoll / importGh（issue #12）
 'use strict';
 
 const fs = require('fs');
@@ -106,6 +107,13 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   ipcMain.handle('board:get', () => buildBoard(false));
   ipcMain.handle('board:rescan', () => buildBoard(true));
 
+  // 分支详情懒取：切分支时才跑 git log，不进全量扫描（issue #4）
+  ipcMain.handle('branch:commits', (_e, projectPath, branch) => {
+    const p = String(projectPath || '');
+    if (!p || !fs.existsSync(path.join(p, '.git'))) return null;
+    return scanner.branchDetail(p, branch);
+  });
+
   ipcMain.handle('memo:set', (_e, projectPath, text) => {
     store.setMemo(projectPath, String(text || ''));
     return true;
@@ -115,12 +123,18 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     return quickOpen(payload || {}, store.getConfig());
   });
 
-  ipcMain.handle('settings:get', () => store.getConfig());
+  // token 不下发渲染层：只给「是否已配置」，磁盘与 IPC 全程无明文（issue #12）
+  ipcMain.handle('settings:get', () => {
+    const cfg = store.getConfig();
+    return Object.assign({}, cfg, { githubToken: '', hasGithubToken: !!cfg.githubToken });
+  });
 
   ipcMain.handle('settings:set', (_e, patch) => {
-    const cfg = store.setConfig(patch || {});
+    const p = Object.assign({}, patch || {});
+    if (!p.githubToken) delete p.githubToken; // 空值 = 不改动已存 token（清空走 github:importGh 失败态外的显式入口）
+    const cfg = store.setConfig(p);
     applySettings(cfg); // 热键重注册 + 开机自启即时生效
-    return cfg;
+    return Object.assign({}, cfg, { githubToken: '', hasGithubToken: !!cfg.githubToken });
   });
 
   // 保存设置后由渲染层查询热键注册结果（空串 = 成功）
@@ -175,14 +189,42 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     return r;
   });
 
+  // 鉴权入口能力探测：设备码授权需已配置 Client ID；gh 导入需本机 gh CLI 可用（issue #12）
+  ipcMain.handle('github:authCaps', async () => ({
+    deviceFlow: !!github.DEVICE_FLOW_CLIENT_ID,
+    ghCli: await github.ghCliAvailable(),
+  }));
+
+  ipcMain.handle('github:deviceStart', () => github.deviceStart());
+
+  // 设备码轮询；成功即加密落盘 token 并返回实际登录名
+  ipcMain.handle('github:devicePoll', async (_e, deviceCode) => {
+    const r = await github.devicePoll(String(deviceCode || ''));
+    if (r.status !== 'success') return r;
+    const t = await github.testConnection(r.token);
+    if (!t.ok) return { status: 'error', reason: t.reason };
+    store.setConfig({ githubToken: r.token });
+    return { status: 'success', login: t.login };
+  });
+
+  // 从 gh CLI 导入 token：验证有效后加密落盘
+  ipcMain.handle('github:importGh', async () => {
+    const token = await github.importGhToken();
+    if (!token) return { ok: false, reason: '未检测到 gh CLI 登录（gh auth login 后重试）' };
+    const t = await github.testConnection(token);
+    if (!t.ok) return { ok: false, reason: t.reason };
+    store.setConfig({ githubToken: token });
+    return { ok: true, login: t.login };
+  });
+
   // 设置页辅助：扫描预览（用未保存的草稿值跑 discover，不落盘；附带无效路径清单）
-  ipcMain.handle('scan:preview', (_e, draft) => {
+  ipcMain.handle('scan:preview', async (_e, draft) => {
     const cfg = store.getConfig();
     const d = draft || {};
     const roots = Array.isArray(d.roots) ? d.roots : cfg.roots;
     const blacklist = Array.isArray(d.blacklist) ? d.blacklist : cfg.blacklist;
     const extraPaths = Array.isArray(d.extraPaths) ? d.extraPaths : cfg.extraPaths;
-    const paths = scanner.discover(roots, blacklist, extraPaths);
+    const paths = await scanner.discover(roots, blacklist, extraPaths);
     return {
       count: paths.length,
       names: paths.map((p) => path.basename(p)).slice(0, 60),

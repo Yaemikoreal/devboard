@@ -31,14 +31,21 @@
       <button data-band="archive">归档</button>
     </nav>
     <span class="search" title="按名称或备忘过滤">
-      <input type="text" id="searchInput" placeholder="搜索项目" spellcheck="false">
+      <input type="text" id="searchInput" placeholder="搜索项目" spellcheck="false" autocomplete="off">
       <span class="kbd">/</span>
+      <div class="drop suggest hidden" id="suggest"></div>
     </span>
-    <span class="scan mono">最后扫描 <span id="scanTime">--:--</span></span>
+    <span class="scan mono">
+      <span class="scan-spin hidden" id="scanSpin"></span>
+      <span id="scanLabel">最后扫描</span> <span id="scanTime">--:--</span>
+    </span>
     <button class="icon-btn" id="settingsBtn" title="设置"><span class="ic-set"><b></b><b></b></span></button>
-    <button class="icon-btn" title="需要关注"><span class="ic-bell"></span><span class="badge hidden" id="attnBadge">0</span></button>
+    <button class="icon-btn" id="bellBtn" title="需要关注"><span class="ic-bell"></span><span class="badge hidden" id="attnBadge">0</span></button>
     <button class="icon-btn" id="refreshBtn" title="刷新"><span class="ic-ref"></span></button>
   </header>
+
+  <!-- 铃铛开合的「需要关注」面板（issue #7） -->
+  <div class="attn-panel hidden" id="attnPanel"></div>
 
   <!-- 统计行（背景信息，降权） -->
   <section class="stats">
@@ -79,19 +86,39 @@
 
       <div class="set-group">
         <h3>GitHub</h3>
-        <div class="group-desc">仅拉取 owner 是本人的仓库的开放 issues/PR（10 分钟缓存）；fork 的上游仓库自动跳过</div>
+        <div class="group-desc">仅拉取 owner 是本人的仓库的开放 issues/PR（10 分钟缓存）；fork 的上游仓库自动跳过。Token 经系统加密存储，不落明文（issue #12）</div>
         <div class="field">
-          <label>GitHub Token</label>
-          <input type="password" id="fToken" autocomplete="off">
+          <label>连接 GitHub</label>
           <div class="inline-check">
-            <button id="testGhBtn" type="button">测试连接</button>
-            <span class="res" id="testGhRes"></span>
+            <button id="ghDeviceBtn" type="button">设备码授权</button>
+            <button id="ghImportBtn" type="button">从 gh CLI 导入</button>
+            <span class="res" id="ghAuthRes"></span>
+          </div>
+          <div class="hint" id="ghConnState"></div>
+          <!-- 设备码授权流程盒：授权中展示 8 位码与倒计时 -->
+          <div class="device-box hidden" id="deviceBox">
+            <div class="dc-code mono" id="dcCode">----</div>
+            <div class="dc-row">
+              <button class="btn solid" id="dcOpen" type="button">打开 github.com/login/device</button>
+              <button class="btn" id="dcCancel" type="button">取消</button>
+            </div>
+            <div class="hint" id="dcStatus">等待授权…</div>
           </div>
         </div>
         <div class="field">
           <label>GitHub 用户名</label>
           <input type="text" id="fUsername" spellcheck="false">
         </div>
+        <details class="adv" id="ghAdv">
+          <summary>高级：手动粘贴 Token</summary>
+          <div class="field">
+            <input type="password" id="fToken" autocomplete="off" placeholder="粘贴 token">
+            <div class="inline-check">
+              <button id="testGhBtn" type="button">测试连接</button>
+              <span class="res" id="testGhRes"></span>
+            </div>
+          </div>
+        </details>
       </div>
 
       <div class="set-group">

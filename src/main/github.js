@@ -1,7 +1,16 @@
 // GitHub issues/PR 拉取 + 10 分钟 JSON 缓存。仅覆盖 owner 是使用者的仓库，fork 上游自然跳过。
 'use strict';
 
+const { execFile } = require('child_process');
+
 const TTL_MS = 10 * 60 * 1000;
+
+// OAuth Device Flow 需要在 GitHub 注册 OAuth App 后把 Client ID 填到这里（issue #12）；
+// 为空时设置页自动隐藏「设备码授权」入口，改用「从 gh CLI 导入」/ 手动粘贴 token。
+const DEVICE_FLOW_CLIENT_ID = '';
+// Device Flow 申请的 scope：读本人仓库（含私有）的 issues/PR 需要 repo；
+// GitHub OAuth 没有更细的只读 repo scope，公开仓库场景可置空。
+const DEVICE_FLOW_SCOPE = 'repo';
 
 function parseGitHubRemote(url) {
   if (!url) return null;
@@ -107,4 +116,82 @@ async function testConnection(token) {
   }
 }
 
-module.exports = { parseGitHubRemote, fetchIssues, attachFromCache, refreshCache, applyPrWarnings, testConnection };
+/* ---------- 鉴权简化（issue #12） ---------- */
+
+function ghCliAvailable() {
+  return new Promise((resolve) => {
+    execFile('gh', ['--version'], { timeout: 5000 }, (err) => resolve(!err));
+  });
+}
+
+// 从本机已登录的 gh CLI 导入 token（不离开应用的兜底授权路径）
+function importGhToken() {
+  return new Promise((resolve) => {
+    execFile('gh', ['auth', 'token'], { timeout: 5000 }, (err, stdout) => {
+      resolve(err ? null : (String(stdout).trim() || null));
+    });
+  });
+}
+
+// OAuth Device Flow 第一步：取设备码（8 位 user_code 展示给用户）
+async function deviceStart() {
+  if (!DEVICE_FLOW_CLIENT_ID) return { ok: false, reason: '应用尚未配置 OAuth Client ID' };
+  try {
+    const res = await fetch('https://github.com/login/device/code', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: DEVICE_FLOW_CLIENT_ID, scope: DEVICE_FLOW_SCOPE }),
+    });
+    if (!res.ok) return { ok: false, reason: `GitHub API ${res.status}` };
+    const d = await res.json();
+    if (d.error) return { ok: false, reason: d.error_description || d.error };
+    return {
+      ok: true,
+      deviceCode: d.device_code,
+      userCode: d.user_code,
+      verificationUri: d.verification_uri || 'https://github.com/login/device',
+      interval: Math.max(1, d.interval || 5),
+      expiresIn: d.expires_in || 900,
+    };
+  } catch {
+    return { ok: false, reason: '网络错误，无法连接 GitHub' };
+  }
+}
+
+// OAuth Device Flow 第二步：渲染层按 interval 轮询；success 时返回 token
+async function devicePoll(deviceCode) {
+  try {
+    const res = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: DEVICE_FLOW_CLIENT_ID,
+        device_code: deviceCode,
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+      }),
+    });
+    const d = await res.json();
+    if (d.access_token) return { status: 'success', token: d.access_token };
+    if (d.error === 'authorization_pending') return { status: 'pending' };
+    if (d.error === 'slow_down') return { status: 'slow_down' };
+    if (d.error === 'expired_token') return { status: 'error', reason: '设备码已过期，请重新开始' };
+    if (d.error === 'access_denied') return { status: 'error', reason: '已取消授权' };
+    return { status: 'error', reason: d.error_description || d.error || '授权失败' };
+  } catch {
+    return { status: 'error', reason: '网络错误，无法连接 GitHub' };
+  }
+}
+
+module.exports = {
+  parseGitHubRemote,
+  fetchIssues,
+  attachFromCache,
+  refreshCache,
+  applyPrWarnings,
+  testConnection,
+  ghCliAvailable,
+  importGhToken,
+  deviceStart,
+  devicePoll,
+  DEVICE_FLOW_CLIENT_ID,
+};

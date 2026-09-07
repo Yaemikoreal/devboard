@@ -101,6 +101,7 @@ body{
 
 /* 搜索框 */
 .search{
+  position:relative;
   display:flex;align-items:center;gap:6px;background:var(--well);
   border-radius:var(--r-pill);padding:0 12px;height:34px;
 }
@@ -182,7 +183,6 @@ body{
 }
 /* 内容不足一屏时垂直居中，避免重心上浮、底部大空 */
 .grid.sparse{align-content:center;padding-top:12px;padding-bottom:24px}
-.grid.flash{opacity:.55}
 .col{display:flex;flex-direction:column;gap:12px;min-height:0}
 /* 贪心填充三列：大卡 5 格、中列 4 格、右列 3 格，卡片进最矮列优先充满 */
 .big{grid-column:span 5}
@@ -380,18 +380,20 @@ body{
   letter-spacing:.05em;user-select:none;
 }
 
-/* 需要关注 黑卡 */
-.attn{
+/* 需要关注：铃铛开合面板（issue #7，替代原右列黑卡，信息不两处重复） */
+.attn-panel{
+  position:fixed;top:92px;right:24px;width:340px;z-index:60;
+  max-height:min(60vh,520px);overflow-y:auto;
   background:var(--tile);color:var(--tile-ink);
-  border-radius:var(--r-card);box-shadow:var(--shadow-1);
-  padding:14px 16px;flex:none;
-  transition:transform .2s ease,box-shadow .2s ease;
+  border-radius:var(--r-card);box-shadow:var(--shadow-2);
+  padding:14px 16px;
+  transform-origin:top right;
+  animation:drop-in .16s ease;
 }
-.attn:hover{transform:translateY(-2px);box-shadow:var(--shadow-2)}
+.attn-panel.hidden{display:none}
 .attn-head{display:flex;align-items:baseline;justify-content:space-between}
 .attn-title{font-size:13px;font-weight:600}
-.attn-num{font-size:30px;font-weight:700;letter-spacing:-.02em;margin:4px 0 2px;line-height:1}
-.attn-sub{font-size:11px;color:var(--tile-ink2);margin-bottom:6px}
+.attn-sub{font-size:11px;color:var(--tile-ink2);margin:4px 0 6px}
 .attn-item{
   display:flex;align-items:center;gap:10px;
   padding:6px 0;border-top:1px solid rgba(253,252,248,.12);
@@ -406,14 +408,6 @@ body{
 .attn-item .nm{font-weight:600;font-size:12.5px;white-space:nowrap}
 .attn-item .ds{flex:1;font-size:11px;color:var(--tile-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .attn-item .mk{width:8px;height:8px;flex:none;border-radius:50%;background:var(--accent)}
-.attn-more{
-  width:100%;margin-top:4px;padding:6px 0 2px;border:0;
-  border-top:1px solid rgba(253,252,248,.12);background:transparent;
-  color:var(--tile-ink2);font:inherit;font-size:11px;cursor:pointer;
-  letter-spacing:.04em;text-align:center;
-  transition:color .15s ease;
-}
-.attn-more:hover{color:var(--accent)}
 
 /* 骨架屏 */
 .skel{
@@ -501,6 +495,87 @@ body{
 .settings-actions .btn{padding:8px 24px;font-size:13px}
 .settings-msg{font-size:12px;color:var(--ink-3);margin-right:auto}
 .settings-msg.err{color:#c0392b}
+
+/* ---------- 浮层组件 ---------- */
+/* 通用下拉菜单：分支下拉与搜索补全共用（issue #4/#6） */
+.drop{
+  position:absolute;top:calc(100% + 8px);left:0;z-index:70;
+  min-width:200px;max-width:320px;max-height:300px;overflow-y:auto;
+  background:var(--card);border-radius:var(--r-chip);
+  box-shadow:var(--shadow-2);border:1px solid var(--line);
+  padding:5px;
+  opacity:0;transform:translateY(-4px);pointer-events:none;
+  transition:opacity .15s ease,transform .15s ease;
+}
+.drop.open{opacity:1;transform:none;pointer-events:auto}
+.drop-item{
+  display:flex;align-items:baseline;gap:8px;width:100%;
+  border:0;background:transparent;cursor:pointer;text-align:left;
+  border-radius:7px;padding:6px 9px;
+  font:inherit;font-size:12.5px;color:var(--ink);
+}
+.drop-item:hover,.drop-item.active{background:var(--well)}
+.drop-item .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.drop-item .rt{margin-left:auto;flex:none;font-size:10.5px;color:var(--ink-3)}
+.drop-item .cur{
+  flex:none;font-size:10px;font-weight:700;color:var(--ink);
+  background:var(--accent);border-radius:var(--r-pill);padding:1px 7px;
+}
+.drop-item b{color:var(--ink);background:rgba(245,217,10,.55);border-radius:3px;font-weight:700}
+.drop-empty{padding:8px 10px;font-size:12px;color:var(--ink-3)}
+@keyframes drop-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+
+/* 搜索补全列表（issue #6） */
+.suggest{right:0;left:auto;min-width:280px}
+.suggest.hidden{display:none}
+.suggest-item .snip{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 卡片分支下拉（issue #4） */
+.bdrop{position:relative;display:inline-flex;align-items:center;gap:6px}
+.bdrop-btn{
+  border:0;background:transparent;cursor:pointer;padding:0;
+  font:inherit;font-weight:600;color:var(--ink);
+  display:inline-flex;align-items:center;gap:4px;
+  border-bottom:1px dashed var(--ink-3);
+}
+.bdrop-btn:hover{color:var(--ink-2)}
+.bdrop-btn .caret{font-size:9px;transition:transform .2s ease}
+.bdrop:has(.drop.open) .bdrop-btn .caret{transform:rotate(90deg)}
+.bdrop-menu{min-width:220px}
+.outline-pill.nc{margin-left:2px}
+
+/* 顶栏扫描指示（issue #8）：细 spinner，扫描中原位显示 */
+.scan{display:inline-flex;align-items:center;gap:6px}
+.scan-spin{
+  width:11px;height:11px;flex:none;border:1.5px solid var(--ink-3);
+  border-top-color:transparent;border-radius:50%;
+  animation:spin .7s linear infinite;
+}
+.scan-spin.hidden{display:none}
+
+/* 铃铛状态（issue #7）：为 0 置灰；面板展开时高亮 */
+.icon-btn.grey{opacity:.4}
+.icon-btn.on{background:var(--accent)}
+.icon-btn.on .ic-bell,.icon-btn.on .ic-bell::after{background:var(--ink)}
+
+/* 设置页：GitHub 设备码授权盒（issue #12） */
+.device-box{
+  margin-top:10px;padding:14px 16px;border:1px solid var(--line);
+  border-radius:var(--r-chip);background:var(--bg);
+}
+.device-box.hidden{display:none}
+.dc-code{
+  font-size:26px;font-weight:700;letter-spacing:.18em;text-align:center;
+  padding:6px 0 10px;
+}
+.dc-row{display:flex;gap:8px;justify-content:center;margin-bottom:8px}
+.adv{margin:-4px 0 14px}
+.adv summary{
+  cursor:pointer;font-size:12px;color:var(--ink-3);letter-spacing:.03em;
+  padding:4px 0;user-select:none;
+}
+.adv summary:hover{color:var(--ink)}
+.adv[open] summary{margin-bottom:8px}
 
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{transition:none !important;animation:none !important}

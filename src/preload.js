@@ -18,8 +18,16 @@ contextBridge.exposeInMainWorld('devboard', {
   checkCommand: (cmd) => ipcRenderer.invoke('util:checkCommand', cmd),
   testGithub: (token, username) => ipcRenderer.invoke('github:test', token, username),
   scanPreview: (draft) => ipcRenderer.invoke('scan:preview', draft),
+  // 分支详情懒取（issue #4）
+  branchCommits: (projectPath, branch) => ipcRenderer.invoke('branch:commits', projectPath, branch),
+  // GitHub 鉴权简化（issue #12）
+  githubAuthCaps: () => ipcRenderer.invoke('github:authCaps'),
+  githubDeviceStart: () => ipcRenderer.invoke('github:deviceStart'),
+  githubDevicePoll: (deviceCode) => ipcRenderer.invoke('github:devicePoll', deviceCode),
+  githubImportGh: () => ipcRenderer.invoke('github:importGh'),
   winMin: () => ipcRenderer.invoke('win:min'),
   winMax: () => ipcRenderer.invoke('win:max'),
   winClose: () => ipcRenderer.invoke('win:close'),
   onTick: (cb) => ipcRenderer.on('board:tick', cb),
+  onShowSettings: (cb) => ipcRenderer.on('nav:settings', cb),
 });

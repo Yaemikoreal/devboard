@@ -65,9 +65,11 @@ function createWindow() {
   win.on('resize', saveBounds);
   win.on('move', saveBounds);
 
-  // 唤出即主动重扫（渲染层自己也做了防重入）
+  // 唤出即主动重扫（渲染层自己也做了防重入）；延迟一拍让窗口先绘制，避免托盘左键卡顿（issue #9）
   win.on('show', () => {
-    if (win) win.webContents.send('board:tick');
+    setTimeout(() => {
+      if (win) win.webContents.send('board:tick');
+    }, 120);
   });
 
   win.on('close', (e) => {
@@ -93,22 +95,33 @@ function createTray() {
   const icon = nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_BASE64}`);
   tray = new Tray(icon);
   tray.setToolTip('devboard');
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开', click: () => { if (win) { win.show(); win.focus(); } else createWindow(); } },
+  const showPanel = () => {
+    if (win) { win.show(); win.focus(); } else createWindow();
+  };
+  const menu = Menu.buildFromTemplate([
+    { label: '显示面板', click: showPanel },
     {
       label: '立即扫描',
       click: () => {
-        if (win) {
-          win.show();
-          win.focus();
-          win.webContents.send('board:tick');
-        }
+        showPanel();
+        if (win) win.webContents.send('board:tick');
+      },
+    },
+    {
+      label: '设置',
+      click: () => {
+        showPanel();
+        if (win) win.webContents.send('nav:settings');
       },
     },
     { type: 'separator' },
     { label: '退出', click: () => { quitting = true; app.quit(); } },
-  ]));
+  ]);
+  tray.setContextMenu(menu);
+  // 左键只做 显示/隐藏（show 后由渲染层异步触发重扫，不再同步卡住，issue #9）
   tray.on('click', toggleWindow);
+  // Windows 右键兜底：显式弹出菜单，避免某些版本右键无响应（issue #9）
+  tray.on('right-click', () => tray.popUpContextMenu(menu));
 }
 
 // 设置即时生效：重注册热键 + 开机自启；失败原因记录供设置页展示
@@ -155,7 +168,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
-    store = new Store(app.getPath('userData'));
+    store = new Store(app.getPath('userData'), require('./token-vault'));
     ({ buildBoard } = registerIpc({
       store,
       getWindow: () => win,

@@ -38,7 +38,7 @@ app.whenReady().then(() => {
     ipcMain.handle('shell:openExternal', () => true);
     ipcMain.handle('settings:get', () => ({
       roots: ['E:\\myproject'], extraPaths: [], blacklist: ['node_modules'],
-      githubToken: 'mock', githubUsername: 'me', editorCmd: 'code', terminalCmd: '',
+      githubToken: '', hasGithubToken: true, githubUsername: 'me', editorCmd: 'code', terminalCmd: '',
       hotkey: 'Ctrl+Shift+D', autoStart: true,
     }));
     ipcMain.handle('settings:set', () => ({}));
@@ -50,11 +50,16 @@ app.whenReady().then(() => {
     ipcMain.handle('util:checkCommand', () => ({ ok: true, reason: 'mock' }));
     ipcMain.handle('github:test', () => ({ ok: true, login: 'me' }));
     ipcMain.handle('scan:preview', () => ({ count: 8, names: [], invalidRoots: [], invalidExtra: [] }));
+    ipcMain.handle('branch:commits', () => ({ lastCommitAt: new Date().toISOString(), commits: [{ msg: 'mock 分支提交', rel: '2 天前' }] }));
+    ipcMain.handle('github:authCaps', () => ({ deviceFlow: false, ghCli: false }));
+    ipcMain.handle('github:deviceStart', () => ({ ok: false, reason: 'mock' }));
+    ipcMain.handle('github:devicePoll', () => ({ status: 'error', reason: 'mock' }));
+    ipcMain.handle('github:importGh', () => ({ ok: false, reason: 'mock' }));
     ipcMain.handle('win:min', () => {});
     ipcMain.handle('win:max', () => {});
     ipcMain.handle('win:close', () => {});
   } else {
-    const store = new Store(app.getPath('userData'));
+    const store = new Store(app.getPath('userData'), require('../src/main/token-vault'));
     registerIpc({ store, getWindow: () => win, applySettings: () => {} });
   }
 

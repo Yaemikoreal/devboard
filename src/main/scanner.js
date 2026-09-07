@@ -2,32 +2,67 @@
 'use strict';
 
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 const { execFile } = require('child_process');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_DEPTH = 4;
 const AI_SESSION_DIRS = ['.kimi-code', '.claude', '.codex'];
+const MAX_BRANCHES = 50;
+// 扫描总耗时超过该阈值时在控制台输出 breakdown（issue #8）
+const SLOW_SCAN_MS = 3000;
+
+// git 子进程全局并发上限：超过的命令排队，避免多项目同时铺开拖死系统（issue #8）
+const GIT_CONCURRENCY = 6;
+let gitRunning = 0;
+const gitQueue = [];
+
+function gitSlotAcquire() {
+  if (gitRunning < GIT_CONCURRENCY) {
+    gitRunning++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => gitQueue.push(resolve));
+}
+
+function gitSlotRelease() {
+  const next = gitQueue.shift();
+  if (next) next();
+  else gitRunning--;
+}
 
 function git(projectPath, args, timeout = 15000) {
-  return new Promise((resolve, reject) => {
-    execFile('git', ['-C', projectPath].concat(args), { timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
-      if (err) reject(err);
-      else resolve(stdout.trim());
-    });
-  });
+  return gitSlotAcquire().then(
+    () =>
+      new Promise((resolve, reject) => {
+        execFile('git', ['-C', projectPath].concat(args), { timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+          if (err) reject(err);
+          else resolve(stdout.trim());
+        });
+      })
+  ).finally(gitSlotRelease);
+}
+
+async function exists(p) {
+  try {
+    await fsp.access(p);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // 递归找含 .git 的目录，深度上限 MAX_DEPTH；跳过黑名单与 . 开头目录（.git 本身只探测不进入）
 // extraPaths 为逐项指定的补充路径，要求自身含 .git
-function discover(roots, blacklist, extraPaths) {
+async function discover(roots, blacklist, extraPaths) {
   const skip = new Set(blacklist.map((s) => s.toLowerCase()));
   const found = new Map();
 
-  const walk = (dir, depth) => {
+  const walk = async (dir, depth) => {
     let entries;
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      entries = await fsp.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -37,21 +72,18 @@ function discover(roots, blacklist, extraPaths) {
       return; // 已是项目，不再深入（忽略嵌套仓库）
     }
     if (depth >= MAX_DEPTH) return;
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      if (e.name.startsWith('.')) continue;
-      if (skip.has(e.name.toLowerCase())) continue;
-      walk(path.join(dir, e.name), depth + 1);
-    }
+    await Promise.all(
+      entries
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.') && !skip.has(e.name.toLowerCase()))
+        .map((e) => walk(path.join(dir, e.name), depth + 1))
+    );
   };
 
-  for (const root of roots) {
-    if (root && fs.existsSync(root)) walk(path.resolve(root), 0);
-  }
+  await Promise.all(roots.filter(Boolean).map((root) => walk(path.resolve(root), 0).catch(() => {})));
   // 补充路径：逐项指定、含 .git 才收，不再深入
   for (const extra of extraPaths || []) {
-    if (!extra || !fs.existsSync(extra)) continue;
-    if (!fs.existsSync(path.join(extra, '.git'))) continue;
+    if (!extra) continue;
+    if (!(await exists(path.join(extra, '.git')))) continue;
     found.set(path.resolve(extra).toLowerCase(), path.resolve(extra));
   }
   return [...found.values()].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
@@ -62,6 +94,7 @@ function emptyProject(projectPath) {
     path: projectPath,
     name: path.basename(projectPath),
     branch: '',
+    branches: [], // 本地分支列表：[{name, at}]，按最后提交时间倒序，上限 MAX_BRANCHES（issue #4）
     lastCommitAt: null,
     commits7d: 0,
     recentCommits: [],
@@ -83,13 +116,14 @@ function emptyProject(projectPath) {
 }
 
 // AI 会话痕迹：.kimi-code / .claude / .codex 目录内最新文件 mtime（有界遍历）
-function aiSessionAt(projectPath) {
+async function aiSessionAt(projectPath) {
   let latest = 0;
-  const walk = (dir, depth, budget) => {
-    if (latest === Infinity || budget.n <= 0 || depth > 3) return;
+  const budget = { n: 300 };
+  const walk = async (dir, depth) => {
+    if (budget.n <= 0 || depth > 3) return;
     let entries;
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      entries = await fsp.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -98,9 +132,9 @@ function aiSessionAt(projectPath) {
       budget.n--;
       const full = path.join(dir, e.name);
       try {
-        if (e.isDirectory()) walk(full, depth + 1, budget);
+        if (e.isDirectory()) await walk(full, depth + 1);
         else {
-          const st = fs.statSync(full);
+          const st = await fsp.stat(full);
           if (st.mtimeMs > latest) latest = st.mtimeMs;
         }
       } catch { /* 忽略不可读项 */ }
@@ -108,7 +142,7 @@ function aiSessionAt(projectPath) {
   };
   for (const d of AI_SESSION_DIRS) {
     const dir = path.join(projectPath, d);
-    if (fs.existsSync(dir)) walk(dir, 0, { n: 300 });
+    if (await exists(dir)) await walk(dir, 0);
   }
   return latest > 0 ? new Date(latest).toISOString() : null;
 }
@@ -137,18 +171,21 @@ function bandOf(lastActivityAt, now) {
 }
 
 // 未提交改动里最近的文件修改时间（取前 20 个脏文件，改名条目取新路径）
-function dirtyMtime(projectPath, dirtyLines) {
-  let latest = 0;
-  for (const line of dirtyLines.slice(0, 20)) {
-    let rel = line.slice(3).trim();
-    const arrow = rel.indexOf(' -> ');
-    if (arrow >= 0) rel = rel.slice(arrow + 4);
-    if (rel.startsWith('"') && rel.endsWith('"')) rel = rel.slice(1, -1);
-    try {
-      const st = fs.statSync(path.join(projectPath, rel));
-      if (st.mtimeMs > latest) latest = st.mtimeMs;
-    } catch { /* 已删除或不可读 */ }
-  }
+async function dirtyMtime(projectPath, dirtyLines) {
+  const stats = await Promise.all(
+    dirtyLines.slice(0, 20).map(async (line) => {
+      let rel = line.slice(3).trim();
+      const arrow = rel.indexOf(' -> ');
+      if (arrow >= 0) rel = rel.slice(arrow + 4);
+      if (rel.startsWith('"') && rel.endsWith('"')) rel = rel.slice(1, -1);
+      try {
+        return (await fsp.stat(path.join(projectPath, rel))).mtimeMs;
+      } catch {
+        return 0; // 已删除或不可读
+      }
+    })
+  );
+  const latest = Math.max(0, ...stats);
   return latest > 0 ? new Date(latest).toISOString() : null;
 }
 
@@ -164,11 +201,31 @@ function localWarnings(p, now) {
   return warnings;
 }
 
+function parseCommitLines(logOutput) {
+  return logOutput
+    ? logOutput.split('\n').filter(Boolean).map((line) => {
+        const i = line.lastIndexOf('|');
+        return i >= 0
+          ? { msg: line.slice(0, i), rel: line.slice(i + 1) }
+          : { msg: line, rel: '' };
+      })
+    : [];
+}
+
+// 本地分支列表（含各自最后提交时间），按最后提交倒序，超上限截断（issue #4）
+function parseBranches(out) {
+  if (!out) return [];
+  return out.split('\n').filter(Boolean).slice(0, MAX_BRANCHES).map((line) => {
+    const i = line.indexOf('\0');
+    return i >= 0 ? { name: line.slice(0, i), at: line.slice(i + 1) || null } : { name: line, at: null };
+  });
+}
+
 async function scanProject(projectPath, now) {
   const p = emptyProject(projectPath);
   try {
     // 任一可用即视为活仓库；lastCommitAt 为空（空仓）时整体降级
-    const [branch, lastCommitAt, commits7d, recentLog, status, aheadBehind, activityLog, origin] =
+    const [branch, lastCommitAt, commits7d, recentLog, status, aheadBehind, activityLog, origin, branchesOut] =
       await Promise.all([
         git(projectPath, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => ''),
         git(projectPath, ['log', '-1', '--format=%cI']).catch(() => ''),
@@ -178,23 +235,18 @@ async function scanProject(projectPath, now) {
         git(projectPath, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}']).catch(() => null),
         git(projectPath, ['log', '--since=365 days ago', '--format=%cI']).catch(() => ''),
         git(projectPath, ['remote', 'get-url', 'origin']).catch(() => ''),
+        git(projectPath, ['branch', '--sort=-committerdate', '--format=%(refname:short)%00%(committerdate:iso)']).catch(() => ''),
       ]);
 
     p.branch = branch === 'HEAD' ? '' : branch;
+    p.branches = parseBranches(branchesOut);
     p.lastCommitAt = lastCommitAt || null;
     p.commits7d = parseInt(commits7d, 10) || 0;
-    p.recentCommits = recentLog
-      ? recentLog.split('\n').filter(Boolean).map((line) => {
-          const i = line.lastIndexOf('|');
-          return i >= 0
-            ? { msg: line.slice(0, i), rel: line.slice(i + 1) }
-            : { msg: line, rel: '' };
-        })
-      : [];
+    p.recentCommits = parseCommitLines(recentLog);
     const dirtyLines = status ? status.split('\n').filter(Boolean) : [];
     p.dirtyCount = dirtyLines.length;
     p.dirtyFiles = dirtyLines.slice(0, 8).map((l) => l.slice(3).trim());
-    p.dirtyAt = dirtyLines.length ? dirtyMtime(projectPath, dirtyLines) : null;
+    p.dirtyAt = dirtyLines.length ? await dirtyMtime(projectPath, dirtyLines) : null;
     if (aheadBehind) {
       const m = aheadBehind.match(/(\d+)\s+(\d+)/);
       if (m) {
@@ -208,7 +260,7 @@ async function scanProject(projectPath, now) {
   } catch {
     // 坏仓库降级为 only-path 条目
   }
-  p.aiSessionAt = aiSessionAt(projectPath);
+  p.aiSessionAt = await aiSessionAt(projectPath);
   // 最后活动时间 = max(最后提交, AI 会话, 脏文件修改时间)
   p.lastActivityAt = [p.lastCommitAt, p.aiSessionAt, p.dirtyAt]
     .filter(Boolean)
@@ -219,10 +271,41 @@ async function scanProject(projectPath, now) {
   return p;
 }
 
-async function scan(roots, blacklist, extraPaths) {
-  const now = new Date();
-  const paths = discover(roots, blacklist, extraPaths);
-  return Promise.all(paths.map((p) => scanProject(p, now)));
+// 按需取某分支的详情：最后提交时间 + 最近提交列表（issue #4，切分支时才调，不进全量扫描）
+async function branchDetail(projectPath, branch) {
+  const name = String(branch || '');
+  if (!name || name.length > 120) return null;
+  const ref = 'refs/heads/' + name;
+  const ok = await git(projectPath, ['rev-parse', '--verify', '--quiet', ref]).catch(() => '');
+  if (!ok) return null;
+  const [lastCommitAt, recentLog] = await Promise.all([
+    git(projectPath, ['log', '-1', '--format=%cI', ref, '--']).catch(() => ''),
+    git(projectPath, ['log', '-5', '--format=%s|%cr', ref, '--']).catch(() => ''),
+  ]);
+  return { lastCommitAt: lastCommitAt || null, commits: parseCommitLines(recentLog) };
 }
 
-module.exports = { scan, discover, bandOf, localWarnings, emptyProject };
+async function scan(roots, blacklist, extraPaths) {
+  const now = new Date();
+  const t0 = Date.now();
+  const paths = await discover(roots, blacklist, extraPaths);
+  const tDiscover = Date.now();
+  const timings = [];
+  const projects = await Promise.all(
+    paths.map(async (p) => {
+      const s = Date.now();
+      const proj = await scanProject(p, now);
+      timings.push({ name: proj.name, ms: Date.now() - s });
+      return proj;
+    })
+  );
+  const total = Date.now() - t0;
+  if (total > SLOW_SCAN_MS) {
+    const slow = timings.sort((a, b) => b.ms - a.ms).slice(0, 5)
+      .map((t) => `${t.name} ${t.ms}ms`).join(', ');
+    console.log(`[devboard] 扫描耗时 ${total}ms（目录发现 ${tDiscover - t0}ms，${paths.length} 个项目）；最慢: ${slow}`);
+  }
+  return projects;
+}
+
+module.exports = { scan, discover, bandOf, localWarnings, emptyProject, branchDetail };

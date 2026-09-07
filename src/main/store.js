@@ -20,12 +20,16 @@ const DEFAULT_PREFS = {
   pinned: null, // 主攻项目路径
   cardOrder: [], // 用户自由重排的卡片位序（路径数组，优先生效）
   snoozes: {}, // 警示消音：path -> { warningType: label 签名 }
+  branchSel: {}, // 卡片分支下拉选择：path -> 分支名（issue #4）
   windowBounds: null,
 };
 
+// vault：token 加密封存接口（issue #12），由 Electron safeStorage 实现注入（见 token-vault.js）；
+// 缺省（无 vault 或系统加密不可用）时退回明文兜底，保证 CLI 脚本等无 Electron 环境可用。
 class Store {
-  constructor(baseDir) {
+  constructor(baseDir, vault) {
     this.baseDir = baseDir;
+    this.vault = vault || null;
     fs.mkdirSync(baseDir, { recursive: true });
   }
 
@@ -48,9 +52,40 @@ class Store {
     fs.renameSync(tmp, file);
   }
 
+  _canSeal() {
+    return !!(this.vault && this.vault.available());
+  }
+
+  // 落盘前把 githubToken 转为 githubTokenEnc（加密 base64），config.json 不留明文
+  _writeConfig(cfg) {
+    const out = Object.assign({}, cfg);
+    delete out.hasGithubToken;
+    if (this._canSeal()) {
+      out.githubTokenEnc = cfg.githubToken ? this.vault.seal(cfg.githubToken) : '';
+    }
+    delete out.githubToken;
+    this.writeJson('config.json', out);
+  }
+
   getConfig() {
     const raw = this.readJson('config.json', {});
+    // 迁移旧明文 token：读到时立即改写为加密存储（issue #12）
+    if (raw.githubToken && this._canSeal()) {
+      const migrated = Object.assign({}, DEFAULT_CONFIG, raw, {
+        githubTokenEnc: this.vault.seal(raw.githubToken),
+      });
+      delete migrated.githubToken;
+      this.writeJson('config.json', migrated);
+      raw.githubTokenEnc = migrated.githubTokenEnc;
+      delete raw.githubToken;
+    }
     const cfg = Object.assign({}, DEFAULT_CONFIG, raw);
+    if (raw.githubTokenEnc && this._canSeal()) {
+      cfg.githubToken = this.vault.unseal(raw.githubTokenEnc) || '';
+    } else if (raw.githubTokenEnc && !this._canSeal()) {
+      cfg.githubToken = ''; // 有密文但无法解密（如跨机拷贝），按未配置处理
+    }
+    delete cfg.githubTokenEnc;
     if (!Array.isArray(cfg.roots) || cfg.roots.length === 0) cfg.roots = DEFAULT_CONFIG.roots.slice();
     if (!Array.isArray(cfg.blacklist)) cfg.blacklist = DEFAULT_CONFIG.blacklist.slice();
     if (!Array.isArray(cfg.extraPaths)) cfg.extraPaths = [];
@@ -59,7 +94,7 @@ class Store {
 
   setConfig(patch) {
     const cfg = Object.assign(this.getConfig(), patch || {});
-    this.writeJson('config.json', cfg);
+    this._writeConfig(cfg);
     return cfg;
   }
 
@@ -68,6 +103,7 @@ class Store {
     const prefs = Object.assign({}, DEFAULT_PREFS, raw);
     if (!Array.isArray(prefs.cardOrder)) prefs.cardOrder = [];
     if (!prefs.snoozes || typeof prefs.snoozes !== 'object') prefs.snoozes = {};
+    if (!prefs.branchSel || typeof prefs.branchSel !== 'object') prefs.branchSel = {};
     return prefs;
   }
 
