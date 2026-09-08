@@ -29,5 +29,7 @@ contextBridge.exposeInMainWorld('devboard', {
   winMax: () => ipcRenderer.invoke('win:max'),
   winClose: () => ipcRenderer.invoke('win:close'),
   onTick: (cb) => ipcRenderer.on('board:tick', cb),
+  // 后台重扫完成后的整板补丁（issue #22）
+  onBoardPatch: (cb) => ipcRenderer.on('board:patch', (_e, board) => cb(board)),
   onShowSettings: (cb) => ipcRenderer.on('nav:settings', cb),
 });

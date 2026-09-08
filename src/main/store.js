@@ -134,6 +134,17 @@ class Store {
     this.writeJson('github-cache.json', cache);
   }
 
+  // 本地扫描磁盘缓存（issue #22）：projects[path] = { ...project, headSha }（issue #23 分档用）
+  getScanCache() {
+    const c = this.readJson('scan-cache.json', { scannedAt: 0, projects: {} });
+    if (!c.projects || typeof c.projects !== 'object') c.projects = {};
+    return c;
+  }
+
+  setScanCache(cache) {
+    this.writeJson('scan-cache.json', cache);
+  }
+
   getLastNotifyDate() {
     return this.readJson('meta.json', {}).lastNotifyDate || '';
   }

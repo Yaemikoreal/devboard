@@ -820,19 +820,32 @@
   function load(force) {
     if (state.loading) return Promise.resolve(); // 唤出重扫与定时 tick 去重
     state.loading = true;
+    state.awaitPatch = false;
     setScanning(true);
     var promise = force ? api.rescan() : api.getBoard();
     return promise.then(function (board) {
       state.board = board;
       renderAll();
       console.log('[devboard] rendered'); // 供 scripts/screenshot.js 等待
+      // 缓存先出（issue #22）：陈旧数据已渲染，扫描指示保持，等后台重扫补丁到达再熄灭
+      if (board && board.fromCache) state.awaitPatch = true;
     }).catch(function (err) {
       console.error('board 加载失败', err);
     }).finally(function () {
       state.loading = false;
-      setScanning(false);
+      if (!state.awaitPatch) setScanning(false);
     });
   }
+
+  // 后台重扫补丁（issue #22）：整板替换渲染；若期间用户又在手动刷新则丢弃
+  api.onBoardPatch(function (board) {
+    if (state.loading) return;
+    state.awaitPatch = false;
+    state.board = board;
+    renderAll();
+    setScanning(false);
+    console.log('[devboard] patched'); // 供 scripts/screenshot.js 等待（DEVBOARD_WAIT_PATCH=1）
+  });
 
   function refresh(manual) {
     var btn = document.getElementById('refreshBtn');

@@ -18,6 +18,9 @@ const GIT_CONCURRENCY = 6;
 let gitRunning = 0;
 const gitQueue = [];
 
+// 单项目扫描预算：超时降级为缓存数据（issue #24）
+const PROJECT_SCAN_BUDGET_MS = 3000;
+
 function gitSlotAcquire() {
   if (gitRunning < GIT_CONCURRENCY) {
     gitRunning++;
@@ -32,7 +35,7 @@ function gitSlotRelease() {
   else gitRunning--;
 }
 
-function git(projectPath, args, timeout = 15000) {
+function git(projectPath, args, timeout = 5000) {
   return gitSlotAcquire().then(
     () =>
       new Promise((resolve, reject) => {
@@ -105,6 +108,9 @@ function emptyProject(projectPath) {
     behind: 0,
     hasUpstream: false,
     activity365: new Array(365).fill(0),
+    activityDate: null, // activity365 构建时的本地日期，供缓存平移对齐
+    headSha: null, // 当前 HEAD 提交哈希，activity365 分档缓存的比对键（issue #23）
+    degraded: false, // 扫描超时降级为缓存数据时为 true（issue #24）
     aiSessionAt: null,
     lastActivityAt: null,
     memo: '',
@@ -158,6 +164,25 @@ function buildActivity365(logOutput, now) {
     if (idx >= 0 && idx < 365) counts[idx]++;
   }
   return counts;
+}
+
+// 缓存的 activity365 按天数平移对齐到今天的窗口（HEAD 未变时复用，issue #23）：
+// cachedDate 是构建缓存时的「今天」(YYYY-MM-DD)，每过一天最旧的一格出窗、末尾补 0
+function shiftActivity365(cachedArr, cachedDate, now) {
+  const out = new Array(365).fill(0);
+  if (!Array.isArray(cachedArr)) return out;
+  const cachedDay = Date.parse(cachedDate + 'T00:00:00');
+  if (!Number.isFinite(cachedDay)) return cachedArr.slice(0, 365);
+  const todayDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const shift = Math.round((todayDay - cachedDay) / DAY_MS);
+  if (shift <= 0) return cachedArr.slice(0, 365);
+  if (shift >= 365) return out;
+  for (let i = 0; i + shift < 365; i++) out[i] = cachedArr[i + shift] || 0;
+  return out;
+}
+
+function localDateStr(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
 function bandOf(lastActivityAt, now) {
@@ -221,9 +246,18 @@ function parseBranches(out) {
   });
 }
 
-async function scanProject(projectPath, now) {
+async function scanProject(projectPath, now, opts) {
   const p = emptyProject(projectPath);
+  const cached = opts && opts.cached;
   try {
+    // 先取 HEAD sha：与缓存一致则跳过最慢的 365 天日志（issue #23 快慢分档）
+    const headSha = await git(projectPath, ['rev-parse', 'HEAD']).catch(() => '');
+    p.headSha = headSha || null;
+    const reuseActivity = !!(
+      cached && cached.headSha && headSha && cached.headSha === headSha &&
+      Array.isArray(cached.activity365) && cached.activity365.length === 365
+    );
+
     // 任一可用即视为活仓库；lastCommitAt 为空（空仓）时整体降级
     const [branch, lastCommitAt, commits7d, recentLog, status, aheadBehind, activityLog, origin, branchesOut] =
       await Promise.all([
@@ -233,7 +267,9 @@ async function scanProject(projectPath, now) {
         git(projectPath, ['log', '-5', '--format=%s|%cr']).catch(() => ''),
         git(projectPath, ['status', '--porcelain']).catch(() => ''),
         git(projectPath, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}']).catch(() => null),
-        git(projectPath, ['log', '--since=365 days ago', '--format=%cI']).catch(() => ''),
+        reuseActivity
+          ? Promise.resolve(null)
+          : git(projectPath, ['log', '--since=365 days ago', '--format=%cI']).catch(() => ''),
         git(projectPath, ['remote', 'get-url', 'origin']).catch(() => ''),
         git(projectPath, ['branch', '--sort=-committerdate', '--format=%(refname:short)%00%(committerdate:iso)']).catch(() => ''),
       ]);
@@ -255,7 +291,10 @@ async function scanProject(projectPath, now) {
         p.behind = parseInt(m[2], 10);
       }
     }
-    p.activity365 = buildActivity365(activityLog, now);
+    p.activity365 = reuseActivity
+      ? shiftActivity365(cached.activity365, cached.activityDate, now)
+      : buildActivity365(activityLog, now);
+    p.activityDate = localDateStr(now);
     p.originUrl = origin || null;
   } catch {
     // 坏仓库降级为 only-path 条目
@@ -285,26 +324,51 @@ async function branchDetail(projectPath, branch) {
   return { lastCommitAt: lastCommitAt || null, commits: parseCommitLines(recentLog) };
 }
 
-async function scan(roots, blacklist, extraPaths) {
+async function scan(roots, blacklist, extraPaths, opts) {
   const now = new Date();
+  const cache = (opts && opts.cache) || { projects: {} };
+  const onLate = opts && opts.onLate;
   const t0 = Date.now();
   const paths = await discover(roots, blacklist, extraPaths);
   const tDiscover = Date.now();
   const timings = [];
+  const late = [];
   const projects = await Promise.all(
     paths.map(async (p) => {
+      const resolved = path.resolve(p);
+      const cached = cache.projects[resolved] || null;
       const s = Date.now();
-      const proj = await scanProject(p, now);
-      timings.push({ name: proj.name, ms: Date.now() - s });
+      // 单项目 3s 预算：超时降级为缓存数据（带 degraded 标记），无缓存则给空壳（issue #24）
+      // 真实扫描不取消：完成后经 onLate 回补缓存，避免慢仓库永远拿不到数据
+      let lost = false;
+      let timeoutId;
+      const budget = new Promise((resolve) => {
+        timeoutId = setTimeout(() => {
+          lost = true;
+          const fallback = cached
+            ? Object.assign(emptyProject(resolved), cached, { degraded: true })
+            : Object.assign(emptyProject(resolved), { degraded: true });
+          resolve(fallback);
+        }, PROJECT_SCAN_BUDGET_MS);
+      });
+      const real = scanProject(resolved, now, { cached });
+      const proj = await Promise.race([real, budget]);
+      clearTimeout(timeoutId);
+      if (lost && onLate) {
+        late.push(real.then((fresh) => { onLate(resolved, fresh); }).catch(() => {}));
+      }
+      timings.push({ name: proj.name, ms: Date.now() - s, degraded: proj.degraded });
       return proj;
     })
   );
   const total = Date.now() - t0;
   if (total > SLOW_SCAN_MS) {
     const slow = timings.sort((a, b) => b.ms - a.ms).slice(0, 5)
-      .map((t) => `${t.name} ${t.ms}ms`).join(', ');
+      .map((t) => `${t.name} ${t.ms}ms${t.degraded ? '(降级)' : ''}`).join(', ');
     console.log(`[devboard] 扫描耗时 ${total}ms（目录发现 ${tDiscover - t0}ms，${paths.length} 个项目）；最慢: ${slow}`);
   }
+  // settled：全部迟到的真实扫描落地后 resolve（无迟到项则为已解决的空 Promise）
+  projects.settled = Promise.all(late);
   return projects;
 }
 

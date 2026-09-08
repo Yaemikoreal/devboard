@@ -63,11 +63,10 @@ function applySnoozes(projects, snoozes) {
 
 function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   let refreshInFlight = false;
+  let scanInFlight = false;
 
-  // 本地 git 实时扫 + GitHub 读缓存；缓存缺失/过期时后台异步刷新
-  async function buildBoard(forceGithubRefresh) {
-    const config = store.getConfig();
-    const projects = await scanner.scan(config.roots, config.blacklist, config.extraPaths);
+  // 拼装 board：memos + GitHub 缓存挂接 + 警示消音 + 统计（缓存路径与新鲜扫描共用）
+  function assembleBoard(projects, config, fromCache) {
     const memos = store.getMemos();
     for (const p of projects) p.memo = memos[p.path] || '';
 
@@ -75,6 +74,86 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     github.applyPrWarnings(projects);
     applySnoozes(projects, store.getPrefs().snoozes);
 
+    // originUrl 仅为内部解析用，不下发渲染层
+    const out = projects.map((p) => {
+      const q = Object.assign({}, p);
+      delete q.originUrl;
+      return q;
+    });
+
+    const attention = out
+      .filter((p) => p.warnings.length > 0)
+      .map((p) => ({ path: p.path, name: p.name, label: p.warnings.map((w) => w.label).join('，') }));
+
+    return {
+      board: {
+        scannedAt: new Date().toISOString(),
+        fromCache: !!fromCache,
+        stats: {
+          total: out.length,
+          commits7d: out.reduce((s, p) => s + p.commits7d, 0),
+          attentionCount: attention.length,
+        },
+        attention,
+        projects: out,
+      },
+      stale,
+    };
+  }
+
+  // 全量扫描（HEAD 分档 + 3s 预算），成功后写磁盘缓存（issue #22/#23/#24）
+  // 超预算的慢项目由 onLate 在真实扫描完成后回补缓存，避免永远拿不到数据
+  async function scanAndCache() {
+    const config = store.getConfig();
+    const cache = store.getScanCache();
+    const lateUpdates = [];
+    const projects = await scanner.scan(config.roots, config.blacklist, config.extraPaths, {
+      cache,
+      onLate: (projectPath, fresh) => {
+        lateUpdates.push(fresh);
+        const cur = store.getScanCache();
+        cur.projects[projectPath] = fresh;
+        cur.scannedAt = new Date().toISOString();
+        store.setScanCache(cur);
+      },
+    });
+    const next = { scannedAt: new Date().toISOString(), projects: {} };
+    for (const p of projects) {
+      // 降级条目保留旧缓存（迟到回补会覆盖）；originUrl 一并缓存以便重启后 GitHub 挂接
+      next.projects[p.path] = p.degraded && cache.projects[p.path] ? cache.projects[p.path] : p;
+    }
+    store.setScanCache(next);
+    return { projects, config, settled: projects.settled || Promise.resolve() };
+  }
+
+  // 后台重扫：完成后给渲染层推补丁（issue #22）；在飞则去重
+  function rescanInBackground() {
+    if (scanInFlight) return;
+    scanInFlight = true;
+    const sendPatch = (board) => {
+      const win = getWindow && getWindow();
+      if (win && !win.isDestroyed()) win.webContents.send('board:patch', board);
+    };
+    scanAndCache()
+      .then(({ projects, config, settled }) => {
+        const { board, stale } = assembleBoard(projects, config, false);
+        maybeRefreshGithub(false, stale, projects, config);
+        sendPatch(board);
+        // 有降级条目时，等迟到的真实扫描全部落地后再推一次最终补丁
+        if (projects.some((p) => p.degraded)) {
+          settled.then(() => {
+            const cur = store.getScanCache();
+            const finalProjects = projects.map((p) => (p.degraded && cur.projects[p.path]) || p);
+            const { board: finalBoard } = assembleBoard(finalProjects, config, false);
+            sendPatch(finalBoard);
+          });
+        }
+      })
+      .catch((err) => console.error('[devboard] 后台重扫失败', err))
+      .finally(() => { scanInFlight = false; });
+  }
+
+  function maybeRefreshGithub(forceGithubRefresh, stale, projects, config) {
     if ((forceGithubRefresh || stale.length > 0) && !refreshInFlight) {
       refreshInFlight = true;
       const remotes = forceGithubRefresh
@@ -84,24 +163,24 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
         : stale;
       github.refreshCache(remotes, config, store).finally(() => { refreshInFlight = false; });
     }
+  }
 
-    // originUrl 仅为内部解析用，不下发渲染层
-    for (const p of projects) delete p.originUrl;
-
-    const attention = projects
-      .filter((p) => p.warnings.length > 0)
-      .map((p) => ({ path: p.path, name: p.name, label: p.warnings.map((w) => w.label).join('，') }));
-
-    return {
-      scannedAt: new Date().toISOString(),
-      stats: {
-        total: projects.length,
-        commits7d: projects.reduce((s, p) => s + p.commits7d, 0),
-        attentionCount: attention.length,
-      },
-      attention,
-      projects,
-    };
+  // board:get：有磁盘缓存则陈旧数据先出 + 后台重扫补丁更新（issue #22）；无缓存走全量
+  async function buildBoard(forceGithubRefresh) {
+    if (!forceGithubRefresh) {
+      const cache = store.getScanCache();
+      const cachedProjects = Object.values(cache.projects);
+      if (cachedProjects.length > 0) {
+        const config = store.getConfig();
+        const { board } = assembleBoard(cachedProjects, config, true);
+        rescanInBackground();
+        return board;
+      }
+    }
+    const { projects, config } = await scanAndCache();
+    const { board, stale } = assembleBoard(projects, config, false);
+    maybeRefreshGithub(forceGithubRefresh, stale, projects, config);
+    return board;
   }
 
   ipcMain.handle('board:get', () => buildBoard(false));

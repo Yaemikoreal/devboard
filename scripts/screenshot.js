@@ -79,25 +79,35 @@ app.whenReady().then(() => {
   });
   win.loadFile(path.join(__dirname, '..', 'src', 'renderer', 'index.html'));
 
-  // 渲染层首次 board:get 渲染完成时会打标记
+  let rendered = false;
+  // 渲染层首次 board:get 渲染完成时会打标记；DEVBOARD_WAIT_PATCH=1 时继续等后台重扫补丁（issue #22 验证）
   win.webContents.on('console-message', (e) => {
-    if (e.message && e.message.includes('[devboard] rendered')) {
-      if (process.env.DEVBOARD_SHOT_SETTINGS === '1') {
-        // 设置页截图：展开设置视图再拍
-        win.webContents.executeJavaScript(
-          "document.getElementById('settingsBtn').click(); void 0"
-        ).then(() => setTimeout(capture, 1200));
-        return;
-      }
-      if (process.env.DEVBOARD_SHOT_JS) {
-        // 自定义前置脚本（如点击分带筛选）后再拍
-        win.webContents.executeJavaScript(process.env.DEVBOARD_SHOT_JS + '; void 0')
-          .then(() => setTimeout(capture, 1200));
-        return;
-      }
-      setTimeout(capture, 1500); // 等展开动画与柱图稳定
+    const msg = e.message || '';
+    if (msg.includes('[devboard] rendered')) {
+      rendered = true;
+      if (process.env.DEVBOARD_WAIT_PATCH === '1') return; // 等 patched
+      afterRender();
+    } else if (msg.includes('[devboard] patched') && rendered && process.env.DEVBOARD_WAIT_PATCH === '1') {
+      afterRender();
     }
   });
+
+  function afterRender() {
+    if (process.env.DEVBOARD_SHOT_SETTINGS === '1') {
+      // 设置页截图：展开设置视图再拍
+      win.webContents.executeJavaScript(
+        "document.getElementById('settingsBtn').click(); void 0"
+      ).then(() => setTimeout(capture, 1200));
+      return;
+    }
+    if (process.env.DEVBOARD_SHOT_JS) {
+      // 自定义前置脚本（如点击分带筛选）后再拍
+      win.webContents.executeJavaScript(process.env.DEVBOARD_SHOT_JS + '; void 0')
+        .then(() => setTimeout(capture, 1200));
+      return;
+    }
+    setTimeout(capture, 1500); // 等展开动画与柱图稳定
+  }
   setTimeout(capture, 30000); // 兜底：30 秒未渲染完也截图退出
 });
 
