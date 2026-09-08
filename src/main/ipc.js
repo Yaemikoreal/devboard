@@ -77,6 +77,33 @@ function checkCommand(cmd) {
   });
 }
 
+// AI 工具品牌图标（issue #21）：内联单色 SVG 标识 + 品牌底色方块
+// 来源：claude=simple-icons anthropic / codex=simple-icons openai(v13，新版已下架) / grok=simple-icons x；
+// kimi 无官方条目（simple-icons 未收录 Moonshot），沿用 demos/demo-f-overview.html 的近似标（K 字）；
+// terminal 为自定义工具的通用兜底图标
+const AI_TOOL_ICONS = {
+  claude: {
+    bg: '#d97757',
+    svg: '<path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z" fill="#fff"/>',
+  },
+  codex: {
+    bg: '#202020',
+    svg: '<path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" fill="#fff"/>',
+  },
+  kimi: {
+    bg: '#101010',
+    svg: '<text x="12" y="17" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">K</text>',
+  },
+  grok: {
+    bg: '#000000',
+    svg: '<path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z" fill="#fff"/>',
+  },
+  terminal: {
+    bg: '#322e27',
+    svg: '<path d="M5.5 7l4.5 4-4.5 4M11.5 15H18" stroke="#f5d90a" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+  },
+};
+
 // 默认 AI 工具清单；设置页可增删自定义项（config.aiTools）与之合并（issue #15）
 const DEFAULT_AI_TOOLS = [
   { id: 'claude', label: 'Claude Code', cmd: 'claude' },
@@ -227,14 +254,29 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   });
 
   // AI 工具清单：默认四项 + config.aiTools 自定义项，逐项 where 探测安装情况（issue #15）
+  // 每项随发品牌 logo（issue #21）；自定义项的 logo 键名映射到已有图标，缺省通用终端图标
   ipcMain.handle('aitools:list', async (_e, _config) => {
     const cfg = store.getConfig();
     const custom = (cfg.aiTools || [])
-      .map((t, i) => ({ id: 'custom-' + i, label: String(t.label || t.cmd || ''), cmd: String(t.cmd || '').trim() }))
+      .map((t, i) => ({
+        id: 'custom-' + i,
+        label: String(t.label || t.cmd || ''),
+        cmd: String(t.cmd || '').trim(),
+        logoKey: typeof t.logo === 'string' ? t.logo : '',
+      }))
       .filter((t) => t.cmd);
     const tools = DEFAULT_AI_TOOLS.concat(custom);
     return Promise.all(
-      tools.map(async (t) => Object.assign({}, t, { installed: (await checkCommand(t.cmd)).ok }))
+      tools.map(async (t) => {
+        const icon = AI_TOOL_ICONS[t.logoKey] || AI_TOOL_ICONS[t.id] || AI_TOOL_ICONS.terminal;
+        return {
+          id: t.id,
+          label: t.label,
+          cmd: t.cmd,
+          installed: (await checkCommand(t.cmd)).ok,
+          logo: icon,
+        };
+      })
     );
   });
 
@@ -369,4 +411,4 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   return { buildBoard };
 }
 
-module.exports = { registerIpc };
+module.exports = { registerIpc, AI_TOOL_ICONS };

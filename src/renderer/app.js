@@ -270,7 +270,8 @@
       var d = new Date(first + i * DAY_MS);
       var lvl = n === 0 ? 0 : n < 3 ? 1 : n < 7 ? 2 : 3;
       var cell = el('i', 'cell' + (lvl ? ' l' + lvl : ''));
-      cell.title = (d.getMonth() + 1) + '月' + d.getDate() + '日 · ' + (n ? n + ' 次提交' : '无提交');
+      // 悬停气泡（issue #19）：样式化深色气泡替代原生 title，空白占位格不写 tip
+      cell.dataset.tip = (d.getMonth() + 1) + '月' + d.getDate() + '日 · ' + (n ? n + ' 次提交' : '无提交');
       gridEl.appendChild(cell);
     });
     container.appendChild(gridEl);
@@ -418,6 +419,29 @@
     renderTools();
   }
 
+  /* ---------- 热力图悬停气泡（issue #19）：总览全局图与详情面板项目图共用 ---------- */
+  var heatTip = el('div', 'heat-tip');
+  document.body.appendChild(heatTip);
+  document.addEventListener('mouseover', function (e) {
+    var c = e.target && e.target.closest ? e.target.closest('.cell') : null;
+    if (!c || c.classList.contains('blank') || !c.dataset.tip || !c.closest('.gheat,.p-heat')) {
+      heatTip.style.opacity = 0;
+      return;
+    }
+    heatTip.textContent = c.dataset.tip;
+    heatTip.style.opacity = 1;
+    // 气泡 fixed 定位跟随格子；贴窗口左右缘时钳制内收（面板滚动经 scroll 捕获隐藏）
+    var r = c.getBoundingClientRect();
+    var cx = r.left + r.width / 2;
+    var half = heatTip.offsetWidth / 2 + 8;
+    if (cx + half > window.innerWidth) cx = window.innerWidth - half;
+    else if (cx < half) cx = half;
+    heatTip.style.left = cx + 'px';
+    heatTip.style.top = (r.top - 8) + 'px';
+  });
+  document.addEventListener('mouseleave', function () { heatTip.style.opacity = 0; }, true);
+  document.addEventListener('scroll', function () { heatTip.style.opacity = 0; }, true);
+
   /* ---------- 工作台 · AI 工具（issue #15） ---------- */
   function installedTools() {
     return (state.aiTools || []).filter(function (t) { return t.installed; });
@@ -435,10 +459,17 @@
     }).catch(function () { state.aiTools = []; });
   }
 
+  // 工具按钮：左侧 22px 品牌徽章 + 名称 + 命令（issue #21，工作台与详情面板共用）
   function toolButton(t, onPick) {
-    var b = el('button', 'tool-btn', t.label);
+    var b = el('button', 'tool-btn');
     b.type = 'button';
     b.title = '在终端启动 ' + t.cmd;
+    var logo = el('span', 'tool-logo');
+    var icon = t.logo || { bg: '#322e27', svg: '' };
+    logo.style.background = icon.bg;
+    logo.innerHTML = '<svg viewBox="0 0 24 24">' + icon.svg + '</svg>';
+    b.appendChild(logo);
+    b.appendChild(el('span', 'nm', t.label));
     b.appendChild(el('span', 'cmd', t.cmd));
     b.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -1139,8 +1170,9 @@
     listEl.appendChild(row);
   }
 
-  // AI 工具自定义清单行（label + cmd，issue #15，存 config.aiTools）
-  function aiToolRow(label, cmd) {
+  // AI 工具自定义清单行（label + cmd + 图标选择，issue #15/#21，存 config.aiTools）
+  var AI_ICON_CHOICES = [['', '默认（终端）'], ['claude', 'Claude'], ['codex', 'Codex'], ['kimi', 'Kimi'], ['grok', 'Grok']];
+  function aiToolRow(label, cmd, logoKey) {
     var row = el('div', 'path-row');
     var l = el('input');
     l.type = 'text';
@@ -1152,11 +1184,19 @@
     c.value = cmd || '';
     c.placeholder = '命令（如 kimi）';
     c.spellcheck = false;
+    var sel = el('select');
+    AI_ICON_CHOICES.forEach(function (pair) {
+      var o = el('option', null, pair[1]);
+      o.value = pair[0];
+      sel.appendChild(o);
+    });
+    sel.value = logoKey || '';
     var del = el('button', 'del', '删除');
     del.type = 'button';
     del.addEventListener('click', function () { row.remove(); });
     row.appendChild(l);
     row.appendChild(c);
+    row.appendChild(sel);
     row.appendChild(del);
     aiToolsListEl.appendChild(row);
   }
@@ -1166,7 +1206,11 @@
     Array.prototype.forEach.call(aiToolsListEl.querySelectorAll('.path-row'), function (row) {
       var inputs = row.querySelectorAll('input');
       var cmd = inputs[1].value.trim();
-      if (cmd) out.push({ label: inputs[0].value.trim() || cmd, cmd: cmd });
+      if (!cmd) return;
+      var item = { label: inputs[0].value.trim() || cmd, cmd: cmd };
+      var logo = row.querySelector('select').value;
+      if (logo) item.logo = logo;
+      out.push(item);
     });
     return out;
   }
@@ -1273,7 +1317,7 @@
       extraList.innerHTML = '';
       (cfg.extraPaths || []).forEach(function (r) { pathRow(extraList, r); });
       aiToolsListEl.innerHTML = '';
-      (cfg.aiTools || []).forEach(function (t) { aiToolRow(t.label, t.cmd); });
+      (cfg.aiTools || []).forEach(function (t) { aiToolRow(t.label, t.cmd, t.logo); });
       document.getElementById('fBlacklist').value = (cfg.blacklist || []).join('\n');
       fToken.value = ''; // token 不下发；留空 = 不改动（issue #12）
       fUsername.value = cfg.githubUsername || '';

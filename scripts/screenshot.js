@@ -49,12 +49,13 @@ app.whenReady().then(() => {
     }));
     ipcMain.handle('prefs:set', () => ({}));
     ipcMain.handle('snooze:set', () => true);
-    // AI 工具（issue #15 mock）：claude / kimi 已安装，codex / grok 未安装
+    // AI 工具（issue #15 mock）：claude / kimi 已安装，codex / grok 未安装；logo 复用真实注册表（issue #21）
+    const { AI_TOOL_ICONS } = require('../src/main/ipc');
     ipcMain.handle('aitools:list', () => [
-      { id: 'claude', label: 'Claude Code', cmd: 'claude', installed: true },
-      { id: 'codex', label: 'Codex', cmd: 'codex', installed: false },
-      { id: 'kimi', label: 'Kimi Code', cmd: 'kimi', installed: true },
-      { id: 'grok', label: 'Grok', cmd: 'grok', installed: false },
+      { id: 'claude', label: 'Claude Code', cmd: 'claude', installed: true, logo: AI_TOOL_ICONS.claude },
+      { id: 'codex', label: 'Codex', cmd: 'codex', installed: false, logo: AI_TOOL_ICONS.codex },
+      { id: 'kimi', label: 'Kimi Code', cmd: 'kimi', installed: true, logo: AI_TOOL_ICONS.kimi },
+      { id: 'grok', label: 'Grok', cmd: 'grok', installed: false, logo: AI_TOOL_ICONS.grok },
     ]);
     ipcMain.handle('aitools:open', () => true);
     // 详情面板深区数据（issue #17 mock）：README 摘要 + AI 会话痕迹明细
