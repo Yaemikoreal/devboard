@@ -1,14 +1,22 @@
 {
-  "name": "devboard",
+  "name": "signalboard",
   "version": "0.1.0",
   "description": "本地桌面端项目概况板",
+  "productName": "SignalBoard",
   "main": "src/main/index.js",
   "scripts": {
     "start": "electron .",
     "test:scan": "node scripts/test-scan.js",
-    "shot": "electron scripts/screenshot.js"
+    "shot": "electron scripts/screenshot.js",
+    "logo": "electron scripts/render-logo.js"
   },
   "license": "MIT",
+  "build": {
+    "appId": "com.yaemikoreal.signalboard",
+    "win": {
+      "icon": "build/icon.ico"
+    }
+  },
   "devDependencies": {
     "electron": "^39.8.10"
   }

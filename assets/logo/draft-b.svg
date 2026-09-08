@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 方向 B：竖版板块（行列表意象），左侧明黄色条 + 右侧两行横线，右上角黄点信号 -->
+  <rect width="1024" height="1024" rx="176" fill="#f5f2e8"/>
+  <rect x="176" y="96" width="672" height="832" rx="64" fill="#322e27"/>
+  <rect x="232" y="200" width="44" height="624" rx="22" fill="#f5d90a"/>
+  <rect x="324" y="352" width="392" height="64" rx="32" fill="#f5f2e8"/>
+  <rect x="324" y="488" width="260" height="64" rx="32" fill="#f5f2e8"/>
+  <circle cx="772" cy="204" r="52" fill="#f5d90a"/>
+</svg>

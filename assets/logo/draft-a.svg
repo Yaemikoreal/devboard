@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 方向 A（定稿）：3x3 圆角方格点阵 = 「板」意象，呼应热力图/bento；对角两格为明黄「信号格」 -->
+  <rect width="1024" height="1024" rx="176" fill="#f5f2e8"/>
+  <rect x="112" y="112" width="240" height="240" rx="52" fill="#322e27"/>
+  <rect x="392" y="112" width="240" height="240" rx="52" fill="#322e27"/>
+  <rect x="672" y="112" width="240" height="240" rx="52" fill="#f5d90a"/>
+  <rect x="112" y="392" width="240" height="240" rx="52" fill="#322e27"/>
+  <rect x="392" y="392" width="240" height="240" rx="52" fill="#322e27"/>
+  <rect x="672" y="392" width="240" height="240" rx="52" fill="#322e27"/>
+  <rect x="112" y="672" width="240" height="240" rx="52" fill="#f5d90a"/>
+  <rect x="392" y="672" width="240" height="240" rx="52" fill="#322e27"/>
+  <rect x="672" y="672" width="240" height="240" rx="52" fill="#322e27"/>
+</svg>

@@ -1,4 +1,6 @@
-# devboard
+# SignalBoard（信号板）
+
+![SignalBoard](assets/logo/icon-256.png)
 
 本地桌面端项目概况板：在众多并行的 vibecoding 项目中，自动聚合各项目的事实近况（提交、改动、AI 会话痕迹、GitHub issues/PR），帮助快速回忆起「每个项目做到哪了」。核心是事实聚合，不是项目管理平台。领域语言与边界见 `CONTEXT.md`，架构决策见 `docs/adr/`。
 
@@ -9,6 +11,7 @@ npm install       # 安装依赖（electron，约 100MB）
 npm start         # 启动应用：托盘常驻，Ctrl+Shift+D 唤出/隐藏
 npm run test:scan # 不起界面，直接跑项目扫描并打印 JSON，用于验证
 npm run shot      # 隐藏窗口渲染真实数据后截图到 screenshot.png
+npm run logo      # 从 assets/logo/draft-a.svg 重新渲染全尺寸图标（PNG/ICO）
 ```
 
 唤出窗口时主动重扫一次；后台每 20 分钟静默刷新。扫描全异步：扫描期间面板保持可交互，顶栏显示「扫描中…」，新数据到达后按项目路径复用卡片节点平滑替换。主面板快捷键：`/` 聚焦搜索（按名称/备忘过滤，带自动补全，`↓/↑` 选择、`Enter` 直达并展开卡片），`Esc` 逐层关闭浮层后隐藏到托盘。卡片在「全部」视图下可拖拽自由重排（持久化）；卡片详情里可把一个项目「设为主攻」，固定占据左侧大卡位；卡片「分支」处可下拉查看并切换各本地分支的数据（选择持久化）。警示 pill 悬停可点 × 消音，状态变化后自动复出。顶栏铃铛（带角标）开合「需要关注」面板，点击条目直达对应卡片；托盘左键唤出、右键菜单（显示面板 / 立即扫描 / 设置 / 退出）。
@@ -29,7 +32,7 @@ npm run shot      # 隐藏窗口渲染真实数据后截图到 screenshot.png
 
 ## 数据存放
 
-全部在 Electron userData 目录下（Windows: `%APPDATA%/devboard/`）：
+全部在 Electron userData 目录下（Windows: `%APPDATA%/SignalBoard/`；自 devboard 更名后，首次启动会自动把旧目录 `%APPDATA%/devboard/` 的数据文件迁过来）：
 
 - `config.json`：上述设置（GitHub token 加密存为 `githubTokenEnc`，不落明文）
 - `memos.json`：各项目备忘（按项目路径索引，多行纯文本）

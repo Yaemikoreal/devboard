@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 方向 C：「S」字母负形格栅（SignalBoard 首字母），墨板上的纸色格阵构成 S，右上角一格明黄信号 -->
+  <rect width="1024" height="1024" rx="176" fill="#f5f2e8"/>
+  <rect x="40" y="40" width="944" height="944" rx="72" fill="#322e27"/>
+  <g fill="#f5f2e8">
+    <rect x="184" y="48" width="112" height="112" rx="20"/>
+    <rect x="320" y="48" width="112" height="112" rx="20"/>
+    <rect x="456" y="48" width="112" height="112" rx="20"/>
+    <rect x="592" y="48" width="112" height="112" rx="20"/>
+    <rect x="728" y="48" width="112" height="112" rx="20"/>
+    <rect x="48" y="184" width="112" height="112" rx="20"/>
+    <rect x="48" y="320" width="112" height="112" rx="20"/>
+    <rect x="184" y="456" width="112" height="112" rx="20"/>
+    <rect x="320" y="456" width="112" height="112" rx="20"/>
+    <rect x="456" y="456" width="112" height="112" rx="20"/>
+    <rect x="592" y="456" width="112" height="112" rx="20"/>
+    <rect x="728" y="456" width="112" height="112" rx="20"/>
+    <rect x="864" y="592" width="112" height="112" rx="20"/>
+    <rect x="864" y="728" width="112" height="112" rx="20"/>
+    <rect x="184" y="864" width="112" height="112" rx="20"/>
+    <rect x="320" y="864" width="112" height="112" rx="20"/>
+    <rect x="456" y="864" width="112" height="112" rx="20"/>
+    <rect x="592" y="864" width="112" height="112" rx="20"/>
+    <rect x="728" y="864" width="112" height="112" rx="20"/>
+  </g>
+  <rect x="864" y="48" width="112" height="112" rx="20" fill="#f5d90a"/>
+</svg>

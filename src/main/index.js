@@ -5,7 +5,7 @@ const path = require('path');
 const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, Notification, screen } = require('electron');
 const { Store } = require('./store');
 const { registerIpc } = require('./ipc');
-const { TRAY_ICON_BASE64 } = require('./tray-icon');
+const { migrateUserData } = require('./userdata-migrate');
 
 let win = null;
 let tray = null;
@@ -32,6 +32,15 @@ function boundsVisible(b) {
   });
 }
 
+// 更名 SignalBoard 后 userData 从 %APPDATA%/devboard 变为 %APPDATA%/SignalBoard（issue #11）。
+// 旧目录候选按优先级排列：devboard（npm start 的旧名目录）优先，Electron（脚本入口的兜底名目录）次之。
+function migrateUserDataIfNeeded() {
+  migrateUserData(app.getPath('userData'), [
+    path.join(app.getPath('appData'), 'devboard'),
+    path.join(app.getPath('appData'), 'Electron'),
+  ]);
+}
+
 function createWindow() {
   const opts = {
     width: 1440,
@@ -41,6 +50,7 @@ function createWindow() {
     frame: false,
     show: false,
     backgroundColor: '#f5f2e8',
+    icon: path.join(__dirname, '..', '..', 'assets', 'logo', 'icon-256.png'),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
       contextIsolation: true,
@@ -89,13 +99,13 @@ function toggleWindow() {
 }
 
 function updateTrayTooltip(attentionCount) {
-  if (tray) tray.setToolTip(`devboard · ${attentionCount} 待关注`);
+  if (tray) tray.setToolTip(`SignalBoard · ${attentionCount} 待关注`);
 }
 
 function createTray() {
-  const icon = nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_BASE64}`);
+  const icon = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'assets', 'logo', 'tray-32.png'));
   tray = new Tray(icon);
-  tray.setToolTip('devboard');
+  tray.setToolTip('SignalBoard');
   const showPanel = () => {
     if (win) { win.show(); win.focus(); } else createWindow();
   };
@@ -150,7 +160,7 @@ async function maybeNotify() {
     if (board.stats.attentionCount > 0 && Notification.isSupported()) {
       const names = board.attention.slice(0, 3).map((a) => a.name).join('、');
       new Notification({
-        title: 'devboard',
+        title: 'SignalBoard',
         body: `${board.stats.attentionCount} 个项目需要关注：${names}${board.attention.length > 3 ? ' 等' : ''}`,
       }).show();
     }
@@ -169,6 +179,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
+    migrateUserDataIfNeeded();
     store = new Store(app.getPath('userData'), require('./token-vault'));
     ({ buildBoard, gitWatcher } = registerIpc({
       store,
