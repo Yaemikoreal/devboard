@@ -9,6 +9,7 @@ const { ipcMain, shell, dialog } = require('electron');
 const { spawn, execFile } = require('child_process');
 const scanner = require('./scanner');
 const github = require('./github');
+const { createGitWatcher } = require('./watcher');
 
 // 启动子进程并给出真实结果：立即非零退出视为失败，存活超过 800ms 视为成功
 function spawnResult(cmd, args, opts) {
@@ -116,6 +117,23 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   let refreshInFlight = false;
   let scanInFlight = false;
 
+  // .git 文件监听：项目有提交/暂存变化时自动增量重扫该项目并推补丁（issue #25）
+  const gitWatcher = createGitWatcher({
+    scanProject: scanner.scanProject,
+    getCached: (p) => store.getScanCache().projects[p] || null,
+    onUpdate: (projectPath, fresh) => {
+      const cur = store.getScanCache();
+      cur.projects[projectPath] = fresh;
+      cur.scannedAt = new Date().toISOString();
+      store.setScanCache(cur);
+      if (scanInFlight) return; // 全量扫描在飞，最终补丁由它统一发
+      const config = store.getConfig();
+      const { board } = assembleBoard(Object.values(cur.projects), config, false);
+      const win = getWindow && getWindow();
+      if (win && !win.isDestroyed()) win.webContents.send('board:patch', board);
+    },
+  });
+
   // 拼装 board：memos + GitHub 缓存挂接 + 警示消音 + 统计（缓存路径与新鲜扫描共用）
   function assembleBoard(projects, config, fromCache) {
     const memos = store.getMemos();
@@ -157,23 +175,28 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   async function scanAndCache() {
     const config = store.getConfig();
     const cache = store.getScanCache();
-    const lateUpdates = [];
-    const projects = await scanner.scan(config.roots, config.blacklist, config.extraPaths, {
-      cache,
-      onLate: (projectPath, fresh) => {
-        lateUpdates.push(fresh);
-        const cur = store.getScanCache();
-        cur.projects[projectPath] = fresh;
-        cur.scannedAt = new Date().toISOString();
-        store.setScanCache(cur);
-      },
-    });
+    gitWatcher.setScanning(true);
+    let projects;
+    try {
+      projects = await scanner.scan(config.roots, config.blacklist, config.extraPaths, {
+        cache,
+        onLate: (projectPath, fresh) => {
+          const cur = store.getScanCache();
+          cur.projects[projectPath] = fresh;
+          cur.scannedAt = new Date().toISOString();
+          store.setScanCache(cur);
+        },
+      });
+    } finally {
+      gitWatcher.setScanning(false);
+    }
     const next = { scannedAt: new Date().toISOString(), projects: {} };
     for (const p of projects) {
       // 降级条目保留旧缓存（迟到回补会覆盖）；originUrl 一并缓存以便重启后 GitHub 挂接
       next.projects[p.path] = p.degraded && cache.projects[p.path] ? cache.projects[p.path] : p;
     }
     store.setScanCache(next);
+    gitWatcher.syncWatchers(projects.map((p) => p.path)); // 对齐监听清单，顺带重建失效 watcher
     return { projects, config, settled: projects.settled || Promise.resolve() };
   }
 
@@ -408,7 +431,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   });
   ipcMain.handle('win:close', () => { const w = getWindow(); if (w) w.close(); });
 
-  return { buildBoard };
+  return { buildBoard, gitWatcher };
 }
 
 module.exports = { registerIpc, AI_TOOL_ICONS };

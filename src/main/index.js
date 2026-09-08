@@ -11,6 +11,7 @@ let win = null;
 let tray = null;
 let store = null;
 let buildBoard = null;
+let gitWatcher = null;
 let quitting = false;
 let tickTimer = null;
 let lastHotkeyError = '';
@@ -169,7 +170,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     store = new Store(app.getPath('userData'), require('./token-vault'));
-    ({ buildBoard } = registerIpc({
+    ({ buildBoard, gitWatcher } = registerIpc({
       store,
       getWindow: () => win,
       applySettings,
@@ -194,6 +195,7 @@ if (!gotLock) {
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
     if (tickTimer) clearInterval(tickTimer);
+    if (gitWatcher) gitWatcher.closeAll();
   });
 
   app.on('window-all-closed', () => {

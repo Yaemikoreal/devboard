@@ -451,4 +451,4 @@ async function scan(roots, blacklist, extraPaths, opts) {
   return projects;
 }
 
-module.exports = { scan, discover, bandOf, localWarnings, emptyProject, branchDetail, projectDetail };
+module.exports = { scan, discover, bandOf, localWarnings, emptyProject, branchDetail, projectDetail, scanProject };
