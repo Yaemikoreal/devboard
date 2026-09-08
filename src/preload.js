@@ -25,6 +25,11 @@ contextBridge.exposeInMainWorld('devboard', {
   githubDeviceStart: () => ipcRenderer.invoke('github:deviceStart'),
   githubDevicePoll: (deviceCode) => ipcRenderer.invoke('github:devicePoll', deviceCode),
   githubImportGh: () => ipcRenderer.invoke('github:importGh'),
+  // AI 工具快捷启动（issue #15）
+  aiToolsList: () => ipcRenderer.invoke('aitools:list'),
+  aiToolsOpen: (cmd, projectPath) => ipcRenderer.invoke('aitools:open', cmd, projectPath),
+  // 详情面板深区数据（issue #17）
+  projectDetail: (projectPath) => ipcRenderer.invoke('project:detail', projectPath),
   winMin: () => ipcRenderer.invoke('win:min'),
   winMax: () => ipcRenderer.invoke('win:max'),
   winClose: () => ipcRenderer.invoke('win:close'),

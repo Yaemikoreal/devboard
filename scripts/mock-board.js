@@ -114,6 +114,11 @@ function mockBoard() {
     },
   ];
 
+  // 最近动静 = max(最后提交, AI 会话痕迹)（scanner 同规则，mock 此处补齐）
+  projects.forEach((p) => {
+    p.lastActivityAt = [p.lastCommitAt, p.aiSessionAt].filter(Boolean).sort().pop() || null;
+  });
+
   const attention = projects
     .filter((p) => p.warnings.length > 0)
     .map((p) => ({ path: p.path, name: p.name, label: p.warnings.map((w) => w.label).join('，') }));
@@ -130,4 +135,37 @@ function mockBoard() {
   };
 }
 
-module.exports = { mockBoard };
+// 详情面板深区数据 mock（issue #17）：README 首段摘要 + AI 会话痕迹明细
+function mockProjectDetail(projectPath) {
+  const table = {
+    'E:\\myproject\\wyy2qqmusic': {
+      readme: '网易云歌单迁移到 QQ 音乐的小工具，支持批量导入与断点续传。',
+      aiSessions: [
+        { tool: 'kimi', at: isoDaysAgo(0, 1) },
+        { tool: 'claude', at: isoDaysAgo(0, 14) },
+      ],
+    },
+    'E:\\myproject\\devboard': {
+      readme: '本地桌面端项目概况板：聚合各项目事实近况，防止决策漂移。',
+      aiSessions: [{ tool: 'kimi', at: isoDaysAgo(0, 3) }],
+    },
+    'E:\\myproject\\chat-analysis': {
+      readme: '群聊 JSON 结构化分析，生成单页卡式 PDF 长图报告。',
+      aiSessions: [
+        { tool: 'kimi', at: isoDaysAgo(3) },
+        { tool: 'codex', at: isoDaysAgo(3, 6) },
+      ],
+    },
+    'E:\\myproject\\corpgraph-tool': {
+      readme: '企业上下游关系批量查询工具。',
+      aiSessions: [],
+    },
+    'E:\\myproject\\kimi-skill-lab': {
+      readme: '',
+      aiSessions: [{ tool: 'kimi', at: isoDaysAgo(10) }],
+    },
+  };
+  return table[projectPath] || { readme: '', aiSessions: [] };
+}
+
+module.exports = { mockBoard, mockProjectDetail };

@@ -9,6 +9,8 @@ const { execFile } = require('child_process');
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_DEPTH = 4;
 const AI_SESSION_DIRS = ['.kimi-code', '.claude', '.codex'];
+// 会话目录 → 工具 id（详情面板的 AI 会话痕迹明细用，issue #17）
+const AI_TOOL_DIRS = [['.kimi-code', 'kimi'], ['.claude', 'claude'], ['.codex', 'codex']];
 const MAX_BRANCHES = 50;
 // 扫描总耗时超过该阈值时在控制台输出 breakdown（issue #8）
 const SLOW_SCAN_MS = 3000;
@@ -121,22 +123,21 @@ function emptyProject(projectPath) {
   };
 }
 
-// AI 会话痕迹：.kimi-code / .claude / .codex 目录内最新文件 mtime（有界遍历）
-async function aiSessionAt(projectPath) {
+// 单个目录内最新文件 mtime（有界遍历，budget 共享条目数上限）
+async function dirLatestMtime(dir, budget) {
   let latest = 0;
-  const budget = { n: 300 };
-  const walk = async (dir, depth) => {
+  const walk = async (d, depth) => {
     if (budget.n <= 0 || depth > 3) return;
     let entries;
     try {
-      entries = await fsp.readdir(dir, { withFileTypes: true });
+      entries = await fsp.readdir(d, { withFileTypes: true });
     } catch {
       return;
     }
     for (const e of entries) {
       if (budget.n <= 0) return;
       budget.n--;
-      const full = path.join(dir, e.name);
+      const full = path.join(d, e.name);
       try {
         if (e.isDirectory()) await walk(full, depth + 1);
         else {
@@ -146,11 +147,89 @@ async function aiSessionAt(projectPath) {
       } catch { /* 忽略不可读项 */ }
     }
   };
+  await walk(dir, 0);
+  return latest;
+}
+
+// AI 会话痕迹：.kimi-code / .claude / .codex 目录内最新文件 mtime（有界遍历）
+async function aiSessionAt(projectPath) {
+  let latest = 0;
+  const budget = { n: 300 };
   for (const d of AI_SESSION_DIRS) {
     const dir = path.join(projectPath, d);
-    if (await exists(dir)) await walk(dir, 0);
+    if (await exists(dir)) {
+      const t = await dirLatestMtime(dir, budget);
+      if (t > latest) latest = t;
+    }
   }
   return latest > 0 ? new Date(latest).toISOString() : null;
+}
+
+// AI 会话痕迹明细：按工具目录分别统计最新 mtime，按时间倒序（issue #17）
+async function aiSessionTraces(projectPath) {
+  const out = [];
+  for (const pair of AI_TOOL_DIRS) {
+    const dir = path.join(projectPath, pair[0]);
+    if (!(await exists(dir))) continue;
+    const t = await dirLatestMtime(dir, { n: 300 });
+    if (t > 0) out.push({ tool: pair[1], at: new Date(t).toISOString() });
+  }
+  out.sort((a, b) => (a.at < b.at ? 1 : -1));
+  return out;
+}
+
+// README 首段摘要：去 markdown 标记，截 ~200 字（issue #17）
+async function readmeSummary(projectPath) {
+  let names;
+  try {
+    names = await fsp.readdir(projectPath);
+  } catch {
+    return '';
+  }
+  const hit = names.find((n) => /^readme(\.(md|markdown|txt|rst))?$/i.test(n));
+  if (!hit) return '';
+  let raw;
+  try {
+    raw = await fsp.readFile(path.join(projectPath, hit), 'utf8');
+  } catch {
+    return '';
+  }
+  const lines = raw.replace(/\r/g, '').split('\n');
+  const para = [];
+  let paraIsHeading = false; // 首段仅是标题行时，续取下一段作为摘要
+  for (const line of lines) {
+    const t = line.trim();
+    // 跳过 badge / 图片 / HTML 行，不作为摘要内容
+    if (/^\[!\[|^<|^!?\[.*\]\(.*\)$/.test(t)) continue;
+    if (!t) {
+      if (para.length && !paraIsHeading) break;
+      if (para.length && paraIsHeading) paraIsHeading = false; // 标题段结束，进入正文段
+      continue;
+    }
+    if (!para.length) paraIsHeading = /^#/.test(t);
+    else if (!paraIsHeading && /^#/.test(t)) break; // 正文段止于下一个标题
+    para.push(t);
+  }
+  let text = para
+    .join(' ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^#+\s*/, '')
+    .replace(/[*_`>]/g, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length > 200) text = text.slice(0, 200).replace(/[，。、；,.;:\s]+$/, '') + '…';
+  return text;
+}
+
+// 详情面板按需取的单项目深区数据（issue #17）：README 摘要 + AI 会话痕迹明细
+async function projectDetail(projectPath) {
+  const [readme, aiSessions] = await Promise.all([
+    readmeSummary(projectPath),
+    aiSessionTraces(projectPath),
+  ]);
+  return { readme, aiSessions };
 }
 
 // log --since="365 days ago" 按天聚合，今天在最后
@@ -372,4 +451,4 @@ async function scan(roots, blacklist, extraPaths, opts) {
   return projects;
 }
 
-module.exports = { scan, discover, bandOf, localWarnings, emptyProject, branchDetail };
+module.exports = { scan, discover, bandOf, localWarnings, emptyProject, branchDetail, projectDetail };

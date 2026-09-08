@@ -1,37 +1,44 @@
-/* devboard 渲染层：主面板 + 设置视图 */
+/* devboard 渲染层：总览 | 项目 双视图 + 右侧推出详情面板 + 设置视图 */
+/* 设计定稿：demos/demo-f-overview.html（issue #14/#15/#16/#17/#18） */
 (function () {
   'use strict';
 
   var api = window.devboard;
   var BAND_LABEL = { hot: '活跃', active: '近期', cooling: '渐冷', stale: '沉睡', archive: '归档' };
   var BAND_PILL = { hot: 'bp-hot', active: 'bp-active', cooling: 'bp-cool', stale: 'bp-stall', archive: 'bp-arch' };
-  var FOCUS_BANDS = { hot: 1, active: 1 };
+  var SORT_MODES = ['manual', 'activity', 'name'];
+  var SORT_LABEL = { manual: '手动', activity: '最近活跃', name: '名称' };
+  var AI_TOOL_LABEL = { kimi: 'Kimi Code', claude: 'Claude Code', codex: 'Codex', grok: 'Grok' };
+  var DAY_MS = 86400000;
 
   var state = {
     board: null,
     settings: null,
     prefs: null,
-    band: 'all',
-    query: '',
+    view: 'overview', // 顶层导航：overview | projects（issue #14）
+    band: 'all', // 项目页内分带筛选（issue #16）
+    sortMode: 'manual', // manual / activity / name（issue #18，持久化在 prefs.sortMode）
+    selectedPath: null, // 详情面板当前项目（issue #17）
     loading: false,
-    expanded: {}, // path -> bool
-    dragPath: null,
-    lastLayout: [], // 当前视觉顺序（大卡 → 中列 → 右列）
-    attnOpen: false, // 「需要关注」面板开合（issue #7）
+    awaitPatch: false,
     branchSel: {}, // path -> 选中分支名（issue #4，持久化在 prefs.branchSel）
-    branchDetail: {}, // path + '' + branch -> { lastCommitAt, commits } | 'loading'
+    branchDetail: {}, // path + ' ' + branch -> { lastCommitAt, commits } | 'loading'
     suggestIdx: -1, // 搜索补全键盘选中项（issue #6）
+    aiTools: null, // aitools:list 结果（含 installed 标记，issue #15）
+    details: {}, // path -> { readme, aiSessions } | 'loading'（issue #17 懒取）
+    streamShown: 3, // 活动流默认展示近 3 个月，「显示更早的活动」展开
   };
 
-  // keyed DOM 复用：path -> { node, sig }，签名一致的卡片在重渲染时直接搬用（issue #8）
-  var cardCache = {};
-
-  var grid = document.getElementById('grid');
   var appEl = document.getElementById('app');
   var searchInput = document.getElementById('searchInput');
   var suggestEl = document.getElementById('suggest');
-  var attnPanel = document.getElementById('attnPanel');
-  var bellBtn = document.getElementById('bellBtn');
+  var viewOverview = document.getElementById('viewOverview');
+  var viewProjects = document.getElementById('viewProjects');
+  var rowsEl = document.getElementById('rows');
+  var splitEl = document.getElementById('split');
+  var panelIn = document.getElementById('panelIn');
+  var toolsCard = document.getElementById('toolsCard');
+  var sortDrop = document.getElementById('sortDrop');
 
   /* ---------- 工具 ---------- */
   function el(tag, cls, text) {
@@ -51,10 +58,10 @@
     var h = Math.floor(min / 60);
     if (h < 24) return h + '小时前';
     var d = Math.floor(h / 24);
-    if (d < 30) return d + '天前';
+    if (d < 30) return d + ' 天前';
     var m = Math.floor(d / 30);
-    if (m < 12) return m + '个月前';
-    return Math.floor(m / 12) + '年前';
+    if (m < 12) return m + ' 个月前';
+    return Math.floor(m / 12) + ' 年前';
   }
 
   function hhmm(iso) {
@@ -85,24 +92,51 @@
       return frag;
     }
     if (i > 0) frag.appendChild(document.createTextNode(text.slice(0, i)));
-    var b = el('b', null, text.slice(i, i + query.length));
-    frag.appendChild(b);
+    frag.appendChild(el('b', null, text.slice(i, i + query.length)));
     if (i + query.length < text.length) frag.appendChild(document.createTextNode(text.slice(i + query.length)));
     return frag;
   }
 
+  function findProject(path) {
+    if (!state.board) return null;
+    var hit = null;
+    state.board.projects.forEach(function (p) { if (p.path === path) hit = p; });
+    return hit;
+  }
+
   /* ---------- 通用浮层：下拉菜单 (.drop) 的开合 ---------- */
-  // 分支下拉与搜索补全共用一套 .drop 样式与动效（issue #4/#6）
+  // 分支下拉 / 搜索补全 / 排序下拉共用一套 .drop 样式与动效；工具项目选择器单独管理
   function closeDrops() {
-    document.querySelectorAll('.drop.open').forEach(function (d) { d.classList.remove('open'); });
+    document.querySelectorAll('.drop.open').forEach(function (d) {
+      if (!d.classList.contains('tool-pick')) d.classList.remove('open');
+    });
   }
 
   function anyDropOpen() {
-    return !!document.querySelector('.drop.open');
+    return !!document.querySelector('.drop.open:not(.tool-pick)');
   }
 
-  /* ---------- 排序与过滤 ---------- */
-  // 卡片位序：自由重排结果优先，未记录的按项目名稳定排序（不随时间漂移）
+  /* ---------- 图钉（主攻项目，多路径集合，issue #16） ---------- */
+  function pinnedList() {
+    return (state.prefs && state.prefs.pinned) || [];
+  }
+
+  function isPinned(path) {
+    return pinnedList().indexOf(path) >= 0;
+  }
+
+  function togglePin(path) {
+    var list = pinnedList().slice();
+    var i = list.indexOf(path);
+    if (i >= 0) list.splice(i, 1);
+    else list.push(path);
+    state.prefs = Object.assign({}, state.prefs, { pinned: list });
+    api.setPrefs({ pinned: list });
+    renderRows();
+  }
+
+  /* ---------- 排序与过滤（issue #18） ---------- */
+  // 手动位序：cardOrder 优先，未记录的按项目名稳定排序（不随时间漂移）
   function projectOrder(projects) {
     var order = (state.prefs && state.prefs.cardOrder) || [];
     var idx = {};
@@ -122,6 +156,27 @@
     var tb = b.lastActivityAt ? Date.parse(b.lastActivityAt) : 0;
     return tb - ta;
   }
+
+  // 最近活跃 / 名称仅作视图覆盖，不写回 cardOrder；图钉在任意方式下置顶
+  function sortedProjects() {
+    if (!state.board) return [];
+    var list = state.board.projects.filter(function (p) {
+      return state.band === 'all' || p.band === state.band;
+    });
+    if (state.sortMode === 'activity') list = list.slice().sort(byActivityDesc);
+    else if (state.sortMode === 'name') {
+      list = list.slice().sort(function (a, b) {
+        return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+      });
+    } else list = projectOrder(list);
+    var pinned = [];
+    var rest = [];
+    list.forEach(function (p) { (isPinned(p.path) ? pinned : rest).push(p); });
+    return pinned.concat(rest);
+  }
+
+  // 拖拽只在手动位序 + 全部分带下可用（筛选子集上重排会破坏位序语义）
+  function canDrag() { return state.sortMode === 'manual' && state.band === 'all'; }
 
   /* ---------- 分支选择（issue #4） ---------- */
   function selBranch(p) {
@@ -156,7 +211,7 @@
     renderAll();
   }
 
-  // 分支下拉：kv 区的「分支」改为可开合菜单，列出本地分支及各自最后提交时间
+  // 分支下拉：详情面板「近况信号」区内，列出本地分支及各自最后提交时间
   function renderBranchKv(kvRow, p) {
     var branches = p.branches && p.branches.length
       ? p.branches
@@ -171,8 +226,7 @@
     btn.appendChild(el('span', 'caret', '▸'));
     wrap.appendChild(btn);
     if (!isCurrentBranch(p)) {
-      var nc = el('span', 'outline-pill nc', '非当前分支');
-      wrap.appendChild(nc);
+      wrap.appendChild(el('span', 'outline-pill nc', '非当前分支'));
     }
 
     var menu = el('div', 'drop bdrop-menu');
@@ -200,73 +254,27 @@
     kvRow.appendChild(wrap);
   }
 
-  /* ---------- 卡片 ---------- */
-  // 卡片高度粗估（px）：贪心填充三列时用，允许误差
-  function estH(p, kind) {
-    var h = kind === 'big' ? 250 : kind === 'mid' ? 205 : 118;
-    if (p.warnings && p.warnings.length && isCurrentBranch(p)) h += kind === 'compact' ? 26 : 32;
-    if (state.expanded[p.path]) {
-      var bd = branchDetailOf(p);
-      h += 24 + (bd && bd.commits ? bd.commits.length : 0) * 27; // 最近提交
-      if (p.dirtyFiles && p.dirtyFiles.length && isCurrentBranch(p)) h += 26; // 未提交文件摘要行
-      h += p.github ? 44 + p.github.items.length * 27 : 26; // GitHub 区
-      h += 48; // 快捷按钮行
-    }
-    return h;
-  }
-
-  function queryMatch(p) {
-    if (!state.query) return true;
-    return (p.name + ' ' + (p.memo || '')).toLowerCase().indexOf(state.query) >= 0;
-  }
-
-  function visible(p) {
-    return (state.band === 'all' || p.band === state.band) && queryMatch(p);
-  }
-
-  function canDrag() { return state.band === 'all' && !state.query; }
-
-  // 近一年活跃：GitHub 风格全年贡献热力图，默认收起，点击展开
-  function renderActivity(parent, p) {
-    var activity = p.activity365 || [];
-    var total = activity.reduce(function (s, n) { return s + n; }, 0);
-    var tog = el('button', 'sec-title dirty-toggle');
-    tog.type = 'button';
-    tog.appendChild(el('span', 'caret', '▸'));
-    tog.appendChild(document.createTextNode('近一年活跃 · ' + total + ' 次提交'));
-    var wrap = el('div', 'dirty-wrap');
-    var din = el('div', 'dirty-in');
-    din.appendChild(buildHeatmap(activity));
-    wrap.appendChild(din);
-    tog.addEventListener('click', function (e) {
-      e.stopPropagation();
-      var open = wrap.classList.toggle('open');
-      tog.classList.toggle('open', open);
-    });
-    parent.appendChild(tog);
-    parent.appendChild(wrap);
-  }
-
-  // activity 末位 = 今天；周一在最上一行，周列 × 周日行，占满卡片宽度
-  function buildHeatmap(activity) {
-    var DAY = 86400000;
+  /* ---------- 全年热力图：正方形格、3 级单色黄渐深 ---------- */
+  // activity 末位 = 今天；周一在最上一行，周列 × 周日行，占满容器宽度
+  function renderHeatInto(container, activity, gridCls, withAxis) {
+    container.innerHTML = '';
     var days = activity.length;
-    var box = el('div', 'heat');
-    var gridEl = el('div', 'heat-grid');
+    var gridEl = el('div', gridCls);
     var today = new Date();
     today.setHours(0, 0, 0, 0);
-    var first = today.getTime() - (days - 1) * DAY;
+    var first = today.getTime() - (days - 1) * DAY_MS;
     var lead = (new Date(first).getDay() + 6) % 7; // 窗口第一天距周一的偏移
     var b;
     for (b = 0; b < lead; b++) gridEl.appendChild(el('i', 'cell blank'));
     activity.forEach(function (n, i) {
-      var d = new Date(first + i * DAY);
-      var lvl = n === 0 ? 0 : n < 4 ? 1 : n < 9 ? 2 : 3;
-      var cell = el('i', 'cell l' + lvl);
+      var d = new Date(first + i * DAY_MS);
+      var lvl = n === 0 ? 0 : n < 3 ? 1 : n < 7 ? 2 : 3;
+      var cell = el('i', 'cell' + (lvl ? ' l' + lvl : ''));
       cell.title = (d.getMonth() + 1) + '月' + d.getDate() + '日 · ' + (n ? n + ' 次提交' : '无提交');
       gridEl.appendChild(cell);
     });
-    box.appendChild(gridEl);
+    container.appendChild(gridEl);
+    if (!withAxis) return;
 
     // 底部轴：每月首列标注「X 月」，右端标注「今天」（按列百分比定位）
     var cols = Math.ceil((lead + days) / 7);
@@ -275,8 +283,8 @@
     for (var cix = 0; cix < cols; cix++) {
       var dayIdx = Math.max(0, cix * 7 - lead);
       if (dayIdx >= days) break;
-      var dd = new Date(first + dayIdx * DAY);
-      if (dd.getMonth() !== prevMonth) {
+      var dd = new Date(first + dayIdx * DAY_MS);
+      if (dd.getMonth() !== prevMonth && cix < cols - 1) {
         var m = el('span', 'mon', (dd.getMonth() + 1) + '月');
         m.style.left = (cix / cols * 100) + '%';
         axis.appendChild(m);
@@ -284,8 +292,403 @@
       }
     }
     axis.appendChild(el('span', 'today', '今天'));
-    box.appendChild(axis);
-    return box;
+    container.appendChild(axis);
+  }
+
+  /* ---------- 总览页（issue #14） ---------- */
+  function setStat(id, n, unit) {
+    var e = document.getElementById(id);
+    e.innerHTML = '';
+    e.appendChild(document.createTextNode(n));
+    e.appendChild(el('span', 'unit', unit));
+  }
+
+  // 全局全年热力图：各项目 activity365 跨项目求和
+  function globalActivity() {
+    var sum = new Array(365).fill(0);
+    state.board.projects.forEach(function (p) {
+      (p.activity365 || []).forEach(function (n, i) { sum[i] += n; });
+    });
+    return sum;
+  }
+
+  // 按月活动流：activity365 按月聚合（每月总提交 + 每项目月提交数）
+  function buildStreamMonths() {
+    var months = {};
+    var order = [];
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    state.board.projects.forEach(function (p) {
+      (p.activity365 || []).forEach(function (n, i) {
+        if (!n) return;
+        var d = new Date(today.getTime() - (364 - i) * DAY_MS);
+        var key = d.getFullYear() * 12 + d.getMonth();
+        var m = months[key];
+        if (!m) {
+          m = months[key] = {
+            sortKey: key,
+            label: d.getFullYear() + ' 年 ' + (d.getMonth() + 1) + ' 月',
+            total: 0,
+            byPath: {},
+          };
+          order.push(m);
+        }
+        m.total += n;
+        m.byPath[p.path] = (m.byPath[p.path] || 0) + n;
+      });
+    });
+    order.sort(function (a, b) { return b.sortKey - a.sortKey; });
+    return order.map(function (m) {
+      var rows = Object.keys(m.byPath)
+        .map(function (path) { return { p: findProject(path), count: m.byPath[path] }; })
+        .filter(function (r) { return r.p; })
+        .sort(function (a, b) { return b.count - a.count; });
+      return { label: m.label, total: m.total, rows: rows };
+    });
+  }
+
+  function renderStream() {
+    var box = document.getElementById('stream');
+    box.innerHTML = '';
+    var months = buildStreamMonths();
+    var shown = Math.min(state.streamShown, months.length);
+    for (var i = 0; i < shown; i++) box.appendChild(streamMonth(months[i]));
+    var more = document.getElementById('streamMore');
+    more.classList.toggle('hidden', shown >= months.length);
+    if (!months.length) box.appendChild(el('div', 'stream-empty', '近一年暂无提交活动'));
+  }
+
+  function streamMonth(m) {
+    var wrap = el('div', 'stream-month');
+    wrap.appendChild(el('h4', null, m.label));
+    var block = el('div', 'stream-block');
+    var head = el('div', 'head', '在 ' + m.rows.length + ' 个项目中产生了 ' + m.total + ' 次提交');
+    block.appendChild(head);
+    var max = m.rows.length ? m.rows[0].count : 1;
+    m.rows.forEach(function (r) {
+      var row = el('div', 'stream-proj');
+      row.appendChild(el('span', 'nm', r.p.name));
+      row.appendChild(el('span', 'ct', r.count + ' 次提交'));
+      var bar = el('span', 'bar');
+      bar.style.width = Math.max(8, Math.round(r.count / max * 160)) + 'px';
+      row.appendChild(bar);
+      row.addEventListener('click', function () { jumpToProject(r.p.path); });
+      block.appendChild(row);
+    });
+    wrap.appendChild(block);
+    return wrap;
+  }
+
+  // 需要关注：右栏固定位黑卡（issue #15）
+  function renderAttn() {
+    var board = state.board;
+    var sub = document.getElementById('attnSub');
+    var list = document.getElementById('attnList');
+    list.innerHTML = '';
+    sub.textContent = board.attention.length
+      ? board.attention.length + ' 个项目有待处理信号'
+      : '一切正常，暂无警示';
+    board.attention.forEach(function (a) {
+      var item = el('div', 'attn-item');
+      item.appendChild(el('span', 'ic'));
+      item.appendChild(el('span', 'nm mono', a.name));
+      item.appendChild(el('span', 'ds', a.label));
+      item.appendChild(el('span', 'mk'));
+      item.addEventListener('click', function () { jumpToProject(a.path); });
+      list.appendChild(item);
+    });
+  }
+
+  function renderOverview() {
+    var board = state.board;
+    setStat('statTotal', board.stats.total, '个');
+    setStat('statCommits', board.stats.commits7d, '次');
+    setStat('statAttn', board.stats.attentionCount, '项');
+
+    var act = globalActivity();
+    var total = act.reduce(function (s, n) { return s + n; }, 0);
+    var heatHead = document.getElementById('heatHead');
+    heatHead.innerHTML = '';
+    heatHead.appendChild(el('b', null, String(total)));
+    heatHead.appendChild(document.createTextNode('次提交 · 过去一年 · ' + board.stats.total + ' 个项目'));
+    renderHeatInto(document.getElementById('globalHeat'), act, 'gheat', true);
+
+    renderStream();
+    renderAttn();
+    renderTools();
+  }
+
+  /* ---------- 工作台 · AI 工具（issue #15） ---------- */
+  function installedTools() {
+    return (state.aiTools || []).filter(function (t) { return t.installed; });
+  }
+
+  function loadAiTools() {
+    return api.aiToolsList().then(function (tools) {
+      state.aiTools = tools || [];
+      renderTools();
+      // 详情面板开着时也刷新「AI 工具启动」区
+      if (state.selectedPath) {
+        var p = findProject(state.selectedPath);
+        if (p) renderPanel(p);
+      }
+    }).catch(function () { state.aiTools = []; });
+  }
+
+  function toolButton(t, onPick) {
+    var b = el('button', 'tool-btn', t.label);
+    b.type = 'button';
+    b.title = '在终端启动 ' + t.cmd;
+    b.appendChild(el('span', 'cmd', t.cmd));
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      onPick(b);
+    });
+    return b;
+  }
+
+  function renderTools() {
+    var gridEl = document.getElementById('toolsGrid');
+    if (!gridEl) return;
+    gridEl.innerHTML = '';
+    if (state.aiTools === null) return; // 探测中
+    var tools = installedTools();
+    if (!tools.length) {
+      gridEl.appendChild(el('div', 'tools-empty', '未在 PATH 中检测到已安装的 AI 工具'));
+      return;
+    }
+    tools.forEach(function (t) {
+      gridEl.appendChild(toolButton(t, function (btn) { openToolPicker(t, btn); }));
+    });
+  }
+
+  /* ---------- 工具项目选择器：复用搜索补全的 .drop 组件（issue #15） ---------- */
+  var toolPickEl = null;
+
+  function closeToolPicker() {
+    if (toolPickEl) {
+      toolPickEl.remove();
+      toolPickEl = null;
+    }
+  }
+
+  function openToolPicker(tool, btn) {
+    if (toolPickEl && toolPickEl.dataset.cmd === tool.cmd) {
+      closeToolPicker();
+      return;
+    }
+    closeToolPicker();
+    if (!state.board || !state.board.projects.length) return;
+
+    var drop = el('div', 'drop tool-pick open');
+    drop.dataset.cmd = tool.cmd;
+    var inWrap = el('div', 'tp-in');
+    var input = el('input');
+    input.type = 'text';
+    input.placeholder = '选择项目，在其目录启动 ' + tool.cmd;
+    input.spellcheck = false;
+    inWrap.appendChild(input);
+    drop.appendChild(inWrap);
+    var list = el('div');
+    drop.appendChild(list);
+
+    var cands = projectOrder(state.board.projects);
+    var idx = 0;
+    // 默认预选主攻项目（图钉集合中的第一个仍在板上的）
+    var pre = pinnedList().filter(function (path) { return findProject(path); })[0];
+    if (pre) {
+      var pi = cands.map(function (p) { return p.path; }).indexOf(pre);
+      if (pi >= 0) idx = pi;
+    }
+
+    function renderList() {
+      list.innerHTML = '';
+      if (!cands.length) {
+        list.appendChild(el('div', 'drop-empty', '无匹配项目'));
+        return;
+      }
+      cands.forEach(function (p, i) {
+        var item = el('button', 'drop-item' + (i === idx ? ' active' : ''));
+        item.type = 'button';
+        item.appendChild(el('span', 'nm mono', p.name));
+        item.appendChild(el('span', 'rt', p.memo || BAND_LABEL[p.band]));
+        item.addEventListener('click', function (e) {
+          e.stopPropagation();
+          pick(p);
+        });
+        list.appendChild(item);
+      });
+      var active = list.querySelector('.drop-item.active');
+      if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest' });
+    }
+
+    function pick(p) {
+      closeToolPicker();
+      api.aiToolsOpen(tool.cmd, p.path).then(function (ok) {
+        flashBtn(btn, ok ? '已启动' : '启动失败', ok);
+        setTimeout(renderTools, 950);
+      });
+    }
+
+    input.addEventListener('input', function () {
+      var q = input.value.trim().toLowerCase();
+      cands = projectOrder(state.board.projects).filter(function (p) {
+        return !q || (p.name + ' ' + (p.memo || '')).toLowerCase().indexOf(q) >= 0;
+      });
+      idx = 0;
+      renderList();
+    });
+    input.addEventListener('keydown', function (e) {
+      e.stopPropagation();
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (!cands.length) return;
+        e.preventDefault();
+        idx = (idx + (e.key === 'ArrowDown' ? 1 : -1) + cands.length) % cands.length;
+        renderList();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (cands[idx]) pick(cands[idx]);
+      } else if (e.key === 'Escape') {
+        closeToolPicker();
+      }
+    });
+
+    toolsCard.appendChild(drop);
+    toolPickEl = drop;
+    renderList();
+    input.focus();
+  }
+
+  /* ---------- 项目页：行列表（issue #16） ---------- */
+  function projectRow(p) {
+    var row = el('div', 'row' + (state.selectedPath === p.path ? ' selected' : ''));
+    row.setAttribute('data-band', p.band);
+    row.dataset.path = p.path;
+    if (canDrag()) row.draggable = true;
+
+    var main = el('div', 'r-main');
+    var top = el('div', 'r-top');
+    top.appendChild(el('span', 'r-name mono', p.name));
+    if (p.branch) top.appendChild(el('span', 'r-branch mono', p.branch));
+    main.appendChild(top);
+    main.appendChild(el('div', 'r-sub' + (p.memo ? '' : ' empty'), p.memo || '无备忘'));
+    row.appendChild(main);
+
+    var right = el('div', 'r-right');
+    if (p.warnings && p.warnings.length) {
+      var w = el('span', 'r-warn', String(p.warnings.length));
+      w.insertBefore(el('i'), w.firstChild);
+      w.title = p.warnings.map(function (x) { return x.label; }).join('，');
+      right.appendChild(w);
+    }
+    right.appendChild(el('span', 'r-upd', relTime(p.lastActivityAt)));
+
+    var pin = el('button', 'r-pin' + (isPinned(p.path) ? ' on' : ''), isPinned(p.path) ? '★' : '☆');
+    pin.type = 'button';
+    pin.title = '图钉：主攻项目任意排序下置顶';
+    pin.addEventListener('click', function (e) {
+      e.stopPropagation();
+      togglePin(p.path);
+    });
+    right.appendChild(pin);
+
+    var open = el('button', 'r-open', '›');
+    open.type = 'button';
+    open.title = '展开详情';
+    right.appendChild(open);
+    row.appendChild(right);
+
+    row.addEventListener('click', function () {
+      selectProject(state.selectedPath === p.path ? null : p.path);
+    });
+
+    // 手动位序下拖拽重排（issue #18）
+    row.addEventListener('dragstart', function (e) {
+      if (!canDrag()) { e.preventDefault(); return; }
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', p.path);
+      row.classList.add('dragging');
+    });
+    row.addEventListener('dragend', function () {
+      row.classList.remove('dragging');
+      persistRowOrder();
+    });
+    row.addEventListener('dragover', function (e) {
+      if (!canDrag()) return;
+      e.preventDefault();
+      var dragging = rowsEl.querySelector('.dragging');
+      if (!dragging || dragging === row) return;
+      var all = Array.prototype.slice.call(rowsEl.querySelectorAll('.row'));
+      if (all.indexOf(dragging) < all.indexOf(row)) row.after(dragging);
+      else row.before(dragging);
+    });
+    return row;
+  }
+
+  // 拖拽结束后按当前 DOM 顺序持久化 cardOrder（仅手动位序可达）
+  function persistRowOrder() {
+    var order = Array.prototype.map.call(rowsEl.querySelectorAll('.row'), function (r) {
+      return r.dataset.path;
+    });
+    state.prefs = Object.assign({}, state.prefs, { cardOrder: order });
+    api.setPrefs({ cardOrder: order });
+    renderRows();
+  }
+
+  function renderRows() {
+    rowsEl.innerHTML = '';
+    if (!state.board) return;
+    var list = sortedProjects();
+    if (!list.length) {
+      rowsEl.appendChild(el('div', 'rows-empty', state.board.projects.length ? '该分带下没有项目' : '还没有发现任何项目，去设置里添加扫描根目录'));
+      return;
+    }
+    list.forEach(function (p) { rowsEl.appendChild(projectRow(p)); });
+  }
+
+  /* ---------- 详情面板（issue #17） ---------- */
+  function updateSplit() {
+    splitEl.classList.toggle('open', !!state.selectedPath);
+  }
+
+  function selectProject(path) {
+    state.selectedPath = path || null;
+    updateSplit();
+    Array.prototype.forEach.call(rowsEl.querySelectorAll('.row'), function (r) {
+      r.classList.toggle('selected', r.dataset.path === state.selectedPath);
+    });
+    if (!state.selectedPath) return;
+    var p = findProject(state.selectedPath);
+    if (!p) {
+      state.selectedPath = null;
+      updateSplit();
+      return;
+    }
+    renderPanel(p);
+    // README 摘要 / AI 会话痕迹明细按需懒取
+    if (!state.details[p.path]) {
+      state.details[p.path] = 'loading';
+      api.projectDetail(p.path).then(function (d) {
+        state.details[p.path] = d || { readme: '', aiSessions: [] };
+        if (state.selectedPath === p.path) {
+          var cur = findProject(p.path);
+          if (cur) renderPanel(cur);
+        }
+      }).catch(function () { state.details[p.path] = { readme: '', aiSessions: [] }; });
+    }
+  }
+
+  function sec(title) {
+    var s = el('div', 'p-sec');
+    s.appendChild(el('h4', null, title));
+    return s;
+  }
+
+  function kv(parent, label, value) {
+    var s = el('span');
+    s.appendChild(document.createTextNode(label + ' '));
+    s.appendChild(el('b', null, value));
+    parent.appendChild(s);
   }
 
   function renderWarns(parent, p) {
@@ -294,7 +697,7 @@
     p.warnings.forEach(function (w) {
       var s = el('span', 'warn', w.label);
       var x = el('button', 'x', '×');
-      x.title = '忽略此警示（状态变化后自动复出）';
+      x.title = '消音此警示（状态变化后自动复出）';
       x.addEventListener('click', function (e) {
         e.stopPropagation();
         api.snooze(p.path, w.type, w.label).then(function () { refresh(false); });
@@ -305,62 +708,14 @@
     parent.appendChild(box);
   }
 
-  function autosize(ta) {
-    ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
-  }
-
-  function bindMemoEdit(memoEl, p) {
-    memoEl.addEventListener('click', function (e) {
-      e.stopPropagation();
-      var ta = el('textarea', 'memo-input');
-      ta.value = p.memo || '';
-      ta.rows = 1;
-      memoEl.replaceWith(ta);
-      ta.focus();
-      autosize(ta);
-      ta.addEventListener('input', function () { autosize(ta); });
-      ta.addEventListener('click', function (ev) { ev.stopPropagation(); });
-      ta.addEventListener('keydown', function (ev) {
-        ev.stopPropagation();
-        if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ta.blur(); }
-        if (ev.key === 'Escape') { ta.value = p.memo || ''; ta.blur(); }
-      });
-      ta.addEventListener('blur', function () {
-        p.memo = ta.value.replace(/\s+$/, '');
-        api.setMemo(p.path, p.memo);
-        var nm = el('p', 'memo' + (p.memo ? '' : ' empty'), p.memo || '暂无备忘');
-        nm.title = '点击编辑备忘（Enter 保存，Shift+Enter 换行）';
-        ta.replaceWith(nm);
-        bindMemoEdit(nm, p);
-      });
-    });
-  }
-
-  function renderMemo(card, p) {
-    var memo = el('p', 'memo' + (p.memo ? '' : ' empty'), p.memo || '暂无备忘');
-    memo.title = '点击编辑备忘';
-    bindMemoEdit(memo, p);
-    card.appendChild(memo);
-  }
-
-  function kv(parent, label, value) {
-    var s = el('span');
-    s.appendChild(document.createTextNode(label + ' '));
-    s.appendChild(el('b', null, value));
-    parent.appendChild(s);
-  }
-
-  function renderGithub(detailPad, p) {
-    detailPad.appendChild(el('div', 'sec-title', 'GitHub'));
+  function renderGithub(parent, p) {
     var gh = p.github;
     if (!gh) {
       var noToken = state.settings && !(state.settings.hasGithubToken || state.settings.githubToken);
-      detailPad.appendChild(el('div', 'gh-empty', noToken ? '未配置 GitHub' : '无 GitHub 数据（非本人仓库或尚未同步）'));
+      parent.appendChild(el('div', 'gh-empty', noToken ? '未配置 GitHub' : '无 GitHub 数据（非本人仓库或尚未同步）'));
       return;
     }
-    var summary = el('div', 'gh-empty', '开放 issue ' + gh.openIssues + ' · 开放 PR ' + gh.openPRs);
-    detailPad.appendChild(summary);
+    parent.appendChild(el('div', 'gh-empty', '开放 issue ' + gh.openIssues + ' · 开放 PR ' + gh.openPRs));
     var box = el('div', 'gh');
     gh.items.forEach(function (it) {
       var row = el('div', 'gh-item');
@@ -372,60 +727,161 @@
       });
       box.appendChild(row);
     });
-    detailPad.appendChild(box);
+    parent.appendChild(box);
   }
 
-  function renderDetail(card, p) {
-    var detail = el('div', 'detail');
-    var din = el('div', 'detail-in');
-    var pad = el('div', 'detail-pad');
+  function autosize(ta) {
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+  }
+
+  function renderPanel(p) {
+    // 后台补丁重渲染时保住备忘编辑中的内容与焦点
+    var memoLive = document.activeElement && document.activeElement.classList &&
+      document.activeElement.classList.contains('memo-input') && panelIn.contains(document.activeElement);
+    var memoVal = memoLive ? document.activeElement.value : null;
+    panelIn.innerHTML = '';
     var current = isCurrentBranch(p);
     var bd = branchDetailOf(p);
 
-    pad.appendChild(el('div', 'sec-title', current ? '最近提交' : '最近提交 · ' + selBranch(p)));
-    if (!bd) {
-      pad.appendChild(el('div', 'gh-empty', '加载分支数据…'));
-    } else if (bd.commits.length === 0) {
-      pad.appendChild(el('div', 'gh-empty', '暂无提交记录'));
-    } else {
-      bd.commits.forEach(function (c) {
-        var row = el('div', 'commit');
-        row.appendChild(el('span', 'msg', c.msg));
-        row.appendChild(el('span', 'ago mono', c.rel));
-        pad.appendChild(row);
-      });
+    // 面板头：分带 pill + 项目名 + 关闭钮
+    var head = el('div', 'p-head');
+    head.appendChild(el('span', 'bp ' + BAND_PILL[p.band], BAND_LABEL[p.band]));
+    head.appendChild(el('span', 'nm', p.name));
+    var close = el('button', 'p-close', '✕');
+    close.type = 'button';
+    close.title = '关闭 (Esc)';
+    close.addEventListener('click', function () { selectProject(null); });
+    head.appendChild(close);
+    panelIn.appendChild(head);
+
+    panelIn.appendChild(el('div', 'p-path mono', p.path));
+
+    // 备忘：可编辑，保存回填行（Enter / 失焦保存，Esc 还原）
+    var ta = el('textarea', 'memo-input');
+    ta.value = p.memo || '';
+    ta.placeholder = '写点备忘…';
+    ta.rows = 1;
+    ta.addEventListener('input', function () {
+      autosize(ta);
+      p.memo = ta.value; // 行上备忘随输入即时回填
+      var rowEl = rowsEl.querySelector('.row[data-path="' + CSS.escape(p.path) + '"] .r-sub');
+      if (rowEl) {
+        rowEl.textContent = ta.value || '无备忘';
+        rowEl.classList.toggle('empty', !ta.value);
+      }
+    });
+    ta.addEventListener('keydown', function (ev) {
+      ev.stopPropagation();
+      if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ta.blur(); }
+      if (ev.key === 'Escape') { ta.value = p.memo || ''; ta.blur(); }
+    });
+    ta.addEventListener('blur', function () {
+      p.memo = ta.value.replace(/\s+$/, '');
+      api.setMemo(p.path, p.memo);
+      renderRows();
+    });
+    panelIn.appendChild(ta);
+    if (memoVal !== null) {
+      ta.value = memoVal;
+      ta.focus();
+    }
+    autosize(ta);
+
+    // 近况信号：分支下拉（懒取 branch:commits）、近7天提交、领先/落后远程、未提交数
+    var sigSec = sec('近况信号');
+    var kvRow = el('div', 'kv-row');
+    renderBranchKv(kvRow, p);
+    kv(kvRow, '近7天', p.commits7d + ' 提交');
+    if (p.ahead > 0) kv(kvRow, '领先远程', String(p.ahead));
+    if (p.hasUpstream && p.behind > 0) kv(kvRow, '落后远程', p.behind + ' 提交');
+    if (current && p.dirtyCount > 0) kv(kvRow, '未提交', p.dirtyCount + ' 文件');
+    sigSec.appendChild(kvRow);
+    panelIn.appendChild(sigSec);
+
+    // 警示 pill 全文案 + 消音 ×（工作区类信息只对当前分支显示）
+    if (current && p.warnings && p.warnings.length) {
+      var warnSec = sec('警示');
+      renderWarns(warnSec, p);
+      panelIn.appendChild(warnSec);
     }
 
-    // 未提交文件默认收起：摘要行点击后展开为列表（issue #3）；工作区信息只对当前分支显示（issue #4）
+    // 本项目全年热力图
+    var heatSec = sec('全年热力图');
+    var heatBox = el('div'); // renderHeatInto 会清空容器，标题须留在容器外
+    heatSec.appendChild(heatBox);
+    renderHeatInto(heatBox, p.activity365 || [], 'p-heat', false);
+    panelIn.appendChild(heatSec);
+
+    // README 首段摘要 + AI 会话痕迹明细（project:detail 懒取）
+    var detail = state.details[p.path];
+    if (detail && detail !== 'loading') {
+      if (detail.readme) {
+        var rSec = sec('README 摘要');
+        rSec.appendChild(el('div', 'readme-s', detail.readme));
+        panelIn.appendChild(rSec);
+      }
+      if (detail.aiSessions && detail.aiSessions.length) {
+        var aSec = sec('AI 会话痕迹');
+        detail.aiSessions.forEach(function (s) {
+          var item = el('div', 'ai-item');
+          item.appendChild(el('span', 'tool', AI_TOOL_LABEL[s.tool] || s.tool));
+          item.appendChild(el('span', 'ago', relTime(s.at)));
+          aSec.appendChild(item);
+        });
+        panelIn.appendChild(aSec);
+      }
+    }
+
+    // 近期提交（随分支下拉切换）
+    var cSec = sec(current ? '近期提交' : '近期提交 · ' + selBranch(p));
+    if (!bd) {
+      cSec.appendChild(el('div', 'gh-empty', '加载分支数据…'));
+    } else if (!bd.commits.length) {
+      cSec.appendChild(el('div', 'gh-empty', '暂无提交记录'));
+    } else {
+      bd.commits.forEach(function (c) {
+        var row = el('div', 'line-item');
+        row.appendChild(el('span', 'msg', c.msg));
+        row.appendChild(el('span', 'ago mono', c.rel));
+        cSec.appendChild(row);
+      });
+    }
+    panelIn.appendChild(cSec);
+
+    // 未提交文件：默认收起（仅当前分支）
     if (current && p.dirtyFiles.length > 0) {
-      var dt = el('button', 'sec-title dirty-toggle');
+      var dSec = sec('未提交文件');
+      var dt = el('button', 'dirty-toggle');
       dt.type = 'button';
-      dt.appendChild(el('span', 'caret', '▸'));
-      dt.appendChild(document.createTextNode('未提交文件 · ' + p.dirtyFiles.length));
+      dt.appendChild(el('span', 'caret', '▶'));
+      dt.appendChild(document.createTextNode(p.dirtyFiles.length + ' 个文件，点击展开'));
       var wrap = el('div', 'dirty-wrap');
-      var din2 = el('div', 'dirty-in');
-      var list = el('div', 'dirty-list');
-      p.dirtyFiles.forEach(function (f) { list.appendChild(el('span', 'f mono', f)); });
-      din2.appendChild(list);
-      wrap.appendChild(din2);
-      dt.addEventListener('click', function (e) {
-        e.stopPropagation();
+      var din = el('div', 'dirty-in');
+      var dl = el('div', 'dirty-list');
+      p.dirtyFiles.forEach(function (f) { dl.appendChild(el('span', 'f mono', f)); });
+      din.appendChild(dl);
+      wrap.appendChild(din);
+      dt.addEventListener('click', function () {
         var open = wrap.classList.toggle('open');
         dt.classList.toggle('open', open);
       });
-      pad.appendChild(dt);
-      pad.appendChild(wrap);
+      dSec.appendChild(dt);
+      dSec.appendChild(wrap);
+      panelIn.appendChild(dSec);
     }
 
-    var ghs = el('div');
-    ghs.style.marginTop = '8px';
-    pad.appendChild(ghs);
-    renderGithub(ghs, p);
+    // GitHub issues/PR
+    var gSec = sec('GitHub');
+    renderGithub(gSec, p);
+    panelIn.appendChild(gSec);
 
+    // 快捷打开（文件夹 / 编辑器 / 终端 / 复制路径）
+    var qSec = sec('快捷打开');
     var quick = el('div', 'quick');
-    // 主操作实心，其余幽灵（issue #2 按钮族）
     [['打开文件夹', 'folder', 1], ['编辑器', 'editor'], ['终端', 'terminal']].forEach(function (pair) {
       var b = el('button', 'btn' + (pair[2] ? ' solid' : ''), pair[0]);
+      b.type = 'button';
       b.addEventListener('click', function (e) {
         e.stopPropagation();
         api.quickOpen(p.path, pair[1]).then(function (ok) {
@@ -434,8 +890,8 @@
       });
       quick.appendChild(b);
     });
-
     var copy = el('button', 'btn', '复制路径');
+    copy.type = 'button';
     copy.addEventListener('click', function (e) {
       e.stopPropagation();
       navigator.clipboard.writeText(p.path).then(
@@ -444,198 +900,69 @@
       );
     });
     quick.appendChild(copy);
+    qSec.appendChild(quick);
+    panelIn.appendChild(qSec);
 
-    var isPinned = state.prefs && state.prefs.pinned === p.path;
-    var pin = el('button', 'btn pin' + (isPinned ? ' on' : ''), isPinned ? '取消主攻' : '设为主攻');
-    pin.title = '主攻项目固定占据左侧大卡位';
-    pin.addEventListener('click', function (e) {
-      e.stopPropagation();
-      var next = isPinned ? null : p.path;
-      state.prefs = Object.assign({}, state.prefs, { pinned: next });
-      api.setPrefs({ pinned: next });
-      renderAll();
-    });
-    quick.appendChild(pin);
-
-    pad.appendChild(quick);
-    din.appendChild(pad);
-    detail.appendChild(din);
-    card.appendChild(detail);
-    card.appendChild(el('div', 'expand-hint mono', state.expanded[p.path] ? '- 收起' : '+ 展开'));
-  }
-
-  /* ---------- 拖拽重排 ---------- */
-  function bindDrag(card, p) {
-    card.addEventListener('dragstart', function (e) {
-      state.dragPath = p.path;
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', p.path);
-      card.classList.add('dragging');
-    });
-    card.addEventListener('dragend', function () {
-      state.dragPath = null;
-      card.classList.remove('dragging');
-      grid.querySelectorAll('.drag-over').forEach(function (c) { c.classList.remove('drag-over'); });
-    });
-    card.addEventListener('dragover', function (e) {
-      if (!state.dragPath || state.dragPath === p.path) return;
-      e.preventDefault();
-      card.classList.add('drag-over');
-    });
-    card.addEventListener('dragleave', function () { card.classList.remove('drag-over'); });
-    card.addEventListener('drop', function (e) {
-      e.preventDefault();
-      card.classList.remove('drag-over');
-      if (state.dragPath && state.dragPath !== p.path) reorderCard(state.dragPath, p.path);
-    });
-  }
-
-  function reorderCard(dragPath, targetPath) {
-    var disp = state.lastLayout.slice();
-    var from = disp.indexOf(dragPath);
-    var to = disp.indexOf(targetPath);
-    if (from < 0 || to < 0) return;
-    disp.splice(to, 0, disp.splice(from, 1)[0]);
-    var shown = {};
-    disp.forEach(function (p) { shown[p] = 1; });
-    // 当前未显示的（理论上拖拽只在「全部」无搜索时可用，这里兜底）按原名序排在后面
-    var rest = state.board.projects
-      .map(function (p) { return p.path; })
-      .filter(function (p) { return !shown[p]; });
-    var cardOrder = disp.concat(rest);
-    state.prefs = Object.assign({}, state.prefs, { cardOrder: cardOrder });
-    api.setPrefs({ cardOrder: cardOrder });
-    renderAll();
-  }
-
-  function projectCard(p, kind) {
-    // kind: 'big' | 'mid' | 'compact'
-    var card = el('article', 'card clickable' + (kind === 'compact' ? ' compact' : ''));
-    card.setAttribute('data-band', p.band);
-    if (state.expanded[p.path]) card.classList.add('open');
-
-    if (state.prefs && state.prefs.pinned === p.path) {
-      var flag = el('span', 'pin-flag on');
-      flag.appendChild(el('i'));
-      flag.appendChild(document.createTextNode('主攻'));
-      card.appendChild(flag);
-    }
-    card.appendChild(el('span', 'bp ' + BAND_PILL[p.band], BAND_LABEL[p.band]));
-    card.appendChild(el('h2', 'proj-name mono', p.name));
-    renderMemo(card, p);
-
-    var bd = branchDetailOf(p);
-    var kvRow = el('div', 'kv-row');
-    // 切到非当前分支时，「最后提交」显示该分支的最后提交时间（issue #4）
-    kv(kvRow, '最后提交', relTime(bd ? bd.lastCommitAt : p.lastCommitAt));
-    // 分带依据是「最后活动时间」：与最后提交不一致时亮出原因，避免 pill 与提交时间打架
-    if (p.lastActivityAt && p.lastActivityAt !== p.lastCommitAt) {
-      kv(kvRow, '最近动静', relTime(p.lastActivityAt));
-    }
-    kv(kvRow, '近7天', p.commits7d + ' 提交');
-    if (kind !== 'compact') {
-      renderBranchKv(kvRow, p);
-      if (p.aiSessionAt) kv(kvRow, 'AI 会话', relTime(p.aiSessionAt));
-      if (p.github && p.github.openIssues > 0) kv(kvRow, '开放 issue', String(p.github.openIssues));
-      if (p.hasUpstream && p.behind > 0) kv(kvRow, '落后远程', p.behind + ' 提交');
-    }
-    card.appendChild(kvRow);
-
-    if (kind !== 'compact') renderActivity(card, p);
-    // 工作区类信息（警示）只对当前分支显示（issue #4）
-    if (isCurrentBranch(p)) renderWarns(card, p);
-
-    renderDetail(card, p);
-
-    card.draggable = canDrag() && !state.expanded[p.path];
-    if (card.draggable) card.title = '拖拽可重排卡片';
-    bindDrag(card, p);
-
-    card.addEventListener('click', function () {
-      var open = card.classList.toggle('open');
-      state.expanded[p.path] = open;
-      card.draggable = canDrag() && !open;
-      var hint = card.querySelector('.expand-hint');
-      if (hint) hint.textContent = open ? '- 收起' : '+ 展开';
-    });
-    return card;
-  }
-
-  // 卡片签名：影响 DOM 的输入全在里面，一致则重渲染时复用节点（issue #8）
-  function cardSig(p, kind) {
-    var sel = selBranch(p);
-    var bd = sel !== p.branch ? (state.branchDetail[p.path + ' ' + sel] || null) : null;
-    return JSON.stringify([
-      kind,
-      state.prefs && state.prefs.pinned === p.path,
-      sel,
-      bd,
-      state.settings && (state.settings.hasGithubToken || state.settings.githubToken) ? 1 : 0,
-      p,
-    ]);
-  }
-
-  function getCard(p, kind) {
-    var sig = cardSig(p, kind);
-    var hit = cardCache[p.path];
-    if (hit && hit.sig === sig) return hit.node;
-    var node = projectCard(p, kind);
-    node.setAttribute('data-path', p.path);
-    cardCache[p.path] = { node: node, sig: sig };
-    return node;
-  }
-
-  /* ---------- 「需要关注」面板（issue #7） ---------- */
-  function renderAttnPanel() {
-    attnPanel.innerHTML = '';
-    var board = state.board;
-    if (!board) return;
-    var head = el('div', 'attn-head');
-    head.appendChild(el('span', 'attn-title', '需要关注'));
-    var cnt = el('span', 'mono', board.attention.length + ' 个项目');
-    cnt.style.fontSize = '11px';
-    cnt.style.color = 'var(--tile-ink2)';
-    head.appendChild(cnt);
-    attnPanel.appendChild(head);
-    attnPanel.appendChild(el('div', 'attn-sub', board.attention.length ? '存在未推送提交或滞留改动' : '一切正常，暂无警示'));
-    board.attention.forEach(function (a) {
-      var item = el('div', 'attn-item');
-      item.appendChild(el('span', 'ic'));
-      item.appendChild(el('span', 'nm mono', a.name));
-      item.appendChild(el('span', 'ds', a.label));
-      item.appendChild(el('span', 'mk'));
-      item.addEventListener('click', function () {
-        jumpToProject(a.path);
+    // AI 工具启动：该项目目录一键直达（issue #15/#17）
+    var tools = installedTools();
+    if (tools.length) {
+      var tSec = sec('AI 工具启动');
+      var tRow = el('div', 'tools-row');
+      tools.forEach(function (t) {
+        tRow.appendChild(toolButton(t, function (btn) {
+          api.aiToolsOpen(t.cmd, p.path).then(function (ok) {
+            flashBtn(btn, ok ? '已启动' : '启动失败', ok);
+            setTimeout(function () {
+              if (state.selectedPath === p.path) {
+                var cur = findProject(p.path);
+                if (cur) renderPanel(cur);
+              }
+            }, 950);
+          });
+        }));
       });
-      attnPanel.appendChild(item);
-    });
+      tSec.appendChild(tRow);
+      panelIn.appendChild(tSec);
+    }
   }
 
-  function setAttnOpen(open) {
-    state.attnOpen = open;
-    attnPanel.classList.toggle('hidden', !open);
-    bellBtn.classList.toggle('on', open);
-    if (open) renderAttnPanel();
-  }
-
-  // 面板/卡片跳转：切回「全部」、清搜索、展开目标卡片并滚动到位
-  function jumpToProject(path) {
-    state.band = 'all';
+  /* ---------- 视图切换与跳转 ---------- */
+  function switchView(view) {
+    state.view = view;
     document.querySelectorAll('#nav button').forEach(function (b) {
-      b.classList.toggle('active', b.getAttribute('data-band') === 'all');
+      b.classList.toggle('active', b.getAttribute('data-view') === view);
     });
-    state.query = '';
-    searchInput.value = '';
-    closeSuggest();
-    setAttnOpen(false);
+    viewOverview.classList.toggle('hidden', view !== 'overview');
+    viewProjects.classList.toggle('hidden', view !== 'projects');
     hideSettings();
-    state.expanded[path] = true;
-    renderAll();
-    var target = grid.querySelector('[data-path="' + CSS.escape(path) + '"]');
+  }
+
+  // 关注清单 / 活动流 / 搜索 → 跳项目页并推出该项目详情
+  function jumpToProject(path) {
+    var p = findProject(path);
+    if (!p) return;
+    switchView('projects');
+    closeToolPicker();
+    closeSuggest();
+    searchInput.value = '';
+    state.query = '';
+    if (state.band !== 'all' && p.band !== state.band) {
+      state.band = 'all';
+      syncChips();
+    }
+    renderRows();
+    selectProject(path);
+    var target = rowsEl.querySelector('.row[data-path="' + CSS.escape(path) + '"]');
     if (target && target.scrollIntoView) target.scrollIntoView({ block: 'nearest' });
   }
 
-  /* ---------- 搜索自动补全（issue #6） ---------- */
+  function syncChips() {
+    document.querySelectorAll('#bandChips button').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-band') === state.band);
+    });
+  }
+
+  /* ---------- 搜索自动补全（issue #6，命中即跳项目详情） ---------- */
   function suggestCandidates() {
     var q = state.query;
     if (!q || !state.board) return [];
@@ -672,15 +999,14 @@
         nm.appendChild(hlFrag(p.name, q));
         item.appendChild(nm);
         var inName = p.name.toLowerCase().indexOf(q) >= 0;
-        if (!inName && p.memo) {
-          var sn = el('span', 'rt snip');
-          sn.appendChild(hlFrag(p.memo.slice(0, 40), q));
-          item.appendChild(sn);
-        }
+        var rt = el('span', 'rt snip');
+        if (!inName && p.memo) rt.appendChild(hlFrag(p.memo.slice(0, 40), q));
+        else rt.textContent = BAND_LABEL[p.band];
+        item.appendChild(rt);
         // mousedown 抢先于 input blur，保证点击可选中
         item.addEventListener('mousedown', function (e) {
           e.preventDefault();
-          pickSuggestion(p);
+          jumpToProject(p.path);
         });
         suggestEl.appendChild(item);
       });
@@ -689,129 +1015,49 @@
     suggestEl.classList.add('open');
   }
 
-  function pickSuggestion(p) {
-    searchInput.value = p.name;
-    state.query = p.name.toLowerCase();
-    state.expanded[p.path] = true;
-    closeSuggest();
-    if (state.band !== 'all' && p.band !== state.band) {
-      state.band = 'all';
-      document.querySelectorAll('#nav button').forEach(function (b) {
-        b.classList.toggle('active', b.getAttribute('data-band') === 'all');
+  /* ---------- 排序下拉（issue #18） ---------- */
+  function renderSortDrop() {
+    sortDrop.innerHTML = '';
+    SORT_MODES.forEach(function (m) {
+      var item = el('button', 'drop-item');
+      item.type = 'button';
+      item.appendChild(el('span', 'nm', m === 'manual' ? '手动（可拖拽）' : SORT_LABEL[m]));
+      if (m === state.sortMode) item.appendChild(el('span', 'cur', '当前'));
+      item.addEventListener('click', function (e) {
+        e.stopPropagation();
+        state.sortMode = m;
+        api.setPrefs({ sortMode: m });
+        document.getElementById('sortLabel').textContent = '排序：' + SORT_LABEL[m];
+        closeDrops();
+        renderRows();
+        renderSortDrop();
       });
-    }
-    renderAll();
-    var target = grid.querySelector('[data-path="' + CSS.escape(p.path) + '"]');
-    if (target && target.scrollIntoView) target.scrollIntoView({ block: 'nearest' });
+      sortDrop.appendChild(item);
+    });
   }
 
   /* ---------- 渲染 ---------- */
   function renderAll() {
     var board = state.board;
-    grid.innerHTML = '';
     if (!board) return;
-
     document.getElementById('scanTime').textContent = hhmm(board.scannedAt);
-    setStat('statTotal', board.stats.total, '个');
-    setStat('statCommits', board.stats.commits7d, '次');
-    var badge = document.getElementById('attnBadge');
-    badge.textContent = board.stats.attentionCount;
-    badge.classList.toggle('hidden', board.stats.attentionCount === 0);
-    bellBtn.classList.toggle('grey', board.stats.attentionCount === 0); // issue #7：为 0 置灰
-    if (state.attnOpen) renderAttnPanel();
-
-    // keyed 复用的缓存清理：已不在板上的卡片节点丢弃
-    var alive = {};
-    board.projects.forEach(function (p) { alive[p.path] = 1; });
-    Object.keys(cardCache).forEach(function (k) { if (!alive[k]) delete cardCache[k]; });
-
-    if (board.projects.length === 0) {
-      var empty = el('div', 'board-empty');
-      empty.appendChild(el('div', 't', '还没有发现任何项目'));
-      empty.appendChild(el('div', null, '在设置里添加扫描根目录，devboard 会自动找出其中含 .git 的项目'));
-      var go = el('button', 'btn solid', '去设置');
-      go.addEventListener('click', showSettings);
-      grid.appendChild(empty);
-      return;
+    renderOverview();
+    renderRows();
+    // 选中项目仍在板上则刷新面板，否则收起
+    if (state.selectedPath) {
+      var p = findProject(state.selectedPath);
+      if (p && (state.band === 'all' || p.band === state.band)) renderPanel(p);
+      else selectProject(null);
     }
-
-    var filtering = state.band !== 'all' || !!state.query;
-    grid.classList.toggle('flat', filtering);
-
-    if (filtering) {
-      // 筛选/搜索态：平铺统一尺寸卡片，从第一排第一列起排（issue #5）
-      grid.classList.remove('no-mid', 'sparse');
-      var vlist = projectOrder(board.projects).filter(visible);
-      state.lastLayout = vlist.map(function (p) { return p.path; });
-      if (vlist.length === 0) {
-        var none = el('div', 'board-empty');
-        none.appendChild(el('div', 't', '该分类下暂无项目'));
-        grid.appendChild(none);
-        return;
-      }
-      vlist.forEach(function (p) {
-        grid.appendChild(getCard(p, 'mid'));
-      });
-      return;
-    }
-
-    var all = projectOrder(board.projects);
-    var pinnedPath = state.prefs && state.prefs.pinned;
-    var pinned = pinnedPath ? all.filter(function (p) { return p.path === pinnedPath; })[0] : null;
-
-    // 左锚定大卡：主攻项目（图钉）；未图钉时由最近活跃者顶替
-    var hotActive = all.filter(function (p) { return FOCUS_BANDS[p.band]; });
-    var bigProj = pinned || hotActive.slice().sort(byActivityDesc)[0] || all.slice().sort(byActivityDesc)[0];
-    var rest = all.filter(function (p) { return p !== bigProj; });
-
-    state.lastLayout = [bigProj.path].concat(rest.map(function (p) { return p.path; }));
-
-    // 贪心填充三列：大卡固定左上，其余卡片进当前最矮列，优先充满（关注卡已移入铃铛面板，issue #7）
-    var colL = el('div', 'col big');
-    var colM = el('div', 'col col-mid');
-    var colR = el('div', 'col col-right');
-    var cols = [colL, colM, colR];
-    var hs = [0, 0, 0];
-
-    if (state.expanded[bigProj.path] === undefined) state.expanded[bigProj.path] = true;
-    colL.appendChild(getCard(bigProj, 'big'));
-    hs[0] = estH(bigProj, 'big');
-
-    rest.forEach(function (p) {
-      var kind = FOCUS_BANDS[p.band] ? 'mid' : 'compact';
-      var i = hs[0] <= hs[1] && hs[0] <= hs[2] ? 0 : hs[1] <= hs[2] ? 1 : 2;
-      cols[i].appendChild(getCard(p, kind));
-      hs[i] += estH(p, kind) + 12;
-    });
-    grid.appendChild(colL);
-    grid.appendChild(colM);
-    grid.appendChild(colR);
-
-    // 内容不足一屏时垂直居中，避免重心上浮
-    requestAnimationFrame(function () {
-      grid.classList.toggle('sparse', grid.scrollHeight <= grid.clientHeight + 4);
-    });
-  }
-
-  function setStat(id, n, unit) {
-    var e = document.getElementById(id);
-    e.innerHTML = '';
-    e.appendChild(document.createTextNode(n));
-    e.appendChild(el('span', 'unit', unit));
   }
 
   function renderSkeleton() {
-    grid.innerHTML = '';
-    [[5, 2], [4, 2], [3, 3]].forEach(function (pair) {
-      var col = el('div', 'col');
-      col.style.gridColumn = 'span ' + pair[0];
-      for (var i = 0; i < pair[1]; i++) col.appendChild(el('div', 'skel'));
-      grid.appendChild(col);
-    });
+    rowsEl.innerHTML = '';
+    for (var i = 0; i < 6; i++) rowsEl.appendChild(el('div', 'skel'));
   }
 
   /* ---------- 数据 ---------- */
-  // 扫描指示：顶栏细 spinner +「扫描中…」，期间现有卡片保持不动（issue #8）
+  // 扫描指示：顶栏细 spinner +「扫描中…」（issue #8）
   function setScanning(on) {
     document.getElementById('scanSpin').classList.toggle('hidden', !on);
     document.getElementById('scanLabel').textContent = on ? '扫描中' : '最后扫描';
@@ -858,6 +1104,7 @@
   /* ---------- 设置视图 ---------- */
   var rootsList = document.getElementById('rootsList');
   var extraList = document.getElementById('extraList');
+  var aiToolsListEl = document.getElementById('aiToolsList');
   var fToken = document.getElementById('fToken');
   var fUsername = document.getElementById('fUsername');
   var fEditor = document.getElementById('fEditor');
@@ -890,6 +1137,38 @@
     del.addEventListener('click', function () { row.remove(); });
     row.appendChild(del);
     listEl.appendChild(row);
+  }
+
+  // AI 工具自定义清单行（label + cmd，issue #15，存 config.aiTools）
+  function aiToolRow(label, cmd) {
+    var row = el('div', 'path-row');
+    var l = el('input');
+    l.type = 'text';
+    l.value = label || '';
+    l.placeholder = '名称（如 Kimi Code）';
+    l.spellcheck = false;
+    var c = el('input');
+    c.type = 'text';
+    c.value = cmd || '';
+    c.placeholder = '命令（如 kimi）';
+    c.spellcheck = false;
+    var del = el('button', 'del', '删除');
+    del.type = 'button';
+    del.addEventListener('click', function () { row.remove(); });
+    row.appendChild(l);
+    row.appendChild(c);
+    row.appendChild(del);
+    aiToolsListEl.appendChild(row);
+  }
+
+  function collectAiTools() {
+    var out = [];
+    Array.prototype.forEach.call(aiToolsListEl.querySelectorAll('.path-row'), function (row) {
+      var inputs = row.querySelectorAll('input');
+      var cmd = inputs[1].value.trim();
+      if (cmd) out.push({ label: inputs[0].value.trim() || cmd, cmd: cmd });
+    });
+    return out;
   }
 
   function collectPaths(listEl) {
@@ -993,6 +1272,8 @@
       (cfg.roots || []).forEach(function (r) { pathRow(rootsList, r); });
       extraList.innerHTML = '';
       (cfg.extraPaths || []).forEach(function (r) { pathRow(extraList, r); });
+      aiToolsListEl.innerHTML = '';
+      (cfg.aiTools || []).forEach(function (t) { aiToolRow(t.label, t.cmd); });
       document.getElementById('fBlacklist').value = (cfg.blacklist || []).join('\n');
       fToken.value = ''; // token 不下发；留空 = 不改动（issue #12）
       fUsername.value = cfg.githubUsername || '';
@@ -1027,6 +1308,7 @@
       roots: collectPaths(rootsList),
       extraPaths: collectPaths(extraList),
       blacklist: lines('fBlacklist'),
+      aiTools: collectAiTools(),
       githubUsername: fUsername.value.trim(),
       editorCmd: fEditor.value.trim() || 'code',
       terminalCmd: fTerminal.value.trim(),
@@ -1039,6 +1321,7 @@
       state.settings = cfg;
       ghStateText();
       fToken.value = '';
+      loadAiTools(); // 自定义工具清单可能已变，重扫 PATH
       return Promise.all([api.getHotkeyError(), api.scanPreview({})]);
     }).then(function (rs) {
       var hkErr = rs[0];
@@ -1070,6 +1353,11 @@
   document.getElementById('settingsSave').addEventListener('click', saveSettings);
   document.getElementById('addRoot').addEventListener('click', function () { pathRow(rootsList, ''); });
   document.getElementById('addExtra').addEventListener('click', function () { pathRow(extraList, ''); });
+  document.getElementById('addAiTool').addEventListener('click', function () { aiToolRow('', ''); });
+  document.getElementById('streamMore').addEventListener('click', function () {
+    state.streamShown = Infinity;
+    renderStream();
+  });
   document.getElementById('browseEditor').addEventListener('click', function () {
     api.pickPath('file').then(function (p) { if (p) fEditor.value = p; });
   });
@@ -1149,18 +1437,35 @@
     fHotkey.value = parts.join('+');
   });
 
-  // 铃铛：开合「需要关注」面板（issue #7）
-  bellBtn.addEventListener('click', function (e) {
-    e.stopPropagation();
-    hideSettings();
-    setAttnOpen(!state.attnOpen);
+  // 顶层导航：总览 | 项目（issue #14）
+  document.querySelectorAll('#nav button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      switchView(btn.getAttribute('data-view'));
+    });
   });
 
-  // 搜索框：输入即过滤 + 自动补全（issue #6）
+  // 项目页分带筛选 chips（issue #16）
+  document.querySelectorAll('#bandChips button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      state.band = btn.getAttribute('data-band');
+      syncChips();
+      selectProject(null);
+      renderRows();
+    });
+  });
+
+  // 排序下拉（issue #18）
+  document.getElementById('sortBtn').addEventListener('click', function (e) {
+    e.stopPropagation();
+    var willOpen = !sortDrop.classList.contains('open');
+    closeDrops();
+    if (willOpen) sortDrop.classList.add('open');
+  });
+
+  // 搜索框：输入即补全，选中跳项目详情（issue #6）
   searchInput.addEventListener('input', function () {
     state.query = searchInput.value.trim().toLowerCase();
     state.suggestIdx = -1;
-    renderAll();
     renderSuggest();
   });
   searchInput.addEventListener('focus', function () { renderSuggest(); });
@@ -1179,7 +1484,7 @@
       var pick = state.suggestIdx >= 0 ? cands[state.suggestIdx] : cands[0];
       if (pick) {
         e.preventDefault();
-        pickSuggestion(pick);
+        jumpToProject(pick.path);
       }
       return;
     }
@@ -1190,37 +1495,27 @@
       } else if (searchInput.value) {
         searchInput.value = '';
         state.query = '';
-        renderAll();
       } else {
         searchInput.blur();
       }
     }
   });
 
-  document.querySelectorAll('#nav button').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      document.querySelectorAll('#nav button').forEach(function (b) { b.classList.remove('active'); });
-      btn.classList.add('active');
-      state.band = btn.getAttribute('data-band');
-      hideSettings();
-      renderAll();
-    });
-  });
-
-  // 点击空白处：关闭浮层（分支下拉 / 补全 / 关注面板）
+  // 点击空白处：关闭浮层（分支下拉 / 补全 / 排序 / 工具项目选择器）
   document.addEventListener('click', function (e) {
-    if (anyDropOpen() && !e.target.closest('.bdrop') && !e.target.closest('.search')) closeDrops();
-    if (state.attnOpen && !e.target.closest('#attnPanel') && !e.target.closest('#bellBtn')) setAttnOpen(false);
+    if (anyDropOpen() && !e.target.closest('.bdrop') && !e.target.closest('.search') && !e.target.closest('.sort-wrap')) closeDrops();
+    if (toolPickEl && !e.target.closest('.tool-pick') && !e.target.closest('.tool-btn')) closeToolPicker();
   });
 
-  // 键盘流：Esc 逐层关闭（补全/下拉 → 关注面板 → 设置 → 隐藏到托盘）；/ 聚焦搜索
+  // 键盘流：Esc 逐层关闭（选择器/补全/下拉 → 详情面板 → 设置 → 隐藏到托盘）；/ 聚焦搜索
   document.addEventListener('keydown', function (e) {
     var tag = (e.target.tagName || '').toLowerCase();
     var typing = tag === 'input' || tag === 'textarea' || e.target.isContentEditable;
     if (e.key === 'Escape') {
       if (typing) return; // 输入框内的 Esc 由各控件自理
+      if (toolPickEl) { closeToolPicker(); return; }
       if (anyDropOpen()) { closeDrops(); return; }
-      if (state.attnOpen) { setAttnOpen(false); return; }
+      if (state.selectedPath) { selectProject(null); return; }
       if (appEl.classList.contains('show-settings')) hideSettings();
       else api.winClose();
       return;
@@ -1240,7 +1535,11 @@
   api.getPrefs().then(function (p) {
     state.prefs = p;
     state.branchSel = (p && p.branchSel) || {};
+    state.sortMode = (p && p.sortMode) || 'manual';
+    document.getElementById('sortLabel').textContent = '排序：' + SORT_LABEL[state.sortMode];
+    renderSortDrop();
     if (state.board) renderAll();
   });
+  loadAiTools();
   load(false);
 })();

@@ -14,13 +14,15 @@ const DEFAULT_CONFIG = {
   terminalCmd: '',
   hotkey: 'Ctrl+Shift+D',
   autoStart: true,
+  aiTools: [], // 自定义 AI 工具清单：[{label, cmd}]，与默认 claude/codex/kimi/grok 合并（issue #15）
 };
 
 const DEFAULT_PREFS = {
-  pinned: null, // 主攻项目路径
-  cardOrder: [], // 用户自由重排的卡片位序（路径数组，优先生效）
+  pinned: [], // 主攻项目路径集合（多图钉，任意排序下置顶；旧版单路径字符串读取时迁移，issue #16）
+  cardOrder: [], // 用户自由重排的项目位序（路径数组，优先生效）
+  sortMode: 'manual', // 排序方式：manual（可拖拽）/ activity / name（issue #18）
   snoozes: {}, // 警示消音：path -> { warningType: label 签名 }
-  branchSel: {}, // 卡片分支下拉选择：path -> 分支名（issue #4）
+  branchSel: {}, // 详情面板分支下拉选择：path -> 分支名（issue #4）
   windowBounds: null,
 };
 
@@ -89,6 +91,7 @@ class Store {
     if (!Array.isArray(cfg.roots) || cfg.roots.length === 0) cfg.roots = DEFAULT_CONFIG.roots.slice();
     if (!Array.isArray(cfg.blacklist)) cfg.blacklist = DEFAULT_CONFIG.blacklist.slice();
     if (!Array.isArray(cfg.extraPaths)) cfg.extraPaths = [];
+    if (!Array.isArray(cfg.aiTools)) cfg.aiTools = [];
     return cfg;
   }
 
@@ -101,6 +104,10 @@ class Store {
   getPrefs() {
     const raw = this.readJson('prefs.json', {});
     const prefs = Object.assign({}, DEFAULT_PREFS, raw);
+    // 旧版 pinned 为单路径字符串，迁移为多路径集合（issue #16）
+    if (typeof raw.pinned === 'string') prefs.pinned = raw.pinned ? [raw.pinned] : [];
+    if (!Array.isArray(prefs.pinned)) prefs.pinned = [];
+    if (['manual', 'activity', 'name'].indexOf(prefs.sortMode) < 0) prefs.sortMode = 'manual';
     if (!Array.isArray(prefs.cardOrder)) prefs.cardOrder = [];
     if (!prefs.snoozes || typeof prefs.snoozes !== 'object') prefs.snoozes = {};
     if (!prefs.branchSel || typeof prefs.branchSel !== 'object') prefs.branchSel = {};

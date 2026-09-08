@@ -30,7 +30,7 @@ async function capture() {
 app.whenReady().then(() => {
   if (MOCK) {
     // 布局密度验证：注入 8 个 mock 项目，只注册渲染所需的最小 IPC
-    const { mockBoard } = require('./mock-board');
+    const { mockBoard, mockProjectDetail } = require('./mock-board');
     ipcMain.handle('board:get', () => mockBoard());
     ipcMain.handle('board:rescan', () => mockBoard());
     ipcMain.handle('memo:set', () => true);
@@ -39,13 +39,26 @@ app.whenReady().then(() => {
     ipcMain.handle('settings:get', () => ({
       roots: ['E:\\myproject'], extraPaths: [], blacklist: ['node_modules'],
       githubToken: '', hasGithubToken: true, githubUsername: 'me', editorCmd: 'code', terminalCmd: '',
-      hotkey: 'Ctrl+Shift+D', autoStart: true,
+      hotkey: 'Ctrl+Shift+D', autoStart: true, aiTools: [],
     }));
     ipcMain.handle('settings:set', () => ({}));
     ipcMain.handle('settings:hotkeyError', () => '');
-    ipcMain.handle('prefs:get', () => ({ pinned: null, cardOrder: [], snoozes: {}, windowBounds: null }));
+    ipcMain.handle('prefs:get', () => ({
+      pinned: ['E:\\myproject\\wyy2qqmusic'], cardOrder: [], sortMode: 'manual',
+      snoozes: {}, branchSel: {}, windowBounds: null,
+    }));
     ipcMain.handle('prefs:set', () => ({}));
     ipcMain.handle('snooze:set', () => true);
+    // AI 工具（issue #15 mock）：claude / kimi 已安装，codex / grok 未安装
+    ipcMain.handle('aitools:list', () => [
+      { id: 'claude', label: 'Claude Code', cmd: 'claude', installed: true },
+      { id: 'codex', label: 'Codex', cmd: 'codex', installed: false },
+      { id: 'kimi', label: 'Kimi Code', cmd: 'kimi', installed: true },
+      { id: 'grok', label: 'Grok', cmd: 'grok', installed: false },
+    ]);
+    ipcMain.handle('aitools:open', () => true);
+    // 详情面板深区数据（issue #17 mock）：README 摘要 + AI 会话痕迹明细
+    ipcMain.handle('project:detail', (_e, projectPath) => mockProjectDetail(projectPath));
     ipcMain.handle('dialog:pick', () => null);
     ipcMain.handle('util:checkCommand', () => ({ ok: true, reason: 'mock' }));
     ipcMain.handle('github:test', () => ({ ok: true, login: 'me' }));

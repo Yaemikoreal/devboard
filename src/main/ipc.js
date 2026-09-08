@@ -61,6 +61,30 @@ function applySnoozes(projects, snoozes) {
   }
 }
 
+// 命令可用性校验：含路径的查文件存在，否则用 where 查 PATH
+function checkCommand(cmd) {
+  const first = String(cmd || '').trim().split(/\s+/)[0].replace(/^"|"$/g, '');
+  if (!first) return Promise.resolve({ ok: false, reason: '命令为空' });
+  if (/[\\/]/.test(first) || /\.(exe|cmd|bat)$/i.test(first)) {
+    const exists = fs.existsSync(first);
+    return Promise.resolve({ ok: exists, reason: exists ? '' : '文件不存在' });
+  }
+  return new Promise((resolve) => {
+    execFile('where', [first], { timeout: 5000 }, (err, stdout) => {
+      if (err) resolve({ ok: false, reason: 'PATH 中找不到该命令' });
+      else resolve({ ok: true, reason: String(stdout).split('\n')[0].trim() });
+    });
+  });
+}
+
+// 默认 AI 工具清单；设置页可增删自定义项（config.aiTools）与之合并（issue #15）
+const DEFAULT_AI_TOOLS = [
+  { id: 'claude', label: 'Claude Code', cmd: 'claude' },
+  { id: 'codex', label: 'Codex', cmd: 'codex' },
+  { id: 'kimi', label: 'Kimi Code', cmd: 'kimi' },
+  { id: 'grok', label: 'Grok', cmd: 'grok' },
+];
+
 function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   let refreshInFlight = false;
   let scanInFlight = false;
@@ -202,6 +226,35 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     return quickOpen(payload || {}, store.getConfig());
   });
 
+  // AI 工具清单：默认四项 + config.aiTools 自定义项，逐项 where 探测安装情况（issue #15）
+  ipcMain.handle('aitools:list', async (_e, _config) => {
+    const cfg = store.getConfig();
+    const custom = (cfg.aiTools || [])
+      .map((t, i) => ({ id: 'custom-' + i, label: String(t.label || t.cmd || ''), cmd: String(t.cmd || '').trim() }))
+      .filter((t) => t.cmd);
+    const tools = DEFAULT_AI_TOOLS.concat(custom);
+    return Promise.all(
+      tools.map(async (t) => Object.assign({}, t, { installed: (await checkCommand(t.cmd)).ok }))
+    );
+  });
+
+  // 在所选项目目录开终端执行 AI 工具命令：优先 wt -d，回退 cmd /c start（issue #15）
+  ipcMain.handle('aitools:open', async (_e, cmd, projectPath) => {
+    const c = String(cmd || '').trim();
+    const p = String(projectPath || '');
+    if (!c || !p || !fs.existsSync(p)) return false;
+    const ok = await spawnResult('wt', ['-d', p, 'cmd', '/k', c]);
+    if (ok) return true;
+    return spawnResult('cmd', ['/c', 'start', 'cmd', '/k', c], { cwd: p });
+  });
+
+  // 详情面板深区数据：README 首段摘要 + AI 会话痕迹明细（issue #17）
+  ipcMain.handle('project:detail', (_e, projectPath) => {
+    const p = String(projectPath || '');
+    if (!p || !fs.existsSync(p)) return { readme: '', aiSessions: [] };
+    return scanner.projectDetail(p);
+  });
+
   // token 不下发渲染层：只给「是否已配置」，磁盘与 IPC 全程无明文（issue #12）
   ipcMain.handle('settings:get', () => {
     const cfg = store.getConfig();
@@ -238,21 +291,8 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     return r.canceled ? null : r.filePaths[0];
   });
 
-  // 设置页辅助：命令可用性校验（含路径的查文件存在，否则用 where 查 PATH）
-  ipcMain.handle('util:checkCommand', (_e, cmd) => {
-    const first = String(cmd || '').trim().split(/\s+/)[0].replace(/^"|"$/g, '');
-    if (!first) return { ok: false, reason: '命令为空' };
-    if (/[\\/]/.test(first) || /\.(exe|cmd|bat)$/i.test(first)) {
-      const exists = fs.existsSync(first);
-      return { ok: exists, reason: exists ? '' : '文件不存在' };
-    }
-    return new Promise((resolve) => {
-      execFile('where', [first], { timeout: 5000 }, (err, stdout) => {
-        if (err) resolve({ ok: false, reason: 'PATH 中找不到该命令' });
-        else resolve({ ok: true, reason: String(stdout).split('\n')[0].trim() });
-      });
-    });
-  });
+  // 设置页辅助：命令可用性校验
+  ipcMain.handle('util:checkCommand', (_e, cmd) => checkCommand(cmd));
 
   // 设置页辅助：GitHub Token 测试连接，并校验登录名与填写用户名一致
   ipcMain.handle('github:test', async (_e, token, username) => {

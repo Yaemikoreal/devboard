@@ -19,19 +19,15 @@
     </div>
   </div>
 
-  <!-- 顶栏 -->
+  <!-- 顶栏：logo + 顶层导航（总览 | 项目，issue #14）+ 搜索 + 扫描指示 + 设置/刷新 -->
   <header class="topbar">
     <span class="logo mono">devboard</span>
     <nav class="nav" id="nav">
-      <button class="active" data-band="all">全部</button>
-      <button data-band="hot">活跃</button>
-      <button data-band="active">近期</button>
-      <button data-band="cooling">渐冷</button>
-      <button data-band="stale">沉睡</button>
-      <button data-band="archive">归档</button>
+      <button class="active" data-view="overview">总览</button>
+      <button data-view="projects">项目</button>
     </nav>
-    <span class="search" title="按名称或备忘过滤">
-      <input type="text" id="searchInput" placeholder="搜索项目" spellcheck="false" autocomplete="off">
+    <span class="search" title="按名称或备忘搜索">
+      <input type="text" id="searchInput" placeholder="搜索项目 / 备忘…" spellcheck="false" autocomplete="off">
       <span class="kbd">/</span>
       <div class="drop suggest hidden" id="suggest"></div>
     </span>
@@ -40,21 +36,74 @@
       <span id="scanLabel">最后扫描</span> <span id="scanTime">--:--</span>
     </span>
     <button class="icon-btn" id="settingsBtn" title="设置"><span class="ic-set"><b></b><b></b></span></button>
-    <button class="icon-btn" id="bellBtn" title="需要关注"><span class="ic-bell"></span><span class="badge hidden" id="attnBadge">0</span></button>
     <button class="icon-btn" id="refreshBtn" title="刷新"><span class="ic-ref"></span></button>
   </header>
 
-  <!-- 铃铛开合的「需要关注」面板（issue #7） -->
-  <div class="attn-panel hidden" id="attnPanel"></div>
+  <!-- ============ 总览（issue #14） ============ -->
+  <main id="viewOverview">
+    <section class="stats">
+      <div class="stat"><div class="stat-num mono" id="statTotal">0<span class="unit">个</span></div><div class="stat-label">项目</div></div>
+      <div class="stat"><div class="stat-num mono" id="statCommits">0<span class="unit">次</span></div><div class="stat-label">近 7 天提交</div></div>
+      <div class="stat"><div class="stat-num mono" id="statAttn">0<span class="unit">项</span></div><div class="stat-label">需要关注</div></div>
+    </section>
 
-  <!-- 统计行（背景信息，降权） -->
-  <section class="stats">
-    <div class="stat"><div class="stat-num mono" id="statTotal">0<span class="unit">个</span></div><div class="stat-label">项目</div></div>
-    <div class="stat"><div class="stat-num mono" id="statCommits">0<span class="unit">次</span></div><div class="stat-label">近7天提交</div></div>
-  </section>
+    <!-- 全局全年热力图：各项目 activity365 跨项目求和 -->
+    <div class="ov-card heat-card">
+      <div class="heat-head">
+        <span class="t" id="heatHead"></span>
+        <span class="heat-legend">少 <i class="cell"></i><i class="cell l1"></i><i class="cell l2"></i><i class="cell l3"></i> 多</span>
+      </div>
+      <div id="globalHeat"></div>
+    </div>
 
-  <!-- 主网格 -->
-  <main class="grid" id="grid"></main>
+    <div class="ov-grid">
+      <!-- 按月活动流 -->
+      <div class="ov-card">
+        <h3>活动流</h3>
+        <div class="sub">按月份分组的跨项目提交事实</div>
+        <div id="stream"></div>
+        <button class="show-more hidden" id="streamMore" type="button">显示更早的活动</button>
+      </div>
+
+      <!-- 右栏：工作台（需要关注固定位 + AI 工具，issue #15） -->
+      <div>
+        <div class="attn-card">
+          <h3>需要关注</h3>
+          <div class="sub" id="attnSub"></div>
+          <div id="attnList"></div>
+        </div>
+
+        <div class="ov-card tools-card" id="toolsCard">
+          <h3>工作台 · AI 工具</h3>
+          <div class="sub">按本机安装情况显示，点击后在所选项目目录启动</div>
+          <div class="tools-grid" id="toolsGrid"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ============ 项目（行式列表，issue #16） ============ -->
+  <main id="viewProjects" class="hidden">
+    <div class="filterbar">
+      <div class="chips" id="bandChips">
+        <button class="active" data-band="all">全部</button>
+        <button data-band="hot">活跃</button>
+        <button data-band="active">近期</button>
+        <button data-band="cooling">渐冷</button>
+        <button data-band="stale">沉睡</button>
+        <button data-band="archive">归档</button>
+      </div>
+      <div class="sort-wrap">
+        <button class="sort-btn" id="sortBtn" type="button"><span id="sortLabel">排序：手动</span><span class="caret">▾</span></button>
+        <div class="drop sort-drop" id="sortDrop"></div>
+      </div>
+    </div>
+
+    <div class="split" id="split">
+      <div class="rows" id="rows"></div>
+      <aside class="panel"><div class="panel-in" id="panelIn"></div></aside>
+    </div>
+  </main>
 
   <!-- 设置视图 -->
   <section class="settings-view" id="settingsView">
@@ -82,6 +131,13 @@
           <button id="previewBtn" type="button">扫描预览</button>
           <span class="res" id="previewRes"></span>
         </div>
+      </div>
+
+      <div class="set-group">
+        <h3>AI 工具</h3>
+        <div class="group-desc">总览页工作台按本机 PATH 探测 claude / codex / kimi / grok；下方可增删自定义命令（名称 + 命令），与默认清单一并探测</div>
+        <div id="aiToolsList"></div>
+        <button class="add-row" id="addAiTool" type="button">+ 添加工具</button>
       </div>
 
       <div class="set-group">
