@@ -261,7 +261,7 @@
     for (b = 0; b < lead; b++) gridEl.appendChild(el('i', 'cell blank'));
     activity.forEach(function (n, i) {
       var d = new Date(first + i * DAY);
-      var lvl = n === 0 ? 0 : n < 3 ? 1 : n < 6 ? 2 : n < 10 ? 3 : 4;
+      var lvl = n === 0 ? 0 : n < 4 ? 1 : n < 9 ? 2 : 3;
       var cell = el('i', 'cell l' + lvl);
       cell.title = (d.getMonth() + 1) + '月' + d.getDate() + '日 · ' + (n ? n + ' 次提交' : '无提交');
       gridEl.appendChild(cell);

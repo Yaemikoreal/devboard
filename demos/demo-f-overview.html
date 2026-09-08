@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>devboard — 总览 / 项目 双视图 demo</title>
+<style>
+/* 设计 token 与 src/renderer/styles.css 保持一致（案例2 Crextio 浅色纪律） */
+:root{
+  --bg:#f5f2e8; --card:#fdfcf8; --well:#ece9dd;
+  --ink:#181818; --ink-2:#4d463c; --ink-3:#857d6b;
+  --line:rgba(24,24,24,.09); --accent:#f5d90a;
+  --tile:#322e27; --tile-ink:#fdfcf8; --tile-ink2:#a89f8e;
+  --close-red:#e81123;
+  --shadow-1:0 1px 2px rgba(24,24,24,.04),0 14px 34px rgba(24,24,24,.05);
+  --shadow-2:0 2px 6px rgba(24,24,24,.06),0 22px 48px rgba(24,24,24,.09);
+  --r-card:24px; --r-chip:10px; --r-pill:999px;
+  --band-hot:#f5d90a; --band-active:#d98e32; --band-cool:#7d94a8;
+  --band-stale:#b3ac9a; --band-arch:#d8d3c2;
+  --btn-line:rgba(24,24,24,.16);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  background:var(--bg);color:var(--ink);
+  font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",-apple-system,sans-serif;
+  font-weight:450;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+}
+.mono{font-family:ui-monospace,"SF Mono",Consolas,monospace}
+.app{max-width:1440px;height:100vh;margin:0 auto;display:flex;flex-direction:column}
+.hidden{display:none !important}
+
+/* 标题栏 */
+.titlebar{height:40px;flex:none;display:flex;align-items:center;border-bottom:1px solid var(--line)}
+.tb-name{flex:1;padding-left:16px;font-size:11.5px;letter-spacing:.06em;color:var(--ink-2)}
+.win-controls{display:flex;height:100%}
+.wc{width:46px;height:100%;border:0;background:transparent;display:flex;align-items:center;justify-content:center}
+.wc:hover{background:rgba(24,24,24,.06)}
+.wc.close:hover{background:var(--close-red)}
+.wc i{position:relative;display:block}
+.wc.min i{width:10px;height:1px;background:var(--ink)}
+.wc.max i{width:9px;height:9px;border:1px solid var(--ink)}
+.wc.close i{width:12px;height:12px}
+.wc.close i::before,.wc.close i::after{content:"";position:absolute;left:0;top:5.5px;width:12px;height:1px;background:var(--ink)}
+.wc.close i::before{transform:rotate(45deg)}.wc.close i::after{transform:rotate(-45deg)}
+.wc.close:hover i::before,.wc.close:hover i::after{background:var(--tile-ink)}
+
+/* 顶栏 */
+.topbar{flex:none;display:flex;align-items:center;gap:20px;padding:10px 24px 0}
+.logo{border:1.5px solid var(--ink);border-radius:var(--r-pill);padding:7px 18px;font-size:13px;font-weight:700;letter-spacing:.05em}
+.nav{margin:0 auto;display:flex;gap:2px;background:var(--well);border-radius:var(--r-pill);padding:4px}
+.nav button{border:0;background:transparent;border-radius:var(--r-pill);padding:7px 18px;font:inherit;font-size:13px;color:var(--ink-2);cursor:pointer;transition:background-color .18s,color .18s}
+.nav button:hover{color:var(--ink)}
+.nav button.active{background:var(--tile);color:var(--tile-ink);font-weight:600}
+.search{position:relative;display:flex;align-items:center;gap:6px;background:var(--well);border-radius:var(--r-pill);padding:0 12px;height:34px}
+.search input{border:0;background:transparent;outline:none;width:120px;font:inherit;font-size:12.5px;color:var(--ink)}
+.search input::placeholder{color:var(--ink-3)}
+.search .kbd{font-size:10.5px;color:var(--ink-3);border:1px solid var(--line);border-radius:5px;padding:0 5px;line-height:16px}
+.icon-btn{width:38px;height:38px;flex:none;border:0;border-radius:50%;cursor:pointer;background:var(--tile);display:flex;align-items:center;justify-content:center}
+.icon-btn:hover{opacity:.85}
+.ic-set{width:14px;height:12px;position:relative}
+.ic-set::before,.ic-set::after{content:"";position:absolute;left:0;width:14px;height:1.5px;background:var(--tile-ink)}
+.ic-set::before{top:2px}.ic-set::after{bottom:2px}
+.ic-set b{position:absolute;width:4px;height:4px;border-radius:50%;background:var(--tile-ink)}
+.ic-set b:nth-child(1){left:3px;top:.5px}.ic-set b:nth-child(2){right:2px;bottom:.5px}
+.ic-ref{width:12px;height:12px;border:1.5px solid var(--tile-ink);border-top-color:transparent;border-radius:50%;position:relative}
+.ic-ref::after{content:"";position:absolute;top:-3px;right:-2px;border:3px solid transparent;border-left-color:var(--tile-ink);transform:rotate(-30deg)}
+
+/* 搜索补全 */
+.drop{position:absolute;top:calc(100% + 8px);right:0;z-index:70;min-width:280px;max-height:300px;overflow-y:auto;background:var(--card);border-radius:var(--r-chip);box-shadow:var(--shadow-2);border:1px solid var(--line);padding:5px;opacity:0;transform:translateY(-4px);pointer-events:none;transition:opacity .15s,transform .15s}
+.drop.open{opacity:1;transform:none;pointer-events:auto}
+.drop-item{display:flex;align-items:baseline;gap:8px;width:100%;border:0;background:transparent;cursor:pointer;text-align:left;border-radius:7px;padding:6px 9px;font:inherit;font-size:12.5px;color:var(--ink)}
+.drop-item:hover{background:var(--well)}
+.drop-item .nm{font-weight:600}
+.drop-item .rt{margin-left:auto;font-size:10.5px;color:var(--ink-3)}
+.drop-empty{padding:8px 10px;font-size:12px;color:var(--ink-3)}
+
+/* 视图容器 */
+main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
+
+/* ===== 总览页 ===== */
+.stats{display:flex;align-items:baseline;gap:48px;padding:4px 0 14px}
+.stat{display:flex;align-items:baseline;gap:8px}
+.stat-num{font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1}
+.stat-num .unit{font-size:12px;font-weight:500;color:var(--ink-3);margin-left:2px}
+.stat-label{font-size:12.5px;color:var(--ink-2)}
+.ov-grid{display:grid;grid-template-columns:1fr 360px;gap:16px;align-items:start}
+.ov-card{background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow-1);padding:20px 22px}
+.ov-card h3{font-size:13px;font-weight:700;letter-spacing:.02em;margin-bottom:4px}
+.ov-card .sub{font-size:11.5px;color:var(--ink-3);margin-bottom:12px}
+
+/* 全局热力图 */
+.heat-card{margin-bottom:16px}
+.heat-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}
+.heat-head .t{font-size:15px;font-weight:700}
+.heat-head .t b{font-size:22px;letter-spacing:-.02em;margin-right:6px}
+.heat-legend{display:flex;align-items:center;gap:4px;font-size:10.5px;color:var(--ink-3)}
+.heat-legend .cell{width:9px;height:9px}
+.gheat{display:grid;grid-template-rows:repeat(7,auto);grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;width:100%}
+.cell{border-radius:20%;background:#ece8dc;aspect-ratio:1}
+.cell.blank{visibility:hidden}
+.cell.l1{background:#f3e58e}.cell.l2{background:#f5d90a}.cell.l3{background:#d8b406}
+.heat-axis{position:relative;height:14px;margin-top:6px}
+.heat-axis .mon{position:absolute;top:0;font-size:9.5px;color:var(--ink-3);white-space:nowrap}
+.heat-axis .today{position:absolute;right:0;top:0;font-size:9.5px;color:var(--ink-3)}
+
+/* 活动流 */
+.stream-month{margin-bottom:18px}
+.stream-month > h4{font-size:12px;color:var(--ink-3);letter-spacing:.08em;margin-bottom:8px;font-weight:700}
+.stream-block{border-top:1px solid var(--line);padding:12px 0}
+.stream-block .head{display:flex;align-items:baseline;gap:8px;font-size:13.5px;font-weight:600;margin-bottom:8px}
+.stream-block .head .n{font-weight:450;color:var(--ink-2)}
+.stream-proj{display:flex;align-items:center;gap:10px;padding:4px 8px;margin:0 -8px;font-size:12.5px;border-radius:8px;cursor:pointer;transition:background-color .15s}
+.stream-proj:hover{background:var(--well)}
+.stream-proj:hover .nm{text-decoration:underline}
+.stream-proj::after{content:"›";color:var(--ink-3);opacity:0;transition:opacity .15s;font-size:13px}
+.stream-proj:hover::after{opacity:1}
+.stream-proj .nm{color:var(--ink);font-weight:600;min-width:150px}
+.stream-proj .ct{color:var(--ink-3);font-size:11.5px}
+.stream-proj .bar{margin-left:auto;height:8px;border-radius:4px;background:var(--accent);min-width:8px;transition:transform .15s,box-shadow .15s}
+.stream-proj:hover .bar{transform:scaleY(1.4);box-shadow:0 1px 4px rgba(245,217,10,.45)}
+.show-more{width:100%;border:1px solid var(--line);background:transparent;border-radius:var(--r-chip);padding:8px 0;font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer}
+.show-more:hover{border-color:var(--ink-3);color:var(--ink)}
+
+/* 需要关注：黑卡（视觉权重最高） */
+.attn-card{background:var(--tile);color:var(--tile-ink);border-radius:var(--r-card);box-shadow:var(--shadow-2);padding:16px 18px;margin-bottom:16px}
+.attn-card h3{font-size:13px;font-weight:600}
+.attn-card .sub{font-size:11px;color:var(--tile-ink2);margin:4px 0 8px}
+.attn-item{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid rgba(253,252,248,.12);cursor:pointer}
+.attn-item .ic{width:18px;height:18px;flex:none;border-radius:50%;border:1px solid rgba(253,252,248,.35);display:flex;align-items:center;justify-content:center}
+.attn-item .ic::after{content:"";width:5px;height:5px;border-radius:50%;background:var(--tile-ink)}
+.attn-item .nm{font-weight:600;font-size:12.5px;white-space:nowrap}
+.attn-item .ds{flex:1;font-size:11px;color:var(--tile-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.attn-item .mk{width:8px;height:8px;flex:none;border-radius:50%;background:var(--accent)}
+
+/* 工作台：Agent 工具 */
+.tools-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tool-btn{display:flex;align-items:center;gap:9px;border:1px solid var(--btn-line);background:transparent;border-radius:var(--r-chip);padding:9px 12px;font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;white-space:nowrap;transition:border-color .15s,color .15s,background-color .15s}
+.tool-btn:hover{border-color:var(--ink-3);color:var(--ink);background:rgba(24,24,24,.035)}
+.tool-logo{width:22px;height:22px;flex:none;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.tool-logo svg{width:100%;height:100%;display:block}
+.tool-btn .cmd{margin-left:auto;font-size:10.5px;color:var(--ink-3);font-family:ui-monospace,Consolas,monospace}
+
+/* ===== 项目页 ===== */
+.filterbar{display:flex;align-items:center;gap:10px;padding:2px 0 12px}
+.chips{display:flex;gap:2px;background:var(--well);border-radius:var(--r-pill);padding:4px}
+.chips button{border:0;background:transparent;border-radius:var(--r-pill);padding:5px 13px;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer}
+.chips button:hover{color:var(--ink)}
+.chips button.active{background:var(--tile);color:var(--tile-ink);font-weight:600}
+.sort-wrap{margin-left:auto;position:relative}
+.sort-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--btn-line);background:transparent;border-radius:var(--r-pill);padding:6px 14px;font:inherit;font-size:12px;font-weight:600;color:var(--ink-2);cursor:pointer}
+.sort-btn:hover{border-color:var(--ink-3);color:var(--ink)}
+.sort-btn .caret{font-size:9px}
+.sort-drop{left:auto;right:0;min-width:160px}
+.sort-drop .drop-item .cur{margin-left:auto;font-size:10px;font-weight:700;background:var(--accent);border-radius:var(--r-pill);padding:1px 7px}
+
+.split{display:flex;gap:0;align-items:flex-start;transition:gap .3s ease}
+.rows{flex:1;min-width:0;background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow-1);overflow:hidden}
+.split.open{gap:16px}
+
+/* 行（m2 风格 + 本设计纪律） */
+.row{position:relative;display:flex;align-items:center;gap:14px;padding:15px 20px 15px 24px;border-top:1px solid var(--line);cursor:pointer;transition:background-color .15s}
+.row:first-child{border-top:0}
+.row:hover{background:rgba(24,24,24,.025)}
+.row::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:3px;border-radius:0 3px 3px 0;background:var(--band-c,transparent);transition:width .15s}
+.row[data-band=hot]{--band-c:var(--band-hot)}
+.row[data-band=active]{--band-c:var(--band-active)}
+.row[data-band=cooling]{--band-c:var(--band-cool)}
+.row[data-band=stale]{--band-c:var(--band-stale)}
+.row[data-band=archive]{--band-c:var(--band-arch)}
+.row.selected{background:#faf8f0}
+.row.selected::before{width:5px}
+.row.dragging{opacity:.45}
+.row .r-main{flex:1;min-width:0}
+.row .r-top{display:flex;align-items:baseline;gap:10px}
+.row .r-name{font-size:15px;font-weight:700;letter-spacing:-.01em}
+.row .r-branch{font-size:11px;color:var(--ink-3)}
+.row .r-sub{margin-top:2px;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .r-sub.empty{color:var(--ink-3)}
+.row .r-right{display:flex;align-items:center;gap:14px;flex:none}
+.r-warn{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-2)}
+.r-warn i{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px rgba(245,217,10,.25)}
+.r-upd{font-size:11.5px;color:var(--ink-3);white-space:nowrap;min-width:76px;text-align:right}
+.r-pin{border:0;background:transparent;cursor:pointer;font-size:16px;color:var(--ink-3);line-height:1;padding:2px}
+.r-pin.on{color:var(--accent);text-shadow:0 0 1px var(--ink)}
+.r-pin:hover{color:var(--ink)}
+.r-pin.on:hover{color:var(--accent)}
+.r-open{width:26px;height:26px;border:1px solid var(--btn-line);background:transparent;border-radius:50%;cursor:pointer;color:var(--ink-2);font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center;transition:transform .2s,border-color .15s,color .15s}
+.r-open:hover{border-color:var(--ink-3);color:var(--ink)}
+.row.selected .r-open{transform:rotate(90deg);background:var(--tile);color:var(--tile-ink);border-color:var(--tile)}
+
+/* 详情面板：右侧推出 */
+.panel{width:0;flex:none;overflow:hidden;transition:width .3s ease}
+.split.open .panel{width:400px}
+.panel-in{width:400px;max-height:calc(100vh - 150px);overflow-y:auto;background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow-1);padding:20px 22px;opacity:0;transform:translateX(12px);transition:opacity .25s .05s,transform .25s .05s}
+.split.open .panel-in{opacity:1;transform:none}
+.p-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:6px}
+.p-head .nm{font-size:20px;font-weight:700;letter-spacing:-.01em;flex:1}
+.bp{border-radius:var(--r-pill);padding:3px 11px;font-size:11px;font-weight:600;letter-spacing:.04em}
+.bp-hot{background:var(--accent);color:var(--ink)}
+.bp-active{background:var(--tile);color:var(--tile-ink)}
+.bp-cool{border:1px solid var(--line);color:var(--ink-2);background:var(--bg)}
+.bp-stall{background:#e8e5d9;color:var(--ink-2)}
+.bp-arch{border:1px dashed var(--ink-3);color:var(--ink-3);background:transparent}
+.p-close{width:28px;height:28px;border:0;border-radius:50%;background:var(--well);cursor:pointer;color:var(--ink-2);font-size:12px}
+.p-close:hover{background:var(--ink);color:var(--tile-ink)}
+.p-path{font-size:11px;color:var(--ink-3);margin-bottom:12px}
+.memo-input{width:100%;border:1px solid var(--line);border-radius:var(--r-chip);background:var(--bg);color:var(--ink);font:inherit;font-size:13px;padding:7px 12px;outline:none;resize:none;min-height:34px;line-height:1.45}
+.memo-input:focus{border-color:var(--ink-3)}
+.p-sec{margin-top:16px}
+.p-sec > h4{font-size:11px;color:var(--ink-3);letter-spacing:.1em;margin-bottom:7px;font-weight:700}
+.kv-row{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:12.5px;color:var(--ink-2)}
+.kv-row b{color:var(--ink);font-weight:600;font-family:ui-monospace,Consolas,monospace}
+.warn{display:inline-flex;align-items:center;gap:7px;background:var(--accent);color:var(--ink);border-radius:var(--r-pill);padding:4px 12px;font-size:11.5px;font-weight:600;margin:0 6px 6px 0}
+.warn .x{width:14px;height:14px;border:0;border-radius:50%;background:rgba(24,24,24,.15);color:var(--ink);cursor:pointer;font-size:10px;line-height:1;padding:0}
+.warn .x:hover{background:var(--ink);color:var(--accent)}
+.p-heat{display:grid;grid-template-rows:repeat(7,auto);grid-auto-flow:column;grid-auto-columns:1fr;gap:2px}
+.line-item{display:flex;align-items:baseline;gap:10px;padding:6px 0;border-top:1px solid var(--line);font-size:13px}
+.line-item:first-of-type{border-top:0}
+.line-item .msg{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.line-item .ago{font-size:11px;color:var(--ink-3);white-space:nowrap}
+.readme-s{font-size:12.5px;color:var(--ink-2);background:var(--bg);border:1px solid var(--line);border-radius:var(--r-chip);padding:10px 12px}
+.ai-item{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:12.5px}
+.ai-item .tool{font-weight:600}
+.ai-item .ago{margin-left:auto;font-size:11px;color:var(--ink-3)}
+.btn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--btn-line);background:transparent;color:var(--ink-2);border-radius:var(--r-pill);padding:6px 15px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:background-color .18s,border-color .18s,color .18s}
+.btn:hover{border-color:var(--ink-3);color:var(--ink);background:rgba(24,24,24,.035)}
+.btn.solid{background:var(--tile);border-color:var(--tile);color:var(--tile-ink)}
+.btn.solid:hover{background:var(--accent);border-color:var(--accent);color:var(--ink)}
+.quick{display:flex;gap:8px;flex-wrap:wrap}
+.tools-row{display:flex;gap:8px;flex-wrap:wrap}
+.tools-row .tool-btn{padding:6px 12px;font-size:12px}
+.dirty-toggle{display:flex;align-items:center;gap:6px;width:100%;border:0;background:transparent;padding:0;cursor:pointer;text-align:left;font:inherit;font-size:12.5px;color:var(--ink-2)}
+.dirty-toggle .caret{font-size:9px;transition:transform .2s}
+.dirty-toggle.open .caret{transform:rotate(90deg)}
+.dirty-list{display:none;margin-top:6px}
+.dirty-list.open{display:block}
+.dirty-list .f{display:block;padding:4px 0;border-top:1px solid var(--line);font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 热力图悬停气泡 */
+.heat-tip{
+  position:fixed;z-index:100;background:var(--tile);color:var(--tile-ink);
+  border-radius:8px;padding:5px 11px;font-size:11.5px;white-space:nowrap;
+  pointer-events:none;opacity:0;transition:opacity .12s ease;
+  transform:translate(-50%,-100%);
+}
+.heat-tip::after{
+  content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%);
+  border:5px solid transparent;border-top-color:var(--tile);border-bottom:0;
+}
+
+/* 滚动条：纤细圆角（与实现同步的自定义样式） */
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--band-arch);border:3px solid transparent;border-radius:var(--r-pill);background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:var(--ink-3)}
+::-webkit-scrollbar-button{display:none;width:0;height:0}
+::-webkit-scrollbar-corner{background:transparent}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="titlebar">
+    <span class="tb-name">devboard</span>
+    <div class="win-controls">
+      <button class="wc min" tabindex="-1"><i></i></button>
+      <button class="wc max" tabindex="-1"><i></i></button>
+      <button class="wc close" tabindex="-1"><i></i></button>
+    </div>
+  </div>
+
+  <div class="topbar">
+    <span class="logo">devboard</span>
+    <nav class="nav">
+      <button class="active" data-view="overview">总览</button>
+      <button data-view="projects">项目</button>
+    </nav>
+    <div class="search">
+      <input id="searchInput" placeholder="搜索项目 / 备忘…">
+      <span class="kbd">/</span>
+      <div class="drop" id="suggest"></div>
+    </div>
+    <button class="icon-btn" title="刷新"><span class="ic-ref"></span></button>
+    <button class="icon-btn" title="设置"><span class="ic-set"><b></b><b></b></span></button>
+  </div>
+
+  <!-- ============ 总览 ============ -->
+  <main id="viewOverview">
+    <div class="stats">
+      <div class="stat"><span class="stat-num">8<span class="unit">个</span></span><span class="stat-label">项目</span></div>
+      <div class="stat"><span class="stat-num">24<span class="unit">次</span></span><span class="stat-label">近 7 天提交</span></div>
+      <div class="stat"><span class="stat-num">3<span class="unit">项</span></span><span class="stat-label">需要关注</span></div>
+    </div>
+
+    <div class="ov-card heat-card">
+      <div class="heat-head">
+        <span class="t"><b>486</b>次提交 · 过去一年 · 8 个项目</span>
+        <span class="heat-legend">少
+          <span class="cell"></span><span class="cell l1"></span>
+          <span class="cell l2"></span><span class="cell l3"></span>多
+        </span>
+      </div>
+      <div class="gheat" id="globalHeat"></div>
+      <div class="heat-axis" id="globalAxis"></div>
+    </div>
+
+    <div class="ov-grid">
+      <div class="ov-card">
+        <h3>活动流</h3>
+        <div class="sub">按月份分组的跨项目提交事实</div>
+        <div id="stream"></div>
+        <button class="show-more">显示更早的活动</button>
+      </div>
+
+      <div>
+        <div class="attn-card">
+          <h3>需要关注</h3>
+          <div class="sub" id="attnSub"></div>
+          <div id="attnList"></div>
+        </div>
+
+        <div class="ov-card">
+          <h3>工作台 · AI 工具</h3>
+          <div class="sub">按本机安装情况显示，点击后在所选项目目录启动</div>
+          <div class="tools-grid" id="toolsGrid"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ============ 项目 ============ -->
+  <main id="viewProjects" class="hidden">
+    <div class="filterbar">
+      <div class="chips" id="bandChips">
+        <button class="active" data-band="all">全部</button>
+        <button data-band="hot">活跃</button>
+        <button data-band="active">近期</button>
+        <button data-band="cooling">渐冷</button>
+        <button data-band="stale">沉睡</button>
+        <button data-band="archive">归档</button>
+      </div>
+      <div class="sort-wrap">
+        <button class="sort-btn" id="sortBtn">排序：手动<span class="caret">▾</span></button>
+        <div class="drop sort-drop" id="sortDrop"></div>
+      </div>
+    </div>
+
+    <div class="split" id="split">
+      <div class="rows" id="rows"></div>
+      <aside class="panel"><div class="panel-in" id="panelIn"></div></aside>
+    </div>
+  </main>
+</div>
+
+<script>
+/* ---------------- mock 数据（对应 scripts/mock-board.js） ---------------- */
+const BAND_LABEL = {hot:'活跃',active:'近期',cooling:'渐冷',stale:'沉睡',archive:'归档'};
+const BAND_PILL = {hot:'bp-hot',active:'bp-active',cooling:'bp-cool',stale:'bp-stall',archive:'bp-arch'};
+
+function activity(seed, hot){
+  const a = new Array(365).fill(0);
+  for (let i=0;i<365;i++){ const v=(i*7+seed*13)%23; a[i]=v<21?0:v-20; } // 稀疏：多数日子无提交
+  if (hot) for (let i=365-28;i<365;i++) a[i]=(i+seed)%3===0?0:((i*3+seed)%5)+1; // 近 4 周成簇
+  return a;
+}
+
+const PROJECTS = [
+  {name:'wyy2qqmusic', path:'E:\\myproject\\wyy2qqmusic', branch:'main', band:'hot', daysAgo:0.1,
+   memo:'迁移脚本联调中，QQ 登录 cookie 老失效', commits7d:14, ahead:2, dirty:3,
+   pinned:true, warnings:['2 提交未推送'],
+   commits:[['fix: 修复歌单解析空指针','2小时前'],['feat: 支持 QQ 歌单批量导入','5小时前'],['refactor: 拆分登录模块','昨天'],['wip: 迁移脚本联调','昨天']],
+   dirtyFiles:['_t7_migrate.py','_t3_login.py','README.md'],
+   gh:[['PR #7','feat: 批量导入接口'],['issue #3','cookie 失效后无法自动刷新'],['issue #5','支持导出 csv']],
+   readme:'网易云歌单迁移到 QQ 音乐的小工具，支持批量导入与断点续传。',
+   ai:[['Kimi Code','1小时前'],['Claude Code','昨天下午']], act:activity(1,true)},
+  {name:'devboard', path:'E:\\myproject\\devboard', branch:'main', band:'active', daysAgo:1,
+   memo:'概况板本体，双视图改造评审中', commits7d:6, ahead:0, dirty:2,
+   pinned:false, warnings:[],
+   commits:[['[feat] issues 整改一批','1天前'],['[feat] 全部视图贪心充满排版','2天前']],
+   dirtyFiles:['src/renderer/styles.css','CONTEXT.md'],
+   gh:[['issue #10','重新设计应用 Logo'],['issue #11','应用重命名']],
+   readme:'本地桌面端项目概况板：聚合各项目事实近况，防止决策漂移。',
+   ai:[['Kimi Code','3小时前']], act:activity(2,true)},
+  {name:'chat-analysis', path:'E:\\myproject\\chat-analysis', branch:'feat/pdf-v2', band:'active', daysAgo:5,
+   memo:'报告模板第二版待确认', commits7d:4, ahead:0, dirty:0,
+   pinned:false, warnings:['1 个开放 PR'],
+   commits:[['feat: PDF 模板 v2 布局','5天前'],['fix: 长图分页溢出','6天前']],
+   dirtyFiles:[],
+   gh:[['PR #7','feat: PDF 模板 v2']],
+   readme:'群聊 JSON 结构化分析，生成单页卡式 PDF 长图报告。',
+   ai:[['Kimi Code','3天前'],['Codex','3天前']], act:activity(3,true)},
+  {name:'corpgraph-tool', path:'E:\\myproject\\corpgraph-tool', branch:'main', band:'cooling', daysAgo:12,
+   memo:'', commits7d:0, ahead:0, dirty:0, pinned:false, warnings:[],
+   commits:[['feat: 批量关系查询','12天前']], dirtyFiles:[], gh:[],
+   readme:'企业上下游关系批量查询工具。',
+   ai:[], act:activity(4,false)},
+  {name:'kimi-skill-lab', path:'E:\\myproject\\kimi-skill-lab', branch:'main', band:'cooling', daysAgo:18,
+   memo:'实验性 skill 集合', commits7d:0, ahead:0, dirty:5,
+   pinned:false, warnings:['5 文件未提交超3天'],
+   commits:[['feat: 新增 skill 骨架','18天前']],
+   dirtyFiles:['a.md','b.md','c.md','d.md','e.md'], gh:[],
+   readme:'', ai:[['Kimi Code','10天前']], act:activity(5,false)},
+  {name:'httpie-cli', path:'E:\\myproject\\GithubHarticipant\\httpie-cli', branch:'master', band:'stale', daysAgo:90,
+   memo:'fork 上游，仅学习源码', commits7d:0, ahead:0, dirty:0, pinned:false, warnings:[],
+   commits:[['chore: upstream sync','3个月前']], dirtyFiles:[], gh:[],
+   readme:'', ai:[], act:new Array(365).fill(0)},
+  {name:'old-crawler', path:'E:\\myproject\\old-crawler', branch:'main', band:'stale', daysAgo:74,
+   memo:'', commits7d:0, ahead:0, dirty:8, pinned:false, warnings:['8 文件未提交超3天'],
+   commits:[['fix: 反爬绕过','74天前']], dirtyFiles:['spider.py','proxy.py'], gh:[],
+   readme:'', ai:[], act:new Array(365).fill(0)},
+  {name:'note-dump', path:'E:\\myproject\\note-dump', branch:'main', band:'archive', daysAgo:120,
+   memo:'', commits7d:0, ahead:0, dirty:0, pinned:false, warnings:[],
+   commits:[['docs: 杂记归档','4个月前']], dirtyFiles:[], gh:[],
+   readme:'', ai:[], act:new Array(365).fill(0)},
+];
+// 手动位序（默认）：模拟已持久化的用户顺序
+let manualOrder = PROJECTS.map(p=>p.name);
+
+const AGENTS = [
+  {name:'Claude Code', cmd:'claude', bg:'#d97757',
+   svg:'<path d="M11 2.5v17M2.5 11h17M5 5l12 12M17 5L5 17" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>'},
+  {name:'Codex', cmd:'codex', bg:'#202020',
+   svg:'<g fill="none" stroke="#fff" stroke-width="1.6"><ellipse cx="11" cy="11" rx="8" ry="3.4"/><ellipse cx="11" cy="11" rx="8" ry="3.4" transform="rotate(60 11 11)"/><ellipse cx="11" cy="11" rx="8" ry="3.4" transform="rotate(120 11 11)"/></g>'},
+  {name:'Kimi Code', cmd:'kimi', bg:'#101010',
+   svg:'<text x="11" y="15.5" text-anchor="middle" font-size="12" font-weight="700" fill="#fff" font-family="sans-serif">K</text>'},
+  {name:'Grok', cmd:'grok', bg:'#000',
+   svg:'<path d="M4.5 4.5L17.5 17.5M17.5 4.5L4.5 17.5" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>'},
+];
+function toolBtnHTML(a){
+  return `<button class="tool-btn" title="在终端启动 ${a.cmd}">
+    <span class="tool-logo" style="background:${a.bg}"><svg viewBox="0 0 22 22">${a.svg}</svg></span>
+    ${a.name}<span class="cmd">${a.cmd}</span></button>`;
+}
+document.getElementById('toolsGrid').innerHTML = AGENTS.map(toolBtnHTML).join('');
+
+/* ---------------- 视图切换 ---------------- */
+const navBtns = document.querySelectorAll('.nav button');
+navBtns.forEach(b=>b.onclick=()=>{
+  navBtns.forEach(x=>x.classList.toggle('active', x===b));
+  document.getElementById('viewOverview').classList.toggle('hidden', b.dataset.view!=='overview');
+  document.getElementById('viewProjects').classList.toggle('hidden', b.dataset.view!=='projects');
+});
+function gotoProjects(){ document.querySelector('[data-view=projects]').click(); }
+
+/* ---------------- 全局热力图 ---------------- */
+const MONS=['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+function renderHeat(container, axis, data){
+  container.innerHTML='';
+  const offset = (new Date(Date.now()-364*864e5).getDay()+6)%7; // 周一开头
+  for(let i=0;i<offset;i++){ const c=document.createElement('div'); c.className='cell blank'; container.appendChild(c); }
+  data.forEach((v,i)=>{
+    const c=document.createElement('div');
+    c.className='cell'+(v===0?'':v<3?' l1':v<7?' l2':' l3');
+    const d=new Date(Date.now()-(364-i)*864e5);
+    c.dataset.tip=`${d.getMonth()+1}月${d.getDate()}日 · ${v?v+' 次提交':'无提交'}`;
+    container.appendChild(c);
+  });
+  if(axis){
+    axis.innerHTML='';
+    const cols=Math.ceil((365+offset)/7), today=new Date();
+    for(let w=0;w<cols;w++){
+      const d=new Date(Date.now()-(364-w*7+6-offset)*864e5);
+      if(axis.lastMonth!==d.getMonth() && w<cols-1){
+        const s=document.createElement('span'); s.className='mon';
+        s.style.left=(w/cols*100)+'%'; s.textContent=MONS[d.getMonth()];
+        axis.appendChild(s); axis.lastMonth=d.getMonth();
+      }
+    }
+    const t=document.createElement('span'); t.className='today'; t.textContent='今天'; axis.appendChild(t);
+  }
+}
+const globalAct = new Array(365).fill(0);
+PROJECTS.forEach(p=>p.act.forEach((v,i)=>globalAct[i]+=v));
+renderHeat(document.getElementById('globalHeat'), document.getElementById('globalAxis'), globalAct);
+
+/* ---------------- 活动流 ---------------- */
+const STREAM = [
+  {month:'2026 年 9 月', blocks:[{head:'在 3 个项目中产生了 24 次提交', n:'',
+    rows:[['wyy2qqmusic','14 次提交',100],['devboard','6 次提交',46],['chat-analysis','4 次提交',32]]}]},
+  {month:'2026 年 8 月', blocks:[{head:'在 4 个项目中产生了 61 次提交', n:'',
+    rows:[['devboard','28 次提交',100],['chat-analysis','18 次提交',64],['wyy2qqmusic','11 次提交',40],['corpgraph-tool','4 次提交',16]]}]},
+  {month:'2026 年 7 月', blocks:[{head:'在 2 个项目中产生了 19 次提交', n:'',
+    rows:[['kimi-skill-lab','12 次提交',100],['devboard','7 次提交',58]]}]},
+];
+document.getElementById('stream').innerHTML = STREAM.map(m=>`
+  <div class="stream-month"><h4>${m.month}</h4>
+  ${m.blocks.map(b=>`<div class="stream-block">
+    <div class="head">${b.head}</div>
+    ${b.rows.map(r=>`<div class="stream-proj" data-jump="${r[0]}">
+      <span class="nm">${r[0]}</span><span class="ct">${r[1]}</span>
+      <span class="bar" style="width:${r[2]*1.6}px"></span></div>`).join('')}
+  </div>`).join('')}</div>`).join('');
+
+/* ---------------- 需要关注 ---------------- */
+const ATTN = PROJECTS.filter(p=>p.warnings.length);
+document.getElementById('attnSub').textContent = `${ATTN.length} 个项目有待处理信号`;
+document.querySelector('#viewOverview .stats').innerHTML = `
+  <div class="stat"><span class="stat-num">${PROJECTS.length}<span class="unit">个</span></span><span class="stat-label">项目</span></div>
+  <div class="stat"><span class="stat-num">${PROJECTS.reduce((s,p)=>s+p.commits7d,0)}<span class="unit">次</span></span><span class="stat-label">近 7 天提交</span></div>
+  <div class="stat"><span class="stat-num">${ATTN.length}<span class="unit">项</span></span><span class="stat-label">需要关注</span></div>`;
+document.getElementById('attnList').innerHTML = ATTN.map(p=>`
+  <div class="attn-item" data-jump="${p.name}">
+    <span class="ic"></span><span class="nm">${p.name}</span>
+    <span class="ds">${p.warnings.join('，')}</span><span class="mk"></span>
+  </div>`).join('');
+
+/* ---------------- 项目页：行列表 ---------------- */
+let curBand='all', curSort='手动', selected=null, snoozed=new Set();
+const rowsEl=document.getElementById('rows'), splitEl=document.getElementById('split');
+
+function sortedProjects(){
+  let list=[...PROJECTS];
+  if(curBand!=='all') list=list.filter(p=>p.band===curBand);
+  if(curSort==='最近活跃') list.sort((a,b)=>a.daysAgo-b.daysAgo);
+  else if(curSort==='名称') list.sort((a,b)=>a.name.localeCompare(b.name));
+  else list.sort((a,b)=>manualOrder.indexOf(a.name)-manualOrder.indexOf(b.name));
+  // 图钉置顶（各排序方式下均生效）
+  list.sort((a,b)=>(b.pinned?1:0)-(a.pinned?1:0));
+  return list;
+}
+
+function relTime(p){
+  if(p.daysAgo<1) return '今天';
+  if(p.daysAgo<30) return Math.round(p.daysAgo)+' 天前';
+  return Math.round(p.daysAgo/30)+' 个月前';
+}
+
+function renderRows(){
+  const list=sortedProjects();
+  rowsEl.innerHTML = list.map(p=>{
+    const warns=p.warnings.filter(w=>!snoozed.has(p.name+w));
+    return `<div class="row ${selected===p.name?'selected':''}" data-name="${p.name}" data-band="${p.band}"
+      ${curSort==='手动'?'draggable="true"':''}>
+      <div class="r-main">
+        <div class="r-top"><span class="r-name">${p.name}</span><span class="r-branch mono">${p.branch}</span></div>
+        <div class="r-sub ${p.memo?'':'empty'}">${p.memo||'无备忘'}</div>
+      </div>
+      <div class="r-right">
+        ${warns.length?`<span class="r-warn"><i></i>${warns.length}</span>`:''}
+        <span class="r-upd">${relTime(p)}</span>
+        <button class="r-pin ${p.pinned?'on':''}" data-pin="${p.name}" title="图钉">${p.pinned?'★':'☆'}</button>
+        <button class="r-open" title="展开详情">›</button>
+      </div>
+    </div>`;
+  }).join('') || '<div style="padding:40px;text-align:center;color:var(--ink-3)">该分带下没有项目</div>';
+
+  rowsEl.querySelectorAll('.row').forEach(r=>{
+    r.onclick=e=>{
+      if(e.target.closest('[data-pin]')) return;
+      selectProject(r.dataset.name===selected?null:r.dataset.name);
+    };
+    // 手动模式拖拽重排
+    r.ondragstart=()=>r.classList.add('dragging');
+    r.ondragend=()=>r.classList.remove('dragging');
+    r.ondragover=e=>{
+      e.preventDefault();
+      const dragging=rowsEl.querySelector('.dragging');
+      if(!dragging||dragging===r) return;
+      const all=[...rowsEl.querySelectorAll('.row')];
+      all.indexOf(dragging)<all.indexOf(r)?r.after(dragging):r.before(dragging);
+      manualOrder=[...rowsEl.querySelectorAll('.row')].map(x=>x.dataset.name);
+    };
+  });
+  rowsEl.querySelectorAll('[data-pin]').forEach(b=>b.onclick=()=>{
+    const p=PROJECTS.find(x=>x.name===b.dataset.pin); p.pinned=!p.pinned; renderRows();
+  });
+}
+
+/* ---------------- 详情面板 ---------------- */
+function selectProject(name){
+  selected=name;
+  splitEl.classList.toggle('open', !!name);
+  renderRows();
+  if(!name) return;
+  const p=PROJECTS.find(x=>x.name===name);
+  const warns=p.warnings.filter(w=>!snoozed.has(p.name+w));
+  document.getElementById('panelIn').innerHTML=`
+    <div class="p-head">
+      <span class="bp ${BAND_PILL[p.band]}">${BAND_LABEL[p.band]}</span>
+      <span class="nm">${p.name}</span>
+      <button class="p-close" id="pClose" title="关闭 (Esc)">✕</button>
+    </div>
+    <div class="p-path mono">${p.path}</div>
+    <textarea class="memo-input" id="pMemo" placeholder="写点备忘…">${p.memo}</textarea>
+
+    <div class="p-sec"><h4>近况信号</h4>
+      <div class="kv-row">
+        <span>分支 <b>${p.branch} ▾</b></span>
+        <span>近7天 <b>${p.commits7d}</b> 提交</span>
+        ${p.ahead?`<span>领先远程 <b>${p.ahead}</b></span>`:''}
+        ${p.dirty?`<span><b>${p.dirty}</b> 文件未提交</span>`:''}
+      </div>
+    </div>
+
+    ${warns.length?`<div class="p-sec"><h4>警示</h4>${warns.map(w=>
+      `<span class="warn">${w}<button class="x" data-snooze="${p.name+w}" title="消音">×</button></span>`).join('')}</div>`:''}
+
+    <div class="p-sec"><h4>全年热力图</h4><div class="p-heat" id="pHeat"></div></div>
+
+    ${p.readme?`<div class="p-sec"><h4>README 摘要</h4><div class="readme-s">${p.readme}</div></div>`:''}
+
+    ${p.ai.length?`<div class="p-sec"><h4>AI 会话痕迹</h4>${p.ai.map(a=>
+      `<div class="ai-item"><span class="tool">${a[0]}</span><span class="ago">${a[1]}</span></div>`).join('')}</div>`:''}
+
+    <div class="p-sec"><h4>近期提交</h4>${p.commits.map(c=>
+      `<div class="line-item"><span class="msg">${c[0]}</span><span class="ago">${c[1]}</span></div>`).join('')}</div>
+
+    ${p.dirtyFiles.length?`<div class="p-sec"><h4>未提交文件</h4>
+      <button class="dirty-toggle" id="dirtyToggle"><span class="caret">▶</span>${p.dirtyFiles.length} 个文件，点击展开</button>
+      <div class="dirty-list" id="dirtyList">${p.dirtyFiles.map(f=>`<span class="f mono">${f}</span>`).join('')}</div></div>`:''}
+
+    ${p.gh.length?`<div class="p-sec"><h4>GitHub</h4>${p.gh.map(g=>
+      `<div class="line-item"><span class="ago">${g[0]}</span><span class="msg">${g[1]}</span></div>`).join('')}</div>`:''}
+
+    <div class="p-sec"><h4>快捷打开</h4>
+      <div class="quick">
+        <button class="btn solid">打开文件夹</button>
+        <button class="btn">编辑器</button>
+        <button class="btn">终端</button>
+      </div>
+    </div>
+    <div class="p-sec"><h4>AI 工具启动</h4>
+      <div class="tools-row">${AGENTS.map(toolBtnHTML).join('')}</div>
+    </div>`;
+
+  renderHeat(document.getElementById('pHeat'), null, p.act);
+  document.getElementById('pClose').onclick=()=>selectProject(null);
+  document.getElementById('pMemo').oninput=e=>{ p.memo=e.target.value; renderRows(); };
+  const dt=document.getElementById('dirtyToggle');
+  if(dt) dt.onclick=()=>{ dt.classList.toggle('open'); document.getElementById('dirtyList').classList.toggle('open'); };
+  document.querySelectorAll('[data-snooze]').forEach(b=>b.onclick=()=>{ snoozed.add(b.dataset.snooze); selectProject(p.name); });
+}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') selectProject(null); });
+
+/* ---------------- 分带筛选 ---------------- */
+document.querySelectorAll('#bandChips button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#bandChips button').forEach(x=>x.classList.toggle('active',x===b));
+  curBand=b.dataset.band; selectProject(null);
+});
+
+/* ---------------- 排序下拉 ---------------- */
+const sortDrop=document.getElementById('sortDrop');
+const SORTS=['手动','最近活跃','名称'];
+function renderSortDrop(){
+  sortDrop.innerHTML=SORTS.map(s=>
+    `<button class="drop-item" data-sort="${s}"><span class="nm">${s==='手动'?'手动（可拖拽）':s}</span>${s===curSort?'<span class="cur">当前</span>':''}</button>`).join('');
+  sortDrop.querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{
+    curSort=b.dataset.sort;
+    document.getElementById('sortBtn').firstChild.textContent='排序：'+curSort;
+    sortDrop.classList.remove('open'); renderRows(); renderSortDrop();
+  });
+}
+document.getElementById('sortBtn').onclick=e=>{
+  e.stopPropagation(); sortDrop.classList.toggle('open');
+};
+document.addEventListener('click',()=>sortDrop.classList.remove('open'));
+renderSortDrop();
+
+/* ---------------- 搜索补全 ---------------- */
+const searchInput=document.getElementById('searchInput'), suggest=document.getElementById('suggest');
+searchInput.oninput=()=>{
+  const q=searchInput.value.trim().toLowerCase();
+  if(!q){ suggest.classList.remove('open'); return; }
+  const hits=PROJECTS.filter(p=>p.name.toLowerCase().includes(q)||p.memo.toLowerCase().includes(q));
+  suggest.innerHTML=hits.length?hits.map(p=>
+    `<button class="drop-item" data-jump="${p.name}"><span class="nm">${p.name}</span><span class="rt">${p.memo||BAND_LABEL[p.band]}</span></button>`).join('')
+    :'<div class="drop-empty">无匹配项目</div>';
+  suggest.classList.add('open');
+};
+document.addEventListener('click',e=>{ if(!e.target.closest('.search')) suggest.classList.remove('open'); });
+
+/* ---------------- 热力图悬停气泡 ---------------- */
+const heatTip=document.createElement('div');
+heatTip.className='heat-tip';
+document.body.appendChild(heatTip);
+document.addEventListener('mouseover',e=>{
+  const c=e.target.closest('.cell');
+  if(!c||c.classList.contains('blank')||!c.dataset.tip
+     ||!c.closest('.gheat,.p-heat')){ heatTip.style.opacity=0; return; }
+  heatTip.textContent=c.dataset.tip;
+  const r=c.getBoundingClientRect();
+  heatTip.style.left=(r.left+r.width/2)+'px';
+  heatTip.style.top=(r.top-8)+'px';
+  heatTip.style.opacity=1;
+});
+document.addEventListener('mouseleave',()=>heatTip.style.opacity=0,true);
+
+/* ---------------- 跳转：关注清单 / 活动流 / 搜索 → 项目页详情 ---------------- */
+document.addEventListener('click',e=>{
+  const j=e.target.closest('[data-jump]');
+  if(!j) return;
+  gotoProjects(); suggest.classList.remove('open');
+  selectProject(j.dataset.jump);
+});
+
+renderRows();
+</script>
+</body>
+</html>
