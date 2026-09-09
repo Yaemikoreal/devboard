@@ -39,6 +39,9 @@
     <button class="icon-btn" id="refreshBtn" title="刷新"><span class="ic-ref"></span></button>
   </header>
 
+  <!-- 顶栏→内容区过渡带：静止时为柔光渐变，滚动时内容在其下消融并浮现细分隔线（issue #28） -->
+  <div class="top-fade" aria-hidden="true"></div>
+
   <!-- ============ 总览（issue #14） ============ -->
   <main id="viewOverview">
     <section class="stats">
@@ -105,115 +108,169 @@
     </div>
   </main>
 
-  <!-- 设置视图 -->
+  <!-- 设置视图：左侧子模块导航 + 右侧内容面板（issue #26），外观面板承载主题色（issue #27） -->
   <section class="settings-view" id="settingsView">
     <div class="settings-card">
-      <h2>设置</h2>
+      <aside class="settings-nav" id="settingsNav">
+        <h2>设置</h2>
+        <button class="sn-item active" data-pane="general" type="button">
+          <svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2 4.5 7 2l6 2.5-6 2.5z"/><path d="M2 7.8 7 10.3l5-2.5M2 11l6 2.5 5-2.5" opacity=".55"/></svg>
+          <span>常规</span>
+        </button>
+        <button class="sn-item" data-pane="appearance" type="button">
+          <svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7.5" cy="7.5" r="5.6"/><circle cx="7.5" cy="4.7" r=".9" fill="currentColor" stroke="none"/><circle cx="5" cy="7.6" r=".9" fill="currentColor" stroke="none"/><circle cx="10" cy="7.6" r=".9" fill="currentColor" stroke="none"/></svg>
+          <span>外观</span>
+        </button>
+        <button class="sn-item" data-pane="aitools" type="button">
+          <svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M7.5 2 8.9 6.1 13 7.5 8.9 8.9 7.5 13 6.1 8.9 2 7.5l4.1-1.4z"/></svg>
+          <span>AI 工具</span>
+        </button>
+        <button class="sn-item" data-pane="github" type="button">
+          <svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7.5" cy="7.5" r="5.6"/><path d="M7.5 4.5v6M4.7 6l2.8-1.5L10.3 6M4.7 9l2.8 1.5L10.3 9" opacity=".6"/></svg>
+          <span>GitHub</span>
+        </button>
+        <button class="sn-item" data-pane="system" type="button">
+          <svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="7.5" cy="7.5" r="2.1"/><path d="M7.5 2v1.8M7.5 11.2V13M2 7.5h1.8M11.2 7.5H13M3.6 3.6l1.3 1.3M10.1 10.1l1.3 1.3M11.4 3.6l-1.3 1.3M4.9 10.1 3.6 11.4"/></svg>
+          <span>系统</span>
+        </button>
+      </aside>
 
-      <div class="set-group">
-        <h3>扫描</h3>
-        <div class="group-desc">递归发现根目录中含 .git 的项目（深度上限 4，跳过黑名单与 . 开头目录）</div>
-        <div class="field">
-          <label>扫描根目录</label>
-          <div id="rootsList"></div>
-          <button class="add-row" id="addRoot" type="button">+ 添加根目录</button>
-        </div>
-        <div class="field">
-          <label>补充路径（扫描范围之外，逐个指定，目录内需含 .git）</label>
-          <div id="extraList"></div>
-          <button class="add-row" id="addExtra" type="button">+ 添加补充路径</button>
-        </div>
-        <div class="field">
-          <label>黑名单目录（一行一个）</label>
-          <textarea id="fBlacklist" spellcheck="false"></textarea>
-        </div>
-        <div class="inline-check">
-          <button id="previewBtn" type="button">扫描预览</button>
-          <span class="res" id="previewRes"></span>
-        </div>
-      </div>
+      <div class="settings-main">
+        <div class="settings-body">
 
-      <div class="set-group">
-        <h3>AI 工具</h3>
-        <div class="group-desc">总览页工作台按本机 PATH 探测 claude / codex / kimi / grok；下方可增删自定义命令（名称 + 命令），与默认清单一并探测</div>
-        <div id="aiToolsList"></div>
-        <button class="add-row" id="addAiTool" type="button">+ 添加工具</button>
-      </div>
-
-      <div class="set-group">
-        <h3>GitHub</h3>
-        <div class="group-desc">仅拉取 owner 是本人的仓库的开放 issues/PR（10 分钟缓存）；fork 的上游仓库自动跳过。Token 经系统加密存储，不落明文（issue #12）</div>
-        <div class="field">
-          <label>连接 GitHub</label>
-          <div class="inline-check">
-            <button id="ghDeviceBtn" type="button">设备码授权</button>
-            <button id="ghImportBtn" type="button">从 gh CLI 导入</button>
-            <span class="res" id="ghAuthRes"></span>
-          </div>
-          <div class="hint" id="ghConnState"></div>
-          <!-- 设备码授权流程盒：授权中展示 8 位码与倒计时 -->
-          <div class="device-box hidden" id="deviceBox">
-            <div class="dc-code mono" id="dcCode">----</div>
-            <div class="dc-row">
-              <button class="btn solid" id="dcOpen" type="button">打开 github.com/login/device</button>
-              <button class="btn" id="dcCancel" type="button">取消</button>
-            </div>
-            <div class="hint" id="dcStatus">等待授权…</div>
-          </div>
-        </div>
-        <div class="field">
-          <label>GitHub 用户名</label>
-          <input type="text" id="fUsername" spellcheck="false">
-        </div>
-        <details class="adv" id="ghAdv">
-          <summary>高级：手动粘贴 Token</summary>
-          <div class="field">
-            <input type="password" id="fToken" autocomplete="off" placeholder="粘贴 token">
-            <div class="inline-check">
-              <button id="testGhBtn" type="button">测试连接</button>
-              <span class="res" id="testGhRes"></span>
+          <div class="set-pane active" id="pane-general">
+            <div class="set-group">
+              <h3>扫描</h3>
+              <div class="group-desc">递归发现根目录中含 .git 的项目（深度上限 4，跳过黑名单与 . 开头目录）</div>
+              <div class="field">
+                <label>扫描根目录</label>
+                <div id="rootsList"></div>
+                <button class="add-row" id="addRoot" type="button">+ 添加根目录</button>
+              </div>
+              <div class="field">
+                <label>补充路径（扫描范围之外，逐个指定，目录内需含 .git）</label>
+                <div id="extraList"></div>
+                <button class="add-row" id="addExtra" type="button">+ 添加补充路径</button>
+              </div>
+              <div class="field">
+                <label>黑名单目录（一行一个）</label>
+                <textarea id="fBlacklist" spellcheck="false"></textarea>
+              </div>
+              <div class="inline-check">
+                <button id="previewBtn" type="button">扫描预览</button>
+                <span class="res" id="previewRes"></span>
+              </div>
             </div>
           </div>
-        </details>
-      </div>
 
-      <div class="set-group">
-        <h3>系统</h3>
-        <div class="field">
-          <label>编辑器命令</label>
-          <div class="path-row">
-            <input type="text" id="fEditor" spellcheck="false" placeholder="code">
-            <button class="browse" id="browseEditor" type="button">浏览…</button>
+          <div class="set-pane" id="pane-appearance">
+            <div class="set-group">
+              <h3>主题色</h3>
+              <div class="group-desc">自定义界面强调色，热力图色阶、分带芯片与强调元素随之联动；选择后即时预览，保存后持久生效</div>
+              <div class="field">
+                <label>强调色</label>
+                <div class="swatches" id="swatches"></div>
+                <div class="custom-color">
+                  <input type="color" id="fAccent" value="#f5d90a" title="自定义强调色">
+                  <span class="hint">预设不满意？点左侧色块自定义，实时预览</span>
+                </div>
+              </div>
+              <div class="inline-check">
+                <button id="themeReset" type="button">恢复默认</button>
+              </div>
+            </div>
           </div>
-          <div class="inline-check">
-            <button id="checkEditor" type="button">校验</button>
-            <span class="res" id="checkEditorRes"></span>
-          </div>
-        </div>
-        <div class="field">
-          <label>终端命令（在项目目录下执行；留空用 Windows Terminal / cmd 兜底）</label>
-          <input type="text" id="fTerminal" spellcheck="false" placeholder="留空自动兜底">
-          <div class="inline-check">
-            <button id="checkTerminal" type="button">校验</button>
-            <span class="res" id="checkTerminalRes"></span>
-          </div>
-        </div>
-        <div class="field">
-          <label>全局热键（点击输入框后按下组合键）</label>
-          <input type="text" id="fHotkey" spellcheck="false" placeholder="例如 Ctrl+Shift+D">
-          <div class="hint" id="hotkeyHint">修改保存后即时生效；若被其他程序占用会在此处报错</div>
-          <div class="err" id="hotkeyErr"></div>
-        </div>
-        <div class="field check">
-          <input type="checkbox" id="fAutoStart">
-          <label for="fAutoStart">开机自启</label>
-        </div>
-      </div>
 
-      <div class="settings-actions">
-        <span class="settings-msg" id="settingsMsg"></span>
-        <button class="btn" id="settingsBack">返回</button>
-        <button class="btn solid" id="settingsSave">保存</button>
+          <div class="set-pane" id="pane-aitools">
+            <div class="set-group">
+              <h3>AI 工具</h3>
+              <div class="group-desc">总览页工作台按本机 PATH 探测 claude / codex / kimi / grok；下方可增删自定义命令（名称 + 命令），与默认清单一并探测</div>
+              <div id="aiToolsList"></div>
+              <button class="add-row" id="addAiTool" type="button">+ 添加工具</button>
+            </div>
+          </div>
+
+          <div class="set-pane" id="pane-github">
+            <div class="set-group">
+              <h3>GitHub</h3>
+              <div class="group-desc">仅拉取 owner 是本人的仓库的开放 issues/PR（10 分钟缓存）；fork 的上游仓库自动跳过。Token 经系统加密存储，不落明文（issue #12）</div>
+              <div class="field">
+                <label>连接 GitHub</label>
+                <div class="inline-check">
+                  <button id="ghDeviceBtn" type="button">设备码授权</button>
+                  <button id="ghImportBtn" type="button">从 gh CLI 导入</button>
+                  <span class="res" id="ghAuthRes"></span>
+                </div>
+                <div class="hint" id="ghConnState"></div>
+                <!-- 设备码授权流程盒：授权中展示 8 位码与倒计时 -->
+                <div class="device-box hidden" id="deviceBox">
+                  <div class="dc-code mono" id="dcCode">----</div>
+                  <div class="dc-row">
+                    <button class="btn solid" id="dcOpen" type="button">打开 github.com/login/device</button>
+                    <button class="btn" id="dcCancel" type="button">取消</button>
+                  </div>
+                  <div class="hint" id="dcStatus">等待授权…</div>
+                </div>
+              </div>
+              <div class="field">
+                <label>GitHub 用户名</label>
+                <input type="text" id="fUsername" spellcheck="false">
+              </div>
+              <details class="adv" id="ghAdv">
+                <summary>高级：手动粘贴 Token</summary>
+                <div class="field">
+                  <input type="password" id="fToken" autocomplete="off" placeholder="粘贴 token">
+                  <div class="inline-check">
+                    <button id="testGhBtn" type="button">测试连接</button>
+                    <span class="res" id="testGhRes"></span>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="set-pane" id="pane-system">
+            <div class="set-group">
+              <h3>系统</h3>
+              <div class="field">
+                <label>编辑器命令</label>
+                <div class="path-row">
+                  <input type="text" id="fEditor" spellcheck="false" placeholder="code">
+                  <button class="browse" id="browseEditor" type="button">浏览…</button>
+                </div>
+                <div class="inline-check">
+                  <button id="checkEditor" type="button">校验</button>
+                  <span class="res" id="checkEditorRes"></span>
+                </div>
+              </div>
+              <div class="field">
+                <label>终端命令（在项目目录下执行；留空用 Windows Terminal / cmd 兜底）</label>
+                <input type="text" id="fTerminal" spellcheck="false" placeholder="留空自动兜底">
+                <div class="inline-check">
+                  <button id="checkTerminal" type="button">校验</button>
+                  <span class="res" id="checkTerminalRes"></span>
+                </div>
+              </div>
+              <div class="field">
+                <label>全局热键（点击输入框后按下组合键）</label>
+                <input type="text" id="fHotkey" spellcheck="false" placeholder="例如 Ctrl+Shift+D">
+                <div class="hint" id="hotkeyHint">修改保存后即时生效；若被其他程序占用会在此处报错</div>
+                <div class="err" id="hotkeyErr"></div>
+              </div>
+              <div class="field check">
+                <input type="checkbox" id="fAutoStart">
+                <label for="fAutoStart">开机自启</label>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="settings-actions">
+          <span class="settings-msg" id="settingsMsg"></span>
+          <button class="btn" id="settingsBack">返回</button>
+          <button class="btn solid" id="settingsSave">保存</button>
+        </div>
       </div>
     </div>
   </section>

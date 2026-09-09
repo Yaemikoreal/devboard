@@ -966,6 +966,7 @@
     viewOverview.classList.toggle('hidden', view !== 'overview');
     viewProjects.classList.toggle('hidden', view !== 'projects');
     hideSettings();
+    syncScrolled(); // 切换视图后按当前视图滚动位置重算过渡带状态（issue #28）
   }
 
   // 关注清单 / 活动流 / 搜索 → 跳项目页并推出该项目详情
@@ -1132,6 +1133,45 @@
     });
   }
 
+  /* ---------- 主题（issue #27）：强调色 → 派生阶梯（热力图/高亮/光晕/聚焦环） ---------- */
+  var DEFAULT_ACCENT = '#f5d90a';
+  var THEME_PRESETS = ['#f5d90a', '#e8850c', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
+
+  function hexToRgb(h) {
+    h = String(h || '').replace('#', '');
+    if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
+    if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
+    var n = parseInt(h, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+  function rgbToHex(rgb) {
+    return '#' + rgb.map(function (v) {
+      return Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+    }).join('');
+  }
+  function mixHex(a, b, t) {
+    var ca = hexToRgb(a), cb = hexToRgb(b);
+    if (!ca || !cb) return a;
+    return rgbToHex([0, 1, 2].map(function (i) { return ca[i] + (cb[i] - ca[i]) * t; }));
+  }
+  function rgbaOf(hex, alpha) {
+    var c = hexToRgb(hex);
+    return c ? 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + alpha + ')' : hex;
+  }
+  function applyTheme(accent) {
+    if (!hexToRgb(accent)) accent = DEFAULT_ACCENT;
+    var st = document.documentElement.style;
+    st.setProperty('--accent', accent);
+    st.setProperty('--accent-soft', mixHex(accent, '#ffffff', 0.55));
+    st.setProperty('--accent-deep', mixHex(accent, '#000000', 0.12));
+    st.setProperty('--accent-hl', rgbaOf(accent, 0.55));
+    st.setProperty('--accent-glow', rgbaOf(accent, 0.45));
+    st.setProperty('--accent-ring', rgbaOf(accent, 0.25));
+  }
+  function savedAccent() {
+    return (state.settings && state.settings.theme && state.settings.theme.accent) || DEFAULT_ACCENT;
+  }
+
   /* ---------- 设置视图 ---------- */
   var rootsList = document.getElementById('rootsList');
   var extraList = document.getElementById('extraList');
@@ -1145,6 +1185,42 @@
   var deviceBox = document.getElementById('deviceBox');
   var deviceTimer = null;
   fHotkey.readOnly = true; // 热键通过按键捕捉录入
+
+  /* ----- 子模块导航（issue #26）：面板常驻 DOM 仅切换显隐，未保存输入不丢 ----- */
+  document.getElementById('settingsNav').addEventListener('click', function (e) {
+    var btn = e.target.closest('.sn-item');
+    if (!btn) return;
+    Array.prototype.forEach.call(document.querySelectorAll('.sn-item'), function (b) {
+      b.classList.toggle('active', b === btn);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.set-pane'), function (p) {
+      p.classList.toggle('active', p.id === 'pane-' + btn.dataset.pane);
+    });
+  });
+
+  /* ----- 外观：主题色选择与即时预览（issue #27） ----- */
+  var themeAccent = DEFAULT_ACCENT; // 设置页内的预览值，「保存」才落盘
+  function setThemeAccent(hex) {
+    themeAccent = hex;
+    applyTheme(hex); // 即时预览，全界面联动
+    renderSwatches();
+  }
+  function renderSwatches() {
+    var box = document.getElementById('swatches');
+    if (!box) return;
+    box.innerHTML = '';
+    THEME_PRESETS.forEach(function (hex) {
+      var b = el('button', 'swatch' + (hex.toLowerCase() === themeAccent.toLowerCase() ? ' active' : ''));
+      b.type = 'button';
+      b.style.background = hex;
+      b.title = hex;
+      b.addEventListener('click', function () { setThemeAccent(hex); });
+      box.appendChild(b);
+    });
+    document.getElementById('fAccent').value = themeAccent;
+  }
+  document.getElementById('fAccent').addEventListener('input', function (e) { setThemeAccent(e.target.value); });
+  document.getElementById('themeReset').addEventListener('click', function () { setThemeAccent(DEFAULT_ACCENT); });
 
   function lines(id) {
     return document.getElementById(id).value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
@@ -1325,6 +1401,8 @@
       fTerminal.value = cfg.terminalCmd || '';
       fHotkey.value = cfg.hotkey || '';
       fAutoStart.checked = !!cfg.autoStart;
+      themeAccent = savedAccent();
+      renderSwatches();
       ghStateText();
       document.getElementById('settingsMsg').textContent = '';
       document.getElementById('hotkeyErr').textContent = '';
@@ -1345,6 +1423,7 @@
   function hideSettings() {
     appEl.classList.remove('show-settings');
     stopDeviceFlow();
+    applyTheme(savedAccent()); // 未保存的换色预览在退出设置时回退（issue #27）
   }
 
   function saveSettings() {
@@ -1358,6 +1437,7 @@
       terminalCmd: fTerminal.value.trim(),
       hotkey: fHotkey.value.trim(),
       autoStart: fAutoStart.checked,
+      theme: { accent: themeAccent }, // 外观（issue #27）
     };
     var typedToken = fToken.value.trim();
     if (typedToken) patch.githubToken = typedToken; // 留空 = 保持已存 token（issue #12）
@@ -1488,6 +1568,15 @@
     });
   });
 
+  // 顶栏过渡带（issue #28）：内容滚动后浮现细分隔线
+  function syncScrolled() {
+    var v = state.view === 'projects' ? viewProjects : viewOverview;
+    appEl.classList.toggle('scrolled', v.scrollTop > 8);
+  }
+  [viewOverview, viewProjects].forEach(function (v) {
+    v.addEventListener('scroll', syncScrolled, { passive: true });
+  });
+
   // 项目页分带筛选 chips（issue #16）
   document.querySelectorAll('#bandChips button').forEach(function (btn) {
     btn.addEventListener('click', function () {
@@ -1575,7 +1664,10 @@
 
   /* ---------- 启动 ---------- */
   renderSkeleton();
-  api.getSettings().then(function (cfg) { state.settings = cfg; });
+  api.getSettings().then(function (cfg) {
+    state.settings = cfg;
+    applyTheme(savedAccent()); // 启动时恢复用户主题色（issue #27）
+  });
   api.getPrefs().then(function (p) {
     state.prefs = p;
     state.branchSel = (p && p.branchSel) || {};
