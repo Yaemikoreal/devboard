@@ -66,15 +66,25 @@
       <div id="globalHeat"></div>
     </div>
 
+    <!-- AI 周报：独立模块（issue #32），标明生成模型与生成时间；无可用引擎时整卡隐藏 -->
+    <div class="ov-card weekly-card hidden" id="aiWeeklyCard">
+      <div class="card-head">
+        <div>
+          <h3>AI 周报</h3>
+          <div class="sub">近 7 天跨项目提交事实的自然语言摘要</div>
+        </div>
+        <button class="ai-btn" id="aiWeeklyBtn" type="button" title="用本机 AI 工具总结近 7 天提交">✦ 生成周报</button>
+      </div>
+      <div class="ai-box hidden" id="aiWeeklyBox"></div>
+    </div>
+
     <div class="ov-grid">
-      <!-- 按月活动流；AI 周报按钮在标题行，结果区在事实流顶部（issue #29） -->
+      <!-- 按月活动流（issue #14） -->
       <div class="ov-card">
-        <div class="stream-head">
+        <div class="card-head">
           <h3>活动流</h3>
-          <button class="ai-btn hidden" id="aiWeeklyBtn" type="button" title="用本机 AI 工具总结近 7 天提交">✦ AI 周报</button>
         </div>
         <div class="sub">按月份分组的跨项目提交事实</div>
-        <div class="ai-box hidden" id="aiWeeklyBox"></div>
         <div id="stream"></div>
         <button class="show-more hidden" id="streamMore" type="button">显示更早的活动</button>
       </div>
@@ -101,11 +111,11 @@
     <div class="filterbar">
       <div class="chips" id="bandChips">
         <button class="active" data-band="all">全部</button>
-        <button data-band="hot">活跃</button>
-        <button data-band="active">近期</button>
-        <button data-band="cooling">渐冷</button>
-        <button data-band="stale">沉睡</button>
-        <button data-band="archive">归档</button>
+        <button data-band="hot"><i class="dot"></i>活跃</button>
+        <button data-band="active"><i class="dot"></i>近期</button>
+        <button data-band="cooling"><i class="dot"></i>渐冷</button>
+        <button data-band="stale"><i class="dot"></i>沉睡</button>
+        <button data-band="archive"><i class="dot"></i>归档</button>
       </div>
       <!-- AI 自然语言筛选生效标记（issue #29）：点击 × 清除 -->
       <span class="ai-chip hidden" id="aiFilterChip"></span>

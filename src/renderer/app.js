@@ -29,6 +29,7 @@
     aiFilter: null, // AI 自然语言筛选 { raw, keyword, days }（issue #29，band 并入 state.band）
     details: {}, // path -> { readme, aiSessions } | 'loading'（issue #17 懒取）
     streamShown: 3, // 活动流默认展示近 3 个月，「显示更早的活动」展开
+    heatMonth: {}, // path -> 详情面板月份热力图翻页偏移（0 = 当月，-1 上一月；issue #34）
   };
 
   var appEl = document.getElementById('app');
@@ -298,6 +299,66 @@
     container.appendChild(axis);
   }
 
+  /* ---------- 月份热力图（issue #34）：单月份日历格，标题行标明月份并可左右翻页 ---------- */
+  // activity365 末位 = 今天；窗口之外的月份（早于 365 天前）不给翻页
+  function renderMonthHeat(box, headEl, p) {
+    var offset = state.heatMonth[p.path] || 0;
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    var view = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    var y = view.getFullYear();
+    var m = view.getMonth();
+
+    var nav = el('div', 'mheat-nav');
+    var prev = el('button', null, '‹');
+    prev.type = 'button';
+    prev.title = '上一月';
+    var windowStart = new Date(today.getTime() - 364 * DAY_MS);
+    prev.disabled = y * 12 + m <= windowStart.getFullYear() * 12 + windowStart.getMonth();
+    var next = el('button', null, '›');
+    next.type = 'button';
+    next.title = '下一月';
+    next.disabled = offset >= 0;
+    prev.addEventListener('click', function (e) {
+      e.stopPropagation();
+      state.heatMonth[p.path] = offset - 1;
+      renderPanel(p);
+    });
+    next.addEventListener('click', function (e) {
+      e.stopPropagation();
+      state.heatMonth[p.path] = offset + 1;
+      renderPanel(p);
+    });
+    nav.appendChild(prev);
+    nav.appendChild(el('span', 'mheat-label', y + ' 年 ' + (m + 1) + ' 月'));
+    nav.appendChild(next);
+    headEl.appendChild(nav);
+
+    box.innerHTML = '';
+    var dow = el('div', 'mheat-dow');
+    ['一', '二', '三', '四', '五', '六', '日'].forEach(function (w) { dow.appendChild(el('span', null, w)); });
+    box.appendChild(dow);
+    var grid = el('div', 'mheat');
+    var daysInMonth = new Date(y, m + 1, 0).getDate();
+    var lead = (new Date(y, m, 1).getDay() + 6) % 7; // 周一在最左列
+    var b;
+    for (b = 0; b < lead; b++) grid.appendChild(el('i', 'cell blank'));
+    var act = p.activity365 || [];
+    for (var day = 1; day <= daysInMonth; day++) {
+      var d = new Date(y, m, day);
+      var idx = 364 - Math.round((today - d) / DAY_MS);
+      var n = (idx >= 0 && idx < 365) ? (act[idx] || 0) : 0;
+      var lvl = n === 0 ? 0 : n < 3 ? 1 : n < 7 ? 2 : 3;
+      var cell = el('i', 'cell' + (lvl ? ' l' + lvl : ''));
+      if (d.getTime() > today.getTime()) cell.classList.add('future');
+      else if (d.getTime() === today.getTime()) cell.classList.add('today');
+      cell.dataset.tip = (m + 1) + '月' + day + '日 · ' + (n ? n + ' 次提交' : '无提交');
+      cell.appendChild(el('span', 'd', String(day)));
+      grid.appendChild(cell);
+    }
+    box.appendChild(grid);
+  }
+
   /* ---------- 总览页（issue #14） ---------- */
   function setStat(id, n, unit) {
     var e = document.getElementById(id);
@@ -421,12 +482,12 @@
     renderTools();
   }
 
-  /* ---------- 热力图悬停气泡（issue #19）：总览全局图与详情面板项目图共用 ---------- */
+  /* ---------- 热力图悬停气泡（issue #19）：总览全年图与详情面板月份日历共用（issue #34） ---------- */
   var heatTip = el('div', 'heat-tip');
   document.body.appendChild(heatTip);
   document.addEventListener('mouseover', function (e) {
     var c = e.target && e.target.closest ? e.target.closest('.cell') : null;
-    if (!c || c.classList.contains('blank') || !c.dataset.tip || !c.closest('.gheat,.p-heat')) {
+    if (!c || c.classList.contains('blank') || !c.dataset.tip || !c.closest('.gheat,.p-heat,.mheat')) {
       heatTip.style.opacity = 0;
       return;
     }
@@ -609,27 +670,35 @@
     }).catch(function () { state.aiCaps = { enabled: false, engine: null }; });
   }
 
-  // AI 结果区：徽标（由本机 X 生成）+ 正文/错误；box 内重建
+  // AI 结果区：徽标（由本机 X 生成 · 生成时间 · 缓存标记）+ 正文/错误；box 内重建
   function fillAiBox(box, r) {
     box.innerHTML = '';
     if (!r || !r.ok) {
       box.appendChild(el('div', 'ai-err', (r && r.reason) ? 'AI 生成失败：' + r.reason : 'AI 生成失败，可稍后重试'));
       return;
     }
-    var text = r.text;
-    box.appendChild(el('div', 'ai-text', text));
+    box.appendChild(el('div', 'ai-text', r.text));
     var meta = el('div', 'ai-meta');
     meta.appendChild(el('span', 'ai-badge', '由本机 ' + r.engine.label + ' 生成'));
-    if (r.cached) meta.appendChild(el('span', 'ai-badge dim', '今日缓存'));
+    if (r.at) meta.appendChild(el('span', 'ai-badge', relTime(r.at) + '生成')); // 时效性（issue #32）
+    if (r.cached) meta.appendChild(el('span', 'ai-badge dim', '缓存命中'));
     box.appendChild(meta);
   }
 
-  /* ----- P0 · AI 周报（总览页活动流顶部，手动触发，当天缓存） ----- */
+  /* ----- P0 · AI 周报（总览页独立模块，issue #32；手动触发，当天缓存） ----- */
   function renderAiWeeklyEntry() {
-    var btn = document.getElementById('aiWeeklyBtn');
-    if (!btn) return;
-    btn.classList.toggle('hidden', !aiReady());
-    if (!aiReady()) document.getElementById('aiWeeklyBox').classList.add('hidden');
+    var card = document.getElementById('aiWeeklyCard');
+    if (!card) return;
+    card.classList.toggle('hidden', !aiReady());
+    if (!aiReady()) return;
+    // 今日已生成过的周报直接展出（只读缓存，不触发新生成），模块内标明模型与生成时间
+    api.aiAsk({ kind: 'weekly', cachedOnly: true }).then(function (r) {
+      if (r && r.ok) {
+        var box = document.getElementById('aiWeeklyBox');
+        box.classList.remove('hidden');
+        fillAiBox(box, r);
+      }
+    }).catch(function () {});
   }
 
   function bindAiWeekly() {
@@ -652,30 +721,43 @@
   }
 
   /* ----- P0 · 项目 AI 建议（详情面板，按 项目+HEAD 缓存） ----- */
+  // 生成按钮收进标题行（issue #38）；已缓存的建议打开面板即默认展开，不再多点一次
   function renderAiAdviceSec(p) {
     if (!aiReady()) return null;
     var s = sec('AI 建议');
-    var btn = el('button', 'btn ai-btn-block', '✦ 生成建议');
+    var btn = el('button', 'ai-btn', '✦ 生成建议');
     btn.type = 'button';
     btn.title = '用本机 ' + state.aiCaps.engine.label + ' 分析该项目 git 信号';
+    s.firstChild.appendChild(btn);
     var box = el('div', 'ai-box hidden');
+    s.appendChild(box);
+    // 默认展开：只取缓存（不触发生成），命中即展示并标明生成时间
+    api.aiAsk({ kind: 'advice', path: p.path, cachedOnly: true }).then(function (r) {
+      if (r && r.ok) {
+        box.classList.remove('hidden');
+        fillAiBox(box, r);
+        btn.textContent = '✦ 重新生成';
+      }
+    }).catch(function () {});
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
       if (btn.dataset.busy) return;
       btn.dataset.busy = '1';
+      var orig = btn.textContent;
+      btn.textContent = '生成中…';
       box.classList.remove('hidden');
       box.innerHTML = '';
       box.appendChild(el('div', 'ai-err', 'AI 生成中…（最长 30 秒）'));
       api.aiAsk({ kind: 'advice', path: p.path }).then(function (r) {
         fillAiBox(box, r);
+        if (r && r.ok) orig = '✦ 重新生成';
       }).catch(function () {
         fillAiBox(box, null);
       }).finally(function () {
         delete btn.dataset.busy;
+        btn.textContent = orig;
       });
     });
-    s.appendChild(btn);
-    s.appendChild(box);
     return s;
   }
 
@@ -871,7 +953,9 @@
 
   function sec(title) {
     var s = el('div', 'p-sec');
-    s.appendChild(el('h4', null, title));
+    var head = el('div', 'sec-head'); // 标题行：左侧标题，右侧可挂控件（issue #37/#38/#34）
+    head.appendChild(el('h4', null, title));
+    s.appendChild(head);
     return s;
   }
 
@@ -946,7 +1030,22 @@
     head.appendChild(close);
     panelIn.appendChild(head);
 
-    panelIn.appendChild(el('div', 'p-path mono', p.path));
+    // 路径行：路径全文 + 复制按钮（issue #36）
+    var pathRow = el('div', 'p-path mono');
+    pathRow.appendChild(el('span', 'txt', p.path));
+    var copyPath = el('button', 'p-copy');
+    copyPath.type = 'button';
+    copyPath.title = '复制路径';
+    copyPath.innerHTML = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.6"/><path d="M8 4V2.6A1.6 1.6 0 0 0 6.4 1H2.6A1.6 1.6 0 0 0 1 2.6v3.8A1.6 1.6 0 0 0 2.6 8H4"/></svg>';
+    copyPath.addEventListener('click', function (e) {
+      e.stopPropagation();
+      navigator.clipboard.writeText(p.path).then(function () {
+        copyPath.classList.add('ok');
+        setTimeout(function () { copyPath.classList.remove('ok'); }, 900);
+      }, function () {});
+    });
+    pathRow.appendChild(copyPath);
+    panelIn.appendChild(pathRow);
 
     // 备忘：可编辑，保存回填行（Enter / 失焦保存，Esc 还原）
     var ta = el('textarea', 'memo-input');
@@ -979,6 +1078,52 @@
     }
     autosize(ta);
 
+    // 快捷打开（issue #36：高频操作上移至头部区；AI 工具启动并入本节，issue #39）
+    var qSec = sec('快捷打开');
+    var quick = el('div', 'quick');
+    [['打开文件夹', 'folder', 1], ['编辑器', 'editor'], ['终端', 'terminal']].forEach(function (pair) {
+      var b = el('button', 'btn' + (pair[2] ? ' solid' : ''), pair[0]);
+      b.type = 'button';
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        api.quickOpen(p.path, pair[1]).then(function (ok) {
+          flashBtn(b, ok ? '已打开' : '打开失败', ok);
+        });
+      });
+      quick.appendChild(b);
+    });
+    var copy = el('button', 'btn', '复制路径');
+    copy.type = 'button';
+    copy.addEventListener('click', function (e) {
+      e.stopPropagation();
+      navigator.clipboard.writeText(p.path).then(
+        function () { flashBtn(copy, '已复制', true); },
+        function () { flashBtn(copy, '复制失败', false); }
+      );
+    });
+    quick.appendChild(copy);
+    qSec.appendChild(quick);
+    // AI 工具启动：该项目目录一键直达（issue #15/#17，并入快捷打开）
+    var tools = installedTools();
+    if (tools.length) {
+      var tRow = el('div', 'tools-row');
+      tools.forEach(function (t) {
+        tRow.appendChild(toolButton(t, function (btn) {
+          api.aiToolsOpen(t.cmd, p.path).then(function (ok) {
+            flashBtn(btn, ok ? '已启动' : '启动失败', ok);
+            setTimeout(function () {
+              if (state.selectedPath === p.path) {
+                var cur = findProject(p.path);
+                if (cur) renderPanel(cur);
+              }
+            }, 950);
+          });
+        }));
+      });
+      qSec.appendChild(tRow);
+    }
+    panelIn.appendChild(qSec);
+
     // 近况信号：分支下拉（懒取 branch:commits）、近7天提交、领先/落后远程、未提交数
     var sigSec = sec('近况信号');
     var kvRow = el('div', 'kv-row');
@@ -1001,11 +1146,11 @@
     var adviceSec = renderAiAdviceSec(p);
     if (adviceSec) panelIn.appendChild(adviceSec);
 
-    // 本项目全年热力图
-    var heatSec = sec('全年热力图');
-    var heatBox = el('div'); // renderHeatInto 会清空容器，标题须留在容器外
+    // 本项目热力图：单月份日历视图，标题行标明月份并可翻页（issue #34）
+    var heatSec = sec('热力图');
+    var heatBox = el('div');
     heatSec.appendChild(heatBox);
-    renderHeatInto(heatBox, p.activity365 || [], 'p-heat', false);
+    renderMonthHeat(heatBox, heatSec.firstChild, p);
     panelIn.appendChild(heatSec);
 
     // README 首段摘要 + AI 会话痕迹明细（project:detail 懒取）
@@ -1070,55 +1215,6 @@
     var gSec = sec('GitHub');
     renderGithub(gSec, p);
     panelIn.appendChild(gSec);
-
-    // 快捷打开（文件夹 / 编辑器 / 终端 / 复制路径）
-    var qSec = sec('快捷打开');
-    var quick = el('div', 'quick');
-    [['打开文件夹', 'folder', 1], ['编辑器', 'editor'], ['终端', 'terminal']].forEach(function (pair) {
-      var b = el('button', 'btn' + (pair[2] ? ' solid' : ''), pair[0]);
-      b.type = 'button';
-      b.addEventListener('click', function (e) {
-        e.stopPropagation();
-        api.quickOpen(p.path, pair[1]).then(function (ok) {
-          flashBtn(b, ok ? '已打开' : '打开失败', ok);
-        });
-      });
-      quick.appendChild(b);
-    });
-    var copy = el('button', 'btn', '复制路径');
-    copy.type = 'button';
-    copy.addEventListener('click', function (e) {
-      e.stopPropagation();
-      navigator.clipboard.writeText(p.path).then(
-        function () { flashBtn(copy, '已复制', true); },
-        function () { flashBtn(copy, '复制失败', false); }
-      );
-    });
-    quick.appendChild(copy);
-    qSec.appendChild(quick);
-    panelIn.appendChild(qSec);
-
-    // AI 工具启动：该项目目录一键直达（issue #15/#17）
-    var tools = installedTools();
-    if (tools.length) {
-      var tSec = sec('AI 工具启动');
-      var tRow = el('div', 'tools-row');
-      tools.forEach(function (t) {
-        tRow.appendChild(toolButton(t, function (btn) {
-          api.aiToolsOpen(t.cmd, p.path).then(function (ok) {
-            flashBtn(btn, ok ? '已启动' : '启动失败', ok);
-            setTimeout(function () {
-              if (state.selectedPath === p.path) {
-                var cur = findProject(p.path);
-                if (cur) renderPanel(cur);
-              }
-            }, 950);
-          });
-        }));
-      });
-      tSec.appendChild(tRow);
-      panelIn.appendChild(tSec);
-    }
   }
 
   /* ---------- 视图切换与跳转 ---------- */

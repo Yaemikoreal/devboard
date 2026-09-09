@@ -8,9 +8,15 @@ const { execFile } = require('child_process');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_DEPTH = 4;
-const AI_SESSION_DIRS = ['.kimi-code', '.claude', '.codex'];
-// 会话目录 → 工具 id（详情面板的 AI 会话痕迹明细用，issue #17）
-const AI_TOOL_DIRS = [['.kimi-code', 'kimi'], ['.claude', 'claude'], ['.codex', 'codex']];
+// AI 会话痕迹探测位（issue #35）：新版 Agent CLI 的会话写在用户目录而非项目目录，
+// 只看项目本地目录拿到的是「配置目录的改动时间」，不是真实会话时间。两类位置都探：
+//   claude: ~/.claude/projects/<路径逐字符非字母数字转 -> 下的会话 jsonl（mtime）
+//   kimi:   ~/.kimi-code/sessions/wd_<目录名小写>_<hash>/session_*/state.json（cwd 精确匹配，取 updatedAt）
+//   codex:  ~/.codex/sessions/年/月/日/rollout-*.jsonl 首行 session_meta.cwd（60s TTL 全量映射缓存）
+//   grok:   ~/.grok/sessions/<encodeURIComponent(路径)>（mtime）
+//   兼容旧布局：项目本地 .kimi-code/.claude/.codex/.grok 目录
+const AI_LOCAL_DIRS = [['.kimi-code', 'kimi'], ['.claude', 'claude'], ['.codex', 'codex'], ['.grok', 'grok']];
+const HOME = require('os').homedir();
 const MAX_BRANCHES = 50;
 // 扫描总耗时超过该阈值时在控制台输出 breakdown（issue #8）
 const SLOW_SCAN_MS = 3000;
@@ -151,31 +157,122 @@ async function dirLatestMtime(dir, budget) {
   return latest;
 }
 
-// AI 会话痕迹：.kimi-code / .claude / .codex 目录内最新文件 mtime（有界遍历）
-async function aiSessionAt(projectPath) {
+// 路径归一化：跨工具 cwd 记录格式不一（正反斜杠、大小写、尾斜杠），比较前统一
+function normPath(p) {
+  return String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function claudeSessionDir(projectPath) {
+  return path.join(HOME, '.claude', 'projects', projectPath.replace(/[^a-zA-Z0-9]/g, '-'));
+}
+
+function grokSessionDir(projectPath) {
+  return path.join(HOME, '.grok', 'sessions', encodeURIComponent(projectPath));
+}
+
+// kimi：wd_<basename 小写、空白转 _>_<hash> 下每个 session_*/state.json 记录 cwd 与 updatedAt
+async function kimiSessionAt(projectPath) {
+  const base = path.basename(projectPath).toLowerCase().replace(/\s+/g, '_');
+  const root = path.join(HOME, '.kimi-code', 'sessions');
+  let names;
+  try {
+    names = await fsp.readdir(root);
+  } catch {
+    return 0;
+  }
+  const target = normPath(projectPath);
   let latest = 0;
-  const budget = { n: 300 };
-  for (const d of AI_SESSION_DIRS) {
-    const dir = path.join(projectPath, d);
-    if (await exists(dir)) {
-      const t = await dirLatestMtime(dir, budget);
+  for (const d of names) {
+    if (!d.startsWith('wd_' + base + '_')) continue;
+    let sessions;
+    try {
+      sessions = await fsp.readdir(path.join(root, d));
+    } catch {
+      continue;
+    }
+    for (const s of sessions.slice(0, 40)) {
+      let j;
+      try {
+        j = JSON.parse(await fsp.readFile(path.join(root, d, s, 'state.json'), 'utf8'));
+      } catch {
+        continue;
+      }
+      if (normPath(j.cwd) !== target) continue;
+      const t = Number(j.updatedAt) || Number(j.createdAt) || 0;
       if (t > latest) latest = t;
     }
   }
-  return latest > 0 ? new Date(latest).toISOString() : null;
+  return latest;
 }
 
-// AI 会话痕迹明细：按工具目录分别统计最新 mtime，按时间倒序（issue #17）
+// codex：rollout 按 年/月/日 分目录，首行 session_meta 记录 cwd；只扫近 120 天，上限 400 个文件。
+// 全量映射按 60s TTL 缓存：一次 board 扫描中所有项目共享，避免逐项目重扫会话目录。
+let codexMap = null;
+let codexMapAt = 0;
+async function codexSessionMap() {
+  const now = Date.now();
+  if (codexMap && now - codexMapAt < 60000) return codexMap;
+  const map = new Map();
+  const files = [];
+  const root = path.join(HOME, '.codex', 'sessions');
+  try {
+    for (const y of (await fsp.readdir(root)).sort().reverse()) {
+      for (const m of (await fsp.readdir(path.join(root, y))).sort().reverse()) {
+        for (const d of (await fsp.readdir(path.join(root, y, m))).sort().reverse()) {
+          if (Date.parse(`${y}-${m}-${d}T00:00:00`) < now - 120 * DAY_MS) break; // 日期目录倒序，遇老即停
+          for (const f of await fsp.readdir(path.join(root, y, m, d))) {
+            if (!f.endsWith('.jsonl')) continue;
+            files.push(path.join(root, y, m, d, f));
+            if (files.length >= 400) break;
+          }
+          if (files.length >= 400) break;
+        }
+        if (files.length >= 400) break;
+      }
+      if (files.length >= 400) break;
+    }
+  } catch { /* 无 codex 会话目录 */ }
+  await Promise.all(files.map(async (f) => {
+    try {
+      const fh = await fsp.open(f, 'r');
+      const buf = Buffer.alloc(2048);
+      const { bytesRead } = await fh.read(buf, 0, 2048, 0);
+      await fh.close();
+      const m = /"cwd"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(buf.slice(0, bytesRead).toString('utf8'));
+      if (!m) return;
+      const cwd = normPath(JSON.parse('"' + m[1] + '"'));
+      const st = await fsp.stat(f);
+      if (st.mtimeMs > (map.get(cwd) || 0)) map.set(cwd, st.mtimeMs);
+    } catch { /* 忽略不可读文件 */ }
+  }));
+  codexMap = map;
+  codexMapAt = now;
+  return map;
+}
+
+// AI 会话痕迹明细（issue #35）：每个工具取 项目本地目录 与 用户目录会话位 的较新者，按时间倒序
 async function aiSessionTraces(projectPath) {
-  const out = [];
-  for (const pair of AI_TOOL_DIRS) {
+  const latest = { kimi: 0, claude: 0, codex: 0, grok: 0 };
+  const bump = (tool, t) => { if (t > latest[tool]) latest[tool] = t; };
+  const jobs = AI_LOCAL_DIRS.map((pair) => (async () => {
     const dir = path.join(projectPath, pair[0]);
-    if (!(await exists(dir))) continue;
-    const t = await dirLatestMtime(dir, { n: 300 });
-    if (t > 0) out.push({ tool: pair[1], at: new Date(t).toISOString() });
-  }
-  out.sort((a, b) => (a.at < b.at ? 1 : -1));
-  return out;
+    if (await exists(dir)) bump(pair[1], await dirLatestMtime(dir, { n: 300 }));
+  })());
+  jobs.push(dirLatestMtime(claudeSessionDir(projectPath), { n: 300 }).then((t) => bump('claude', t)));
+  jobs.push(kimiSessionAt(projectPath).then((t) => bump('kimi', t)));
+  jobs.push(codexSessionMap().then((map) => bump('codex', map.get(normPath(projectPath)) || 0)));
+  jobs.push(dirLatestMtime(grokSessionDir(projectPath), { n: 300 }).then((t) => bump('grok', t)));
+  await Promise.all(jobs);
+  return Object.keys(latest)
+    .filter((k) => latest[k] > 0)
+    .map((k) => ({ tool: k, at: new Date(latest[k]).toISOString() }))
+    .sort((a, b) => (a.at < b.at ? 1 : -1));
+}
+
+// 板级字段：所有工具会话痕迹中的最新时间
+async function aiSessionAt(projectPath) {
+  const traces = await aiSessionTraces(projectPath);
+  return traces.length ? traces[0].at : null;
 }
 
 // README 首段摘要：去 markdown 标记，截 ~200 字（issue #17）

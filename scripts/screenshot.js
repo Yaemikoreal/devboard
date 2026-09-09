@@ -64,6 +64,8 @@ app.whenReady().then(() => {
     ipcMain.handle('ai:caps', () => (aiOff
       ? { enabled: true, engine: null }
       : { enabled: true, engine: { id: 'kimi', label: 'Kimi Code', cmd: 'kimi' } }));
+    const atWeekly = new Date(Date.now() - 47 * 60000).toISOString();
+    const atAdvice = new Date(Date.now() - 2 * 3600000).toISOString();
     ipcMain.handle('ai:ask', (_e, payload) => {
       const engine = { id: 'kimi', label: 'Kimi Code', cmd: 'kimi' };
       if (payload && payload.kind === 'filter') {
@@ -71,12 +73,13 @@ app.whenReady().then(() => {
       }
       if (payload && payload.kind === 'advice') {
         return {
-          ok: true, kind: 'advice', engine, cached: false,
+          ok: true, kind: 'advice', engine, cached: !!(payload && payload.cachedOnly), at: atAdvice,
           text: '- 18 个文件未提交超 3 天，建议先 commit 或 stash 收拢现场\n- 3 个提交领先远程，尽快 push 避免单机风险\n- 本周提交集中在设置页重构，可为下个小版本收尾',
         };
       }
+      if (payload && payload.cachedOnly) return { ok: false, kind: 'weekly', reason: 'no-cache' };
       return {
-        ok: true, kind: 'weekly', engine, cached: false,
+        ok: true, kind: 'weekly', engine, cached: false, at: atWeekly,
         text: '近 7 天 8 个项目共 42 次提交，重心明显偏向 SignalBoard 的 AI 功能落地与截图工具链；wyy2qqmusic 有一次热修复，其余项目维持低速推进。\n本周建议关注：SignalBoard 的 AI 功能收尾与真实 CLI 联调。',
       };
     });

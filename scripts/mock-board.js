@@ -143,6 +143,8 @@ function mockProjectDetail(projectPath) {
       aiSessions: [
         { tool: 'kimi', at: isoDaysAgo(0, 1) },
         { tool: 'claude', at: isoDaysAgo(0, 14) },
+        { tool: 'codex', at: isoDaysAgo(2, 5) },
+        { tool: 'grok', at: isoDaysAgo(9, 3) },
       ],
     },
     'E:\\myproject\\devboard': {

@@ -365,8 +365,9 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
       const today = localDateStr(now);
       const hit = cache.weekly;
       if (hit && hit.date === today && hit.engine === engine.id && hit.text) {
-        return { ok: true, kind, text: hit.text, engine: engineInfo, cached: true };
+        return { ok: true, kind, text: hit.text, engine: engineInfo, cached: true, at: hit.at || null };
       }
+      if (payload.cachedOnly) return { ok: false, kind, reason: 'no-cache' };
       const projects = Object.values(store.getScanCache().projects);
       if (!projects.some((p) => p.commits7d > 0)) {
         return { ok: false, reason: '近 7 天没有提交活动，暂无可摘要的内容' };
@@ -383,8 +384,9 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
       const head = p.headSha || 'nohead';
       const hit = cache.advice[p.path];
       if (hit && hit.head === head && hit.engine === engine.id && hit.text) {
-        return { ok: true, kind, text: hit.text, engine: engineInfo, cached: true };
+        return { ok: true, kind, text: hit.text, engine: engineInfo, cached: true, at: hit.at || null };
       }
+      if (payload.cachedOnly) return { ok: false, kind, reason: 'no-cache' };
       prompt = ai.buildAdvicePrompt(p, now);
       cacheWrite = (text) => {
         const cur = store.getAiCache();
@@ -407,7 +409,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
       return { ok: true, kind, filter, engine: engineInfo };
     }
     if (cacheWrite) cacheWrite(r.text);
-    return { ok: true, kind, text: r.text, engine: engineInfo, cached: false };
+    return { ok: true, kind, text: r.text, engine: engineInfo, cached: false, at: now.toISOString() };
   });
 
   // 详情面板深区数据：README 首段摘要 + AI 会话痕迹明细（issue #17）
