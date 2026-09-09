@@ -294,7 +294,7 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   display:flex;align-items:center;justify-content:center;overflow:hidden;
 }
 .tool-logo svg{width:13px;height:13px;display:block}
-.tool-btn .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tool-btn .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .tools-empty{font-size:12px;color:var(--ink-3)}
 .tool-pick .tp-in{
   display:flex;align-items:center;gap:6px;background:var(--well);
@@ -387,11 +387,12 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .row.selected .r-open{transform:rotate(90deg);background:var(--tile);color:var(--tile-ink);border-color:var(--tile)}
 .rows-empty{padding:40px;text-align:center;color:var(--ink-3);font-size:12.5px}
 
-/* 详情面板：右侧推出 400px 固定宽，挤压列表不覆盖（issue #17） */
-.panel{width:0;flex:none;overflow:hidden;transition:width .3s ease}
+/* 详情面板：右侧推出 400px 固定宽，挤压列表不覆盖（issue #17）；
+   sticky 吸附视口顶部：列表下翻后点击任意项目，面板始终停留在可见区域 */
+.panel{width:0;flex:none;overflow:hidden;transition:width .3s ease;position:sticky;top:24px}
 .split.open .panel{width:400px}
 .panel-in{
-  width:400px;max-height:calc(100vh - 150px);overflow-y:auto;
+  width:400px;max-height:calc(100vh - 136px);overflow-y:auto;overscroll-behavior:contain;
   background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow-1);
   padding:20px 22px;opacity:0;transform:translateX(12px);
   transition:opacity .25s ease .05s,transform .25s ease .05s;
@@ -424,8 +425,11 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .ai-item{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:12.5px}
 .ai-item .tool{font-weight:600}
 .ai-item .ago{margin-left:auto;font-size:11px;color:var(--ink-3)}
-.tools-row{display:flex;gap:8px;flex-wrap:wrap}
-.tools-row .tool-btn{padding:6px 12px;font-size:12px}
+/* 详情面板 AI 工具：等宽双列网格，行列严格对齐（与总览工作台同一纪律）；
+   面板仅 356px 宽，收紧内边距与间距保证名称全称放得下 */
+.tools-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tools-row .tool-btn{padding:8px 10px;font-size:12px;min-width:0;gap:7px}
+.tools-row .tool-btn .cmd{font-size:10px}
 
 /* 分带 pill（详情面板头；行上只用左缘色条，issue #16） */
 .bp{
