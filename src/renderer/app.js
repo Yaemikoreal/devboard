@@ -25,6 +25,8 @@
     branchDetail: {}, // path + ' ' + branch -> { lastCommitAt, commits } | 'loading'
     suggestIdx: -1, // 搜索补全键盘选中项（issue #6）
     aiTools: null, // aitools:list 结果（含 installed 标记，issue #15）
+    aiCaps: null, // ai:caps 结果 { enabled, engine }（issue #29）
+    aiFilter: null, // AI 自然语言筛选 { raw, keyword, days }（issue #29，band 并入 state.band）
     details: {}, // path -> { readme, aiSessions } | 'loading'（issue #17 懒取）
     streamShown: 3, // 活动流默认展示近 3 个月，「显示更早的活动」展开
   };
@@ -161,7 +163,7 @@
   function sortedProjects() {
     if (!state.board) return [];
     var list = state.board.projects.filter(function (p) {
-      return state.band === 'all' || p.band === state.band;
+      return (state.band === 'all' || p.band === state.band) && aiFilterPass(p);
     });
     if (state.sortMode === 'activity') list = list.slice().sort(byActivityDesc);
     else if (state.sortMode === 'name') {
@@ -590,7 +592,165 @@
     input.focus();
   }
 
+  /* ---------- AI 功能（issue #29）：能力探测 + 周报 + 详情建议 + 自然语言筛选 ---------- */
+  // 入口显隐总闸：开关关闭或未探测到可用引擎时，所有 AI 入口隐藏
+  function aiReady() {
+    return !!(state.aiCaps && state.aiCaps.enabled && state.aiCaps.engine);
+  }
+
+  function loadAiCaps() {
+    return api.aiCaps().then(function (caps) {
+      state.aiCaps = caps || { enabled: false, engine: null };
+      renderAiWeeklyEntry();
+      if (state.selectedPath) {
+        var p = findProject(state.selectedPath);
+        if (p) renderPanel(p);
+      }
+    }).catch(function () { state.aiCaps = { enabled: false, engine: null }; });
+  }
+
+  // AI 结果区：徽标（由本机 X 生成）+ 正文/错误；box 内重建
+  function fillAiBox(box, r) {
+    box.innerHTML = '';
+    if (!r || !r.ok) {
+      box.appendChild(el('div', 'ai-err', (r && r.reason) ? 'AI 生成失败：' + r.reason : 'AI 生成失败，可稍后重试'));
+      return;
+    }
+    var text = r.text;
+    box.appendChild(el('div', 'ai-text', text));
+    var meta = el('div', 'ai-meta');
+    meta.appendChild(el('span', 'ai-badge', '由本机 ' + r.engine.label + ' 生成'));
+    if (r.cached) meta.appendChild(el('span', 'ai-badge dim', '今日缓存'));
+    box.appendChild(meta);
+  }
+
+  /* ----- P0 · AI 周报（总览页活动流顶部，手动触发，当天缓存） ----- */
+  function renderAiWeeklyEntry() {
+    var btn = document.getElementById('aiWeeklyBtn');
+    if (!btn) return;
+    btn.classList.toggle('hidden', !aiReady());
+    if (!aiReady()) document.getElementById('aiWeeklyBox').classList.add('hidden');
+  }
+
+  function bindAiWeekly() {
+    var btn = document.getElementById('aiWeeklyBtn');
+    var box = document.getElementById('aiWeeklyBox');
+    btn.addEventListener('click', function () {
+      if (btn.dataset.busy) return;
+      btn.dataset.busy = '1';
+      box.classList.remove('hidden');
+      box.innerHTML = '';
+      box.appendChild(el('div', 'ai-err', 'AI 生成中…（本机 ' + state.aiCaps.engine.label + '，最长 30 秒）'));
+      api.aiAsk({ kind: 'weekly' }).then(function (r) {
+        fillAiBox(box, r);
+      }).catch(function () {
+        fillAiBox(box, null);
+      }).finally(function () {
+        delete btn.dataset.busy;
+      });
+    });
+  }
+
+  /* ----- P0 · 项目 AI 建议（详情面板，按 项目+HEAD 缓存） ----- */
+  function renderAiAdviceSec(p) {
+    if (!aiReady()) return null;
+    var s = sec('AI 建议');
+    var btn = el('button', 'btn ai-btn-block', '✦ 生成建议');
+    btn.type = 'button';
+    btn.title = '用本机 ' + state.aiCaps.engine.label + ' 分析该项目 git 信号';
+    var box = el('div', 'ai-box hidden');
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (btn.dataset.busy) return;
+      btn.dataset.busy = '1';
+      box.classList.remove('hidden');
+      box.innerHTML = '';
+      box.appendChild(el('div', 'ai-err', 'AI 生成中…（最长 30 秒）'));
+      api.aiAsk({ kind: 'advice', path: p.path }).then(function (r) {
+        fillAiBox(box, r);
+      }).catch(function () {
+        fillAiBox(box, null);
+      }).finally(function () {
+        delete btn.dataset.busy;
+      });
+    });
+    s.appendChild(btn);
+    s.appendChild(box);
+    return s;
+  }
+
+  /* ----- P1 · 自然语言筛选（搜索框 Enter，无补全选中项时触发；失败回退普通关键字） ----- */
+  function applyAiFilter(query) {
+    suggestEl.innerHTML = '';
+    suggestEl.appendChild(el('div', 'drop-empty', 'AI 解析筛选条件中…'));
+    suggestEl.classList.remove('hidden');
+    suggestEl.classList.add('open');
+    api.aiAsk({ kind: 'filter', query: query }).then(function (r) {
+      closeSuggest();
+      if (r && r.ok && r.filter) {
+        state.aiFilter = { raw: query, keyword: r.filter.keyword, days: r.filter.days };
+        if (r.filter.band) {
+          state.band = r.filter.band;
+        }
+        switchView('projects');
+        syncChips();
+        renderFilterChip();
+        renderRows();
+      } else {
+        // 回退：按普通关键字搜索（跳第一个命中项），不阻断
+        var cands = suggestCandidates();
+        if (cands[0]) jumpToProject(cands[0].path);
+      }
+    }).catch(function () {
+      closeSuggest();
+      var cands = suggestCandidates();
+      if (cands[0]) jumpToProject(cands[0].path);
+    });
+  }
+
+  function renderFilterChip() {
+    var chip = document.getElementById('aiFilterChip');
+    chip.innerHTML = '';
+    if (!state.aiFilter) {
+      chip.classList.add('hidden');
+      return;
+    }
+    chip.classList.remove('hidden');
+    chip.appendChild(el('span', null, 'AI 筛选：' + state.aiFilter.raw));
+    var x = el('button', 'x', '×');
+    x.type = 'button';
+    x.title = '清除筛选';
+    x.addEventListener('click', function () {
+      clearAiFilter();
+      renderRows();
+    });
+    chip.appendChild(x);
+  }
+
+  function clearAiFilter() {
+    state.aiFilter = null;
+    state.band = 'all';
+    syncChips();
+    renderFilterChip();
+  }
+
+  // 筛选应用于行列表：band 走既有 chips 状态，keyword/days 由此叠加
+  function aiFilterPass(p) {
+    var f = state.aiFilter;
+    if (!f) return true;
+    if (f.days) {
+      if (!p.lastActivityAt) return false;
+      if (Date.now() - Date.parse(p.lastActivityAt) > f.days * DAY_MS) return false;
+    }
+    if (f.keyword) {
+      var hay = (p.name + ' ' + (p.memo || '')).toLowerCase();
+      if (hay.indexOf(f.keyword.toLowerCase()) < 0) return false;
+    }
+    return true;
+  }
+
   /* ---------- 项目页：行列表（issue #16） ---------- */
+
   function projectRow(p) {
     var row = el('div', 'row' + (state.selectedPath === p.path ? ' selected' : ''));
     row.setAttribute('data-band', p.band);
@@ -836,6 +996,10 @@
       renderWarns(warnSec, p);
       panelIn.appendChild(warnSec);
     }
+
+    // AI 建议（issue #29）：按需调用本机 CLI，按 项目+HEAD 缓存；无可用引擎时整段隐藏
+    var adviceSec = renderAiAdviceSec(p);
+    if (adviceSec) panelIn.appendChild(adviceSec);
 
     // 本项目全年热力图
     var heatSec = sec('全年热力图');
@@ -1283,6 +1447,8 @@
   var fTerminal = document.getElementById('fTerminal');
   var fHotkey = document.getElementById('fHotkey');
   var fAutoStart = document.getElementById('fAutoStart');
+  var fAiEnabled = document.getElementById('fAiEnabled');
+  var fAiEngine = document.getElementById('fAiEngine');
   var deviceBox = document.getElementById('deviceBox');
   var deviceTimer = null;
   fHotkey.readOnly = true; // 热键通过按键捕捉录入
@@ -1457,6 +1623,30 @@
     return Array.prototype.map.call(listEl.querySelectorAll('input'), function (i) { return i.value.trim(); }).filter(Boolean);
   }
 
+  // 默认 AI 引擎下拉（issue #29）：候选 = 已探测可用的工具；无可用工具时禁用并给提示
+  function renderAiEngineSelect(cfg) {
+    var hint = document.getElementById('aiEngineHint');
+    fAiEngine.innerHTML = '';
+    var avail = (state.aiTools || []).filter(function (t) { return t.installed; });
+    if (!avail.length) {
+      var o = el('option', null, '未检测到已安装的 AI 工具');
+      o.value = '';
+      fAiEngine.appendChild(o);
+      fAiEngine.disabled = true;
+      hint.textContent = '安装并登录 claude / codex / kimi / grok 任一工具后，AI 功能入口才会出现';
+      return;
+    }
+    fAiEngine.disabled = false;
+    avail.forEach(function (t) {
+      var o = el('option', null, t.label + '（' + t.cmd + '）');
+      o.value = t.id;
+      fAiEngine.appendChild(o);
+    });
+    var wanted = cfg && cfg.aiEngine;
+    fAiEngine.value = avail.some(function (t) { return t.id === wanted; }) ? wanted : avail[0].id;
+    hint.textContent = '候选为本机已探测可用的工具';
+  }
+
   function markRows(listEl, invalid) {
     Array.prototype.forEach.call(listEl.querySelectorAll('.path-row'), function (row) {
       var v = row.querySelector('input').value.trim();
@@ -1563,6 +1753,8 @@
       fTerminal.value = cfg.terminalCmd || '';
       fHotkey.value = cfg.hotkey || '';
       fAutoStart.checked = !!cfg.autoStart;
+      fAiEnabled.checked = cfg.aiEnabled !== false; // AI 功能总开关（issue #29）
+      loadAiTools().then(function () { renderAiEngineSelect(cfg); });
       var th = savedTheme();
       themeId = th.id;
       themeAccent = th.accent;
@@ -1626,6 +1818,8 @@
       terminalCmd: fTerminal.value.trim(),
       hotkey: fHotkey.value.trim(),
       autoStart: fAutoStart.checked,
+      aiEnabled: fAiEnabled.checked, // AI 功能开关（issue #29）
+      aiEngine: fAiEngine.disabled ? '' : fAiEngine.value,
       theme: { id: themeId, accent: themeAccent }, // 外观（issue #27）
     };
     var typedToken = fToken.value.trim();
@@ -1635,6 +1829,8 @@
       JSON.stringify([prev.roots || [], prev.extraPaths || [], prev.blacklist || []]);
     var toolsChanged = JSON.stringify(patch.aiTools) !== JSON.stringify(prev.aiTools || []);
     var hotkeyChanged = patch.hotkey !== (prev.hotkey || '');
+    // AI 开关/引擎变化需重估能力（issue #29）；自定义工具清单变化同时影响两者
+    var aiChanged = patch.aiEnabled !== (prev.aiEnabled !== false) || patch.aiEngine !== (prev.aiEngine || '');
     api.setSettings(patch).then(function (cfg) {
       state.settings = cfg;
       ghStateText();
@@ -1660,6 +1856,7 @@
       }
       showHint(msg, bad);
       if (toolsChanged) loadAiTools(); // 自定义工具清单已变，重扫 PATH
+      if (aiChanged || toolsChanged) loadAiCaps(); // AI 引擎/开关或可用工具集已变（issue #29）
       if (pathsChanged || toolsChanged) refresh(false);
     });
   }
@@ -1787,10 +1984,14 @@
     v.addEventListener('scroll', syncScrolled, { passive: true });
   });
 
-  // 项目页分带筛选 chips（issue #16）
+  // 项目页分带筛选 chips（issue #16）；手动切换分带即退出 AI 筛选（issue #29）
   document.querySelectorAll('#bandChips button').forEach(function (btn) {
     btn.addEventListener('click', function () {
       state.band = btn.getAttribute('data-band');
+      if (state.aiFilter) {
+        state.aiFilter = null;
+        renderFilterChip();
+      }
       syncChips();
       selectProject(null);
       renderRows();
@@ -1824,10 +2025,21 @@
       return;
     }
     if (e.key === 'Enter') {
-      var pick = state.suggestIdx >= 0 ? cands[state.suggestIdx] : cands[0];
+      var pick = state.suggestIdx >= 0 ? cands[state.suggestIdx] : null;
       if (pick) {
         e.preventDefault();
         jumpToProject(pick.path);
+        return;
+      }
+      // 无补全选中项：AI 可用时按自然语言筛选项目列表（issue #29），否则回退首个命中
+      if (state.query && aiReady()) {
+        e.preventDefault();
+        applyAiFilter(state.query);
+        return;
+      }
+      if (cands[0]) {
+        e.preventDefault();
+        jumpToProject(cands[0].path);
       }
       return;
     }
@@ -1890,5 +2102,7 @@
     if (state.board) renderAll();
   });
   loadAiTools();
+  loadAiCaps(); // AI 入口显隐（issue #29）
+  bindAiWeekly();
   load(false);
 })();

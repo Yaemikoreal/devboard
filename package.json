@@ -7,6 +7,7 @@
   "scripts": {
     "start": "electron .",
     "test:scan": "node scripts/test-scan.js",
+    "test:ai": "node scripts/test-ai.js",
     "shot": "electron scripts/screenshot.js",
     "logo": "electron scripts/render-logo.js"
   },

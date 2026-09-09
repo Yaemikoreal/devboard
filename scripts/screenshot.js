@@ -39,7 +39,7 @@ app.whenReady().then(() => {
     ipcMain.handle('settings:get', () => ({
       roots: ['E:\\myproject'], extraPaths: [], blacklist: ['node_modules'],
       githubToken: '', hasGithubToken: true, githubUsername: 'me', editorCmd: 'code', terminalCmd: '',
-      hotkey: 'Ctrl+Shift+D', autoStart: true, aiTools: [],
+      hotkey: 'Ctrl+Shift+D', autoStart: true, aiTools: [], aiEnabled: true, aiEngine: 'kimi',
     }));
     ipcMain.handle('settings:set', () => ({}));
     ipcMain.handle('settings:hotkeyError', () => '');
@@ -58,6 +58,28 @@ app.whenReady().then(() => {
       { id: 'grok', label: 'Grok', cmd: 'grok', installed: false, logo: AI_TOOL_ICONS.grok },
     ]);
     ipcMain.handle('aitools:open', () => true);
+    // AI 功能（issue #29 mock）：引擎可用；周报/建议给罐装文本，筛选给结构化结果
+    // DEVBOARD_MOCK_AI=off 时返回无引擎，验证「未装工具时入口隐藏」
+    const aiOff = process.env.DEVBOARD_MOCK_AI === 'off';
+    ipcMain.handle('ai:caps', () => (aiOff
+      ? { enabled: true, engine: null }
+      : { enabled: true, engine: { id: 'kimi', label: 'Kimi Code', cmd: 'kimi' } }));
+    ipcMain.handle('ai:ask', (_e, payload) => {
+      const engine = { id: 'kimi', label: 'Kimi Code', cmd: 'kimi' };
+      if (payload && payload.kind === 'filter') {
+        return { ok: true, kind: 'filter', filter: { band: null, keyword: null, days: 7 }, engine };
+      }
+      if (payload && payload.kind === 'advice') {
+        return {
+          ok: true, kind: 'advice', engine, cached: false,
+          text: '- 18 个文件未提交超 3 天，建议先 commit 或 stash 收拢现场\n- 3 个提交领先远程，尽快 push 避免单机风险\n- 本周提交集中在设置页重构，可为下个小版本收尾',
+        };
+      }
+      return {
+        ok: true, kind: 'weekly', engine, cached: false,
+        text: '近 7 天 8 个项目共 42 次提交，重心明显偏向 SignalBoard 的 AI 功能落地与截图工具链；wyy2qqmusic 有一次热修复，其余项目维持低速推进。\n本周建议关注：SignalBoard 的 AI 功能收尾与真实 CLI 联调。',
+      };
+    });
     // 详情面板深区数据（issue #17 mock）：README 摘要 + AI 会话痕迹明细
     ipcMain.handle('project:detail', (_e, projectPath) => mockProjectDetail(projectPath));
     ipcMain.handle('dialog:pick', () => null);
@@ -97,6 +119,11 @@ app.whenReady().then(() => {
   // 渲染层首次 board:get 渲染完成时会打标记；DEVBOARD_WAIT_PATCH=1 时继续等后台重扫补丁（issue #22 验证）
   win.webContents.on('console-message', (e) => {
     const msg = e.message || '';
+    if (process.env.DEVBOARD_DEBUG === '1') console.log('[renderer]', msg);
+    if (msg.includes('[devboard] shot-ready')) {
+      capture(); // SHOT_JS 前置脚本声明就绪（如等待 AI 结果），立即截图
+      return;
+    }
     if (msg.includes('[devboard] rendered')) {
       rendered = true;
       if (process.env.DEVBOARD_WAIT_PATCH === '1') return; // 等 patched
@@ -115,14 +142,17 @@ app.whenReady().then(() => {
       return;
     }
     if (process.env.DEVBOARD_SHOT_JS) {
-      // 自定义前置脚本（如点击分带筛选）后再拍
+      // 自定义前置脚本（如点击分带筛选）后再拍；
+      // DEVBOARD_SHOT_WAIT=signal 时改为等待页面 console.log('[devboard] shot-ready')（AI 等异步结果场景）
       win.webContents.executeJavaScript(process.env.DEVBOARD_SHOT_JS + '; void 0')
-        .then(() => setTimeout(capture, 1200));
+        .then(() => {
+          if (process.env.DEVBOARD_SHOT_WAIT !== 'signal') setTimeout(capture, 1200);
+        });
       return;
     }
     setTimeout(capture, 1500); // 等展开动画与柱图稳定
   }
-  setTimeout(capture, 30000); // 兜底：30 秒未渲染完也截图退出
+  setTimeout(capture, process.env.DEVBOARD_SHOT_WAIT === 'signal' ? 75000 : 30000); // 兜底：超时未就绪也截图退出
 });
 
 app.on('window-all-closed', () => app.exit(0));

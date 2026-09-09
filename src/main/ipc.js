@@ -1,6 +1,7 @@
 // IPC 注册：board:get / board:rescan / memo:set / quickopen / settings:* / prefs:* / snooze:set
 // 设置页辅助：dialog:pick / util:checkCommand / github:test / scan:preview / win:*
 // 分支详情按需懒取：branch:commits（issue #4）；GitHub 鉴权：github:authCaps / deviceStart / devicePoll / importGh（issue #12）
+// AI 功能：ai:caps / ai:ask（issue #29）
 'use strict';
 
 const fs = require('fs');
@@ -9,6 +10,7 @@ const { ipcMain, shell, dialog } = require('electron');
 const { spawn, execFile } = require('child_process');
 const scanner = require('./scanner');
 const github = require('./github');
+const ai = require('./ai');
 const { createGitWatcher } = require('./watcher');
 
 // 启动子进程并给出真实结果：立即非零退出视为失败，存活超过 800ms 视为成功
@@ -62,7 +64,8 @@ function applySnoozes(projects, snoozes) {
   }
 }
 
-// 命令可用性校验：含路径的查文件存在，否则用 where 查 PATH
+// 命令可用性校验：含路径的查文件存在，否则用 where 查 PATH。
+// 杀软扫描下本机进程创建可能需 1-3s，超时放宽到 10s 避免启动负载期误报未安装（issue #29 实测）
 function checkCommand(cmd) {
   const first = String(cmd || '').trim().split(/\s+/)[0].replace(/^"|"$/g, '');
   if (!first) return Promise.resolve({ ok: false, reason: '命令为空' });
@@ -71,7 +74,7 @@ function checkCommand(cmd) {
     return Promise.resolve({ ok: exists, reason: exists ? '' : '文件不存在' });
   }
   return new Promise((resolve) => {
-    execFile('where', [first], { timeout: 5000 }, (err, stdout) => {
+    execFile('where', [first], { timeout: 10000 }, (err, stdout) => {
       if (err) resolve({ ok: false, reason: 'PATH 中找不到该命令' });
       else resolve({ ok: true, reason: String(stdout).split('\n')[0].trim() });
     });
@@ -112,6 +115,50 @@ const DEFAULT_AI_TOOLS = [
   { id: 'kimi', label: 'Kimi Code', cmd: 'kimi' },
   { id: 'grok', label: 'Grok', cmd: 'grok' },
 ];
+
+// 合并默认与自定义工具并逐项 where 探测；随发品牌图标（issue #21）。aitools:list 与 ai 引擎解析共用。
+// 结果缓存 60s：启动负载期（扫描 + 探测并发）进程创建很慢，重复 spawn 会互相拖超时（issue #29 实测）；
+// 缓存键含自定义清单，设置变更后立即重探
+let aiToolsDetectCache = { at: 0, key: '', list: null };
+async function detectAiTools(cfg) {
+  const key = JSON.stringify(cfg.aiTools || []);
+  if (aiToolsDetectCache.list && aiToolsDetectCache.key === key && Date.now() - aiToolsDetectCache.at < 60000) {
+    return aiToolsDetectCache.list;
+  }
+  const custom = (cfg.aiTools || [])
+    .map((t, i) => ({
+      id: 'custom-' + i,
+      label: String(t.label || t.cmd || ''),
+      cmd: String(t.cmd || '').trim(),
+      logoKey: typeof t.logo === 'string' ? t.logo : '',
+    }))
+    .filter((t) => t.cmd);
+  const tools = DEFAULT_AI_TOOLS.concat(custom);
+  const list = await Promise.all(
+    tools.map(async (t) => {
+      const icon = AI_TOOL_ICONS[t.logoKey] || AI_TOOL_ICONS[t.id] || AI_TOOL_ICONS.terminal;
+      return {
+        id: t.id,
+        label: t.label,
+        cmd: t.cmd,
+        installed: (await checkCommand(t.cmd)).ok,
+        logo: icon,
+      };
+    })
+  );
+  aiToolsDetectCache = { at: Date.now(), key, list };
+  return list;
+}
+
+// AI 引擎解析（issue #29）：优先 config.aiEngine 指定项，未指定/不可用则取第一个已安装工具
+async function resolveEngine(cfg) {
+  const avail = (await detectAiTools(cfg)).filter((t) => t.installed);
+  return avail.find((t) => t.id === cfg.aiEngine) || avail[0] || null;
+}
+
+function localDateStr(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
 
 function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   let refreshInFlight = false;
@@ -277,31 +324,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   });
 
   // AI 工具清单：默认四项 + config.aiTools 自定义项，逐项 where 探测安装情况（issue #15）
-  // 每项随发品牌 logo（issue #21）；自定义项的 logo 键名映射到已有图标，缺省通用终端图标
-  ipcMain.handle('aitools:list', async (_e, _config) => {
-    const cfg = store.getConfig();
-    const custom = (cfg.aiTools || [])
-      .map((t, i) => ({
-        id: 'custom-' + i,
-        label: String(t.label || t.cmd || ''),
-        cmd: String(t.cmd || '').trim(),
-        logoKey: typeof t.logo === 'string' ? t.logo : '',
-      }))
-      .filter((t) => t.cmd);
-    const tools = DEFAULT_AI_TOOLS.concat(custom);
-    return Promise.all(
-      tools.map(async (t) => {
-        const icon = AI_TOOL_ICONS[t.logoKey] || AI_TOOL_ICONS[t.id] || AI_TOOL_ICONS.terminal;
-        return {
-          id: t.id,
-          label: t.label,
-          cmd: t.cmd,
-          installed: (await checkCommand(t.cmd)).ok,
-          logo: icon,
-        };
-      })
-    );
-  });
+  ipcMain.handle('aitools:list', () => detectAiTools(store.getConfig()));
 
   // 在所选项目目录开终端执行 AI 工具命令：优先 wt -d，回退 cmd /c start（issue #15）
   ipcMain.handle('aitools:open', async (_e, cmd, projectPath) => {
@@ -311,6 +334,80 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     const ok = await spawnResult('wt', ['-d', p, 'cmd', '/k', c]);
     if (ok) return true;
     return spawnResult('cmd', ['/c', 'start', 'cmd', '/k', c], { cwd: p });
+  });
+
+  // AI 能力探测（issue #29）：渲染层据此显隐 AI 入口；engine 为空 = 无可用工具
+  ipcMain.handle('ai:caps', async () => {
+    const cfg = store.getConfig();
+    const enabled = cfg.aiEnabled !== false;
+    const engine = enabled ? await resolveEngine(cfg) : null;
+    return {
+      enabled,
+      engine: engine ? { id: engine.id, label: engine.label, cmd: engine.cmd } : null,
+    };
+  });
+
+  // AI 统一调用入口（issue #29）：prompt 组装 / ≤30s 超时 / 失败降级 / 结果缓存
+  // kind: weekly（按当天缓存）| advice（按 项目+HEAD 缓存）| filter（不缓存）
+  ipcMain.handle('ai:ask', async (_e, payload) => {
+    const cfg = store.getConfig();
+    if (cfg.aiEnabled === false) return { ok: false, reason: 'AI 功能已在设置中关闭' };
+    const engine = await resolveEngine(cfg);
+    if (!engine) return { ok: false, reason: '未检测到可用的 AI 命令行工具' };
+    const engineInfo = { id: engine.id, label: engine.label, cmd: engine.cmd };
+    const kind = payload && payload.kind;
+    const now = new Date();
+    const cache = store.getAiCache();
+
+    let prompt = '';
+    let cacheWrite = null;
+    if (kind === 'weekly') {
+      const today = localDateStr(now);
+      const hit = cache.weekly;
+      if (hit && hit.date === today && hit.engine === engine.id && hit.text) {
+        return { ok: true, kind, text: hit.text, engine: engineInfo, cached: true };
+      }
+      const projects = Object.values(store.getScanCache().projects);
+      if (!projects.some((p) => p.commits7d > 0)) {
+        return { ok: false, reason: '近 7 天没有提交活动，暂无可摘要的内容' };
+      }
+      prompt = ai.buildWeeklyPrompt(projects, now);
+      cacheWrite = (text) => {
+        const cur = store.getAiCache();
+        cur.weekly = { date: today, engine: engine.id, text, at: now.toISOString() };
+        store.setAiCache(cur);
+      };
+    } else if (kind === 'advice') {
+      const p = store.getScanCache().projects[String((payload && payload.path) || '')];
+      if (!p) return { ok: false, reason: '项目不在扫描缓存中' };
+      const head = p.headSha || 'nohead';
+      const hit = cache.advice[p.path];
+      if (hit && hit.head === head && hit.engine === engine.id && hit.text) {
+        return { ok: true, kind, text: hit.text, engine: engineInfo, cached: true };
+      }
+      prompt = ai.buildAdvicePrompt(p, now);
+      cacheWrite = (text) => {
+        const cur = store.getAiCache();
+        cur.advice[p.path] = { head, engine: engine.id, text, at: now.toISOString() };
+        store.setAiCache(cur);
+      };
+    } else if (kind === 'filter') {
+      const query = String((payload && payload.query) || '').trim().slice(0, 100);
+      if (!query) return { ok: false, reason: '查询为空' };
+      prompt = ai.buildFilterPrompt(query);
+    } else {
+      return { ok: false, reason: '未知的 AI 请求类型' };
+    }
+
+    const r = await ai.runCli(engine.cmd, prompt, { toolId: engine.id });
+    if (!r.ok) return { ok: false, kind, reason: r.reason, engine: engineInfo };
+    if (kind === 'filter') {
+      const filter = ai.parseFilter(r.text);
+      if (!filter) return { ok: false, kind, reason: 'parse', engine: engineInfo };
+      return { ok: true, kind, filter, engine: engineInfo };
+    }
+    if (cacheWrite) cacheWrite(r.text);
+    return { ok: true, kind, text: r.text, engine: engineInfo, cached: false };
   });
 
   // 详情面板深区数据：README 首段摘要 + AI 会话痕迹明细（issue #17）

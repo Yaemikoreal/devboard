@@ -15,6 +15,8 @@ const DEFAULT_CONFIG = {
   hotkey: 'Ctrl+Shift+D',
   autoStart: true,
   aiTools: [], // 自定义 AI 工具清单：[{label, cmd}]，与默认 claude/codex/kimi/grok 合并（issue #15）
+  aiEnabled: true, // AI 功能总开关：周报/建议/自然语言筛选（issue #29）
+  aiEngine: '', // 默认 AI 引擎的工具 id；空 = 自动取第一个已探测可用的（issue #29）
   theme: { id: 'warm', accent: '#f5d90a' }, // 外观：整体主题 + 强调色（issue #27）
 };
 
@@ -151,6 +153,17 @@ class Store {
 
   setScanCache(cache) {
     this.writeJson('scan-cache.json', cache);
+  }
+
+  // AI 结果缓存（issue #29）：weekly 按当天日期复用；advice 按 项目+HEAD+引擎 复用
+  getAiCache() {
+    const c = this.readJson('ai-cache.json', { weekly: null, advice: {} });
+    if (!c.advice || typeof c.advice !== 'object') c.advice = {};
+    return c;
+  }
+
+  setAiCache(cache) {
+    this.writeJson('ai-cache.json', cache);
   }
 
   getLastNotifyDate() {

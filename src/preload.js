@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('devboard', {
   // AI 工具快捷启动（issue #15）
   aiToolsList: () => ipcRenderer.invoke('aitools:list'),
   aiToolsOpen: (cmd, projectPath) => ipcRenderer.invoke('aitools:open', cmd, projectPath),
+  // AI 功能：能力探测 + 统一调用（issue #29）
+  aiCaps: () => ipcRenderer.invoke('ai:caps'),
+  aiAsk: (payload) => ipcRenderer.invoke('ai:ask', payload),
   // 详情面板深区数据（issue #17）
   projectDetail: (projectPath) => ipcRenderer.invoke('project:detail', projectPath),
   winMin: () => ipcRenderer.invoke('win:min'),

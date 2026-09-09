@@ -67,10 +67,14 @@
     </div>
 
     <div class="ov-grid">
-      <!-- 按月活动流 -->
+      <!-- 按月活动流；AI 周报按钮在标题行，结果区在事实流顶部（issue #29） -->
       <div class="ov-card">
-        <h3>活动流</h3>
+        <div class="stream-head">
+          <h3>活动流</h3>
+          <button class="ai-btn hidden" id="aiWeeklyBtn" type="button" title="用本机 AI 工具总结近 7 天提交">✦ AI 周报</button>
+        </div>
         <div class="sub">按月份分组的跨项目提交事实</div>
+        <div class="ai-box hidden" id="aiWeeklyBox"></div>
         <div id="stream"></div>
         <button class="show-more hidden" id="streamMore" type="button">显示更早的活动</button>
       </div>
@@ -103,6 +107,8 @@
         <button data-band="stale">沉睡</button>
         <button data-band="archive">归档</button>
       </div>
+      <!-- AI 自然语言筛选生效标记（issue #29）：点击 × 清除 -->
+      <span class="ai-chip hidden" id="aiFilterChip"></span>
       <div class="sort-wrap">
         <button class="sort-btn" id="sortBtn" type="button"><span id="sortLabel">排序：手动</span><span class="caret">▾</span></button>
         <div class="drop sort-drop" id="sortDrop"></div>
@@ -201,6 +207,19 @@
           </div>
 
           <div class="set-pane" id="pane-aitools">
+            <div class="set-group">
+              <h3>AI 功能</h3>
+              <div class="group-desc">AI 功能直接调用本机已安装、已登录的 Agent CLI，只发送统计事实与提交信息文本，不上传代码内容（issue #29）</div>
+              <div class="field check">
+                <input type="checkbox" id="fAiEnabled">
+                <label for="fAiEnabled">启用 AI 功能（周报摘要 / 项目建议 / 自然语言筛选）</label>
+              </div>
+              <div class="field">
+                <label>默认 AI 引擎</label>
+                <select id="fAiEngine"></select>
+                <div class="hint" id="aiEngineHint"></div>
+              </div>
+            </div>
             <div class="set-group">
               <h3>AI 工具</h3>
               <div class="group-desc">总览页工作台按本机 PATH 探测 claude / codex / kimi / grok；下方可增删自定义命令（名称 + 命令），与默认清单一并探测</div>
