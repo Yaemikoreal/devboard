@@ -1154,6 +1154,15 @@
         '--shadow-2': '0 2px 6px rgba(24,24,24,.06),0 22px 48px rgba(24,24,24,.09)',
         '--btn-line': 'rgba(24,24,24,.16)', '--btn-fail-bg': '#e8b4b0',
         '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#b3ac9a', '--band-arch': '#d8d3c2',
+        /* 透玻璃背景板：奶油底 + 柔光配色（--blob-1 由 applyTheme 跟随强调色派生） */
+        '--bg-art': '#f2eee2',
+        '--blob-2': 'rgba(158,196,167,.55)', '--blob-3': 'rgba(223,205,189,.85)', '--blob-4': 'rgba(179,199,216,.4)',
+        '--glass-card': 'rgba(253,252,248,.6)', '--glass-line': 'rgba(255,255,255,.62)',
+        '--glass-shadow': '0 1px 2px rgba(24,24,24,.05),0 22px 52px rgba(24,24,24,.09),inset 0 1px 0 rgba(255,255,255,.7)',
+        '--glass-tile': 'rgba(45,41,34,.9)', '--glass-tile-line': 'rgba(255,255,255,.13)',
+        '--glass-tile-shadow': '0 24px 56px rgba(24,24,24,.3),inset 0 1px 0 rgba(255,255,255,.1)',
+        '--glass-well': 'rgba(253,252,248,.5)',
+        '--cell-empty': 'rgba(24,24,24,.06)', '--fade-rgb': '242,238,226',
       },
     },
     mist: {
@@ -1166,6 +1175,15 @@
         '--shadow-2': '0 2px 6px rgba(24,28,34,.06),0 22px 48px rgba(24,28,34,.09)',
         '--btn-line': 'rgba(24,28,34,.16)', '--btn-fail-bg': '#e8b4b0',
         '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#a8b0b8', '--band-arch': '#d3d8de',
+        /* 透玻璃背景板：冷灰蓝底，青/桃光团收敛、冷蓝加重 */
+        '--bg-art': '#e9edf3',
+        '--blob-2': 'rgba(158,196,167,.45)', '--blob-3': 'rgba(219,208,196,.7)', '--blob-4': 'rgba(179,199,216,.55)',
+        '--glass-card': 'rgba(251,252,253,.62)', '--glass-line': 'rgba(255,255,255,.66)',
+        '--glass-shadow': '0 1px 2px rgba(24,28,34,.05),0 22px 52px rgba(24,28,34,.09),inset 0 1px 0 rgba(255,255,255,.72)',
+        '--glass-tile': 'rgba(43,49,58,.9)', '--glass-tile-line': 'rgba(255,255,255,.13)',
+        '--glass-tile-shadow': '0 24px 56px rgba(24,28,34,.3),inset 0 1px 0 rgba(255,255,255,.1)',
+        '--glass-well': 'rgba(251,252,253,.5)',
+        '--cell-empty': 'rgba(24,28,34,.06)', '--fade-rgb': '233,237,243',
       },
     },
     meadow: {
@@ -1178,6 +1196,15 @@
         '--shadow-2': '0 2px 6px rgba(23,32,26,.06),0 22px 48px rgba(23,32,26,.09)',
         '--btn-line': 'rgba(23,32,26,.16)', '--btn-fail-bg': '#e8b4b0',
         '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#a9b1a4', '--band-arch': '#d5dcd0',
+        /* 透玻璃背景板：青绿底，青光团加重、冷蓝收敛 */
+        '--bg-art': '#e9efe5',
+        '--blob-2': 'rgba(158,196,167,.6)', '--blob-3': 'rgba(223,205,189,.7)', '--blob-4': 'rgba(179,199,216,.35)',
+        '--glass-card': 'rgba(252,253,251,.6)', '--glass-line': 'rgba(255,255,255,.62)',
+        '--glass-shadow': '0 1px 2px rgba(23,32,26,.05),0 22px 52px rgba(23,32,26,.09),inset 0 1px 0 rgba(255,255,255,.7)',
+        '--glass-tile': 'rgba(40,51,43,.9)', '--glass-tile-line': 'rgba(255,255,255,.13)',
+        '--glass-tile-shadow': '0 24px 56px rgba(23,32,26,.3),inset 0 1px 0 rgba(255,255,255,.1)',
+        '--glass-well': 'rgba(252,253,251,.5)',
+        '--cell-empty': 'rgba(23,32,26,.06)', '--fade-rgb': '233,239,229',
       },
     },
     dark: {
@@ -1190,6 +1217,16 @@
         '--shadow-2': '0 2px 6px rgba(0,0,0,.35),0 22px 48px rgba(0,0,0,.45)',
         '--btn-line': 'rgba(240,236,225,.18)', '--btn-fail-bg': '#7a3d3a',
         '--band-active': '#d98e32', '--band-cool': '#6b8296', '--band-stale': '#6f695b', '--band-arch': '#4a463e',
+        /* 透玻璃背景板：深棕黑底 + 低明度光团；卡片用深色玻璃，关注卡（浅色 tile）用浅色玻璃 */
+        '--bg-art': '#16140f',
+        '--blob-2': 'rgba(158,196,167,.25)', '--blob-3': 'rgba(223,205,189,.18)', '--blob-4': 'rgba(179,199,216,.22)',
+        '--glass-card': 'rgba(38,35,29,.55)', '--glass-line': 'rgba(255,255,255,.09)',
+        '--glass-shadow': '0 1px 2px rgba(0,0,0,.3),0 22px 52px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.06)',
+        '--glass-tile': 'rgba(236,231,216,.88)', '--glass-tile-line': 'rgba(24,24,24,.12)',
+        '--glass-tile-shadow': '0 24px 56px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.35)',
+        '--glass-well': 'rgba(38,35,29,.5)',
+        '--cell-empty': 'rgba(240,236,225,.08)', '--fade-rgb': '22,20,15',
+        '--tile-line': 'rgba(24,24,24,.1)', '--tile-ic': 'rgba(24,24,24,.3)',
       },
     },
   };
@@ -1227,6 +1264,8 @@
     st.setProperty('--accent-hl', rgbaOf(accent, 0.55));
     st.setProperty('--accent-glow', rgbaOf(accent, 0.45));
     st.setProperty('--accent-ring', rgbaOf(accent, 0.25));
+    // 右上光团跟随强调色；暗夜主题降低明度避免糊成一片
+    st.setProperty('--blob-1', rgbaOf(accent, t === THEMES.dark ? 0.45 : 0.55));
   }
   function savedTheme() {
     var t = (state.settings && state.settings.theme) || {};

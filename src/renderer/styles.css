@@ -37,12 +37,30 @@
   --band-cool:#7d94a8;
   --band-stale:#b3ac9a;
   --band-arch:#d8d3c2;
+
+  /* 透玻璃背景板 token（参考案例的透玻璃设计；此处为暖阳默认值，其余主题在 app.js THEMES 覆写） */
+  --bg-art:#f2eee2;                /* 奶油底色：比 --bg 略深，衬出柔光 */
+  --blob-1:rgba(245,217,10,.55);   /* 右上光团：由 JS 跟随强调色派生 */
+  --blob-2:rgba(158,196,167,.55);  /* 左中 青 */
+  --blob-3:rgba(223,205,189,.85);  /* 左下 桃 */
+  --blob-4:rgba(179,199,216,.4);   /* 顶部 冷蓝 */
+  --glass-card:rgba(253,252,248,.6);
+  --glass-line:rgba(255,255,255,.62);
+  --glass-shadow:0 1px 2px rgba(24,24,24,.05),0 22px 52px rgba(24,24,24,.09),inset 0 1px 0 rgba(255,255,255,.7);
+  --glass-tile:rgba(45,41,34,.9);  /* 深色关注卡：保留实色纪律，仅轻微透光 */
+  --glass-tile-line:rgba(255,255,255,.13);
+  --glass-tile-shadow:0 24px 56px rgba(24,24,24,.3),inset 0 1px 0 rgba(255,255,255,.1);
+  --glass-well:rgba(253,252,248,.5);
+  --cell-empty:rgba(24,24,24,.06); /* 热力图空格透出背景柔光 */
+  --fade-rgb:242,238,226;          /* 顶栏过渡带的基底（与 --bg-art 同色） */
+  --tile-line:rgba(253,252,248,.12); /* 深色关注卡内的分隔线与图标圈（浅色 tile 主题在 app.js 覆写） */
+  --tile-ic:rgba(253,252,248,.35);
 }
 
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%}
 body{
-  background:var(--bg);
+  background:var(--bg-art);
   color:var(--ink);
   font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",-apple-system,sans-serif;
   font-weight:450;
@@ -53,8 +71,20 @@ body{
   html,body{overflow:hidden}
 }
 .mono{font-family:ui-monospace,"SF Mono",Consolas,"Courier New",monospace}
-.app{max-width:1440px;height:100vh;margin:0 auto;display:flex;flex-direction:column}
+.app{max-width:1440px;height:100vh;margin:0 auto;display:flex;flex-direction:column;position:relative;z-index:1}
 .hidden{display:none !important}
+
+/* ---------- 背景柔光层：fixed 四团光斑，供玻璃卡片模糊取样 ---------- */
+.blobs{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+.blob{position:absolute;border-radius:50%;filter:blur(80px)}
+.blob.y{width:46vw;height:46vw;right:-18vw;top:-26vw;
+  background:radial-gradient(circle at 40% 40%, var(--blob-1), transparent 68%)}
+.blob.g{width:44vw;height:44vw;left:-14vw;top:12vh;
+  background:radial-gradient(circle at 55% 45%, var(--blob-2), transparent 70%)}
+.blob.p{width:52vw;height:52vw;left:6vw;bottom:-30vw;
+  background:radial-gradient(circle at 50% 40%, var(--blob-3), transparent 70%)}
+.blob.b{width:38vw;height:38vw;left:34vw;top:-22vw;
+  background:radial-gradient(circle at 50% 50%, var(--blob-4), transparent 70%)}
 
 /* ---------- 自定义标题栏 ---------- */
 .titlebar{
@@ -95,7 +125,7 @@ body{
 }
 /* 顶层导航：总览 | 项目（issue #14） */
 .nav{
-  margin:0 auto;display:flex;gap:2px;background:var(--well);
+  margin:0 auto;display:flex;gap:2px;background:var(--glass-well);
   border-radius:var(--r-pill);padding:4px;
 }
 .nav button{
@@ -110,7 +140,7 @@ body{
 /* 搜索框 */
 .search{
   position:relative;
-  display:flex;align-items:center;gap:6px;background:var(--well);
+  display:flex;align-items:center;gap:6px;background:var(--glass-well);
   border-radius:var(--r-pill);padding:0 12px;height:34px;
 }
 .search input{
@@ -171,7 +201,7 @@ body{
 .top-fade{
   flex:none;height:22px;margin-bottom:-22px;position:relative;z-index:6;
   pointer-events:none;
-  background:linear-gradient(to bottom,var(--card) 0%,rgba(253,252,248,0) 100%);
+  background:linear-gradient(to bottom,rgba(var(--fade-rgb),.92) 0%,rgba(var(--fade-rgb),0) 100%);
   opacity:.85;
 }
 .top-fade::before{
@@ -251,20 +281,22 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 
 /* 需要关注：右栏固定位黑卡，视觉权重最高（issue #15，铃铛已退役） */
 .attn-card{
-  background:var(--tile);color:var(--tile-ink);
-  border-radius:var(--r-card);box-shadow:var(--shadow-2);
+  background:var(--glass-tile);color:var(--tile-ink);
+  -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
+  border:1px solid var(--glass-tile-line);
+  border-radius:var(--r-card);box-shadow:var(--glass-tile-shadow);
   padding:16px 18px;margin-bottom:16px;
 }
 .attn-card h3{font-size:13px;font-weight:600}
 .attn-card .sub{font-size:11px;color:var(--tile-ink2);margin:4px 0 8px}
 .attn-item{
   display:flex;align-items:center;gap:10px;
-  padding:7px 0;border-top:1px solid rgba(253,252,248,.12);
+  padding:7px 0;border-top:1px solid var(--tile-line);
   cursor:pointer;
 }
 .attn-item .ic{
   width:18px;height:18px;flex:none;border-radius:50%;
-  border:1px solid rgba(253,252,248,.35);
+  border:1px solid var(--tile-ic);
   display:flex;align-items:center;justify-content:center;
 }
 .attn-item .ic::after{content:"";width:5px;height:5px;border-radius:50%;background:var(--tile-ink)}
@@ -307,13 +339,19 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 
 /* ---------- 项目页：筛选条（issue #16/#18） ---------- */
 .filterbar{display:flex;align-items:center;gap:10px;padding:2px 0 12px}
-.chips{display:flex;gap:2px;background:var(--well);border-radius:var(--r-pill);padding:4px}
+.chips{display:flex;gap:2px;background:var(--glass-well);border-radius:var(--r-pill);padding:4px}
 .chips button{
   border:0;background:transparent;border-radius:var(--r-pill);
   padding:5px 13px;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;
 }
 .chips button:hover{color:var(--ink)}
 .chips button.active{background:var(--tile);color:var(--tile-ink);font-weight:600}
+
+/* 玻璃覆层：顶栏导航 / 搜索 / 筛选 pill 的模糊与描边（背景色已在各自规则中给出） */
+.nav,.search,.chips{
+  -webkit-backdrop-filter:blur(14px) saturate(1.4);backdrop-filter:blur(14px) saturate(1.4);
+  border:1px solid var(--glass-line);
+}
 .sort-wrap{margin-left:auto;position:relative}
 .sort-btn{
   display:inline-flex;align-items:center;gap:6px;
@@ -473,7 +511,7 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   display:grid;grid-template-rows:repeat(7, auto);
   grid-auto-flow:column;grid-auto-columns:1fr;gap:3px;width:100%;
 }
-.cell{border-radius:20%;background:var(--well);aspect-ratio:1;display:block}
+.cell{border-radius:20%;background:var(--cell-empty);aspect-ratio:1;display:block}
 .cell.blank{visibility:hidden}
 .cell.l1{background:var(--accent-soft)}
 .cell.l2{background:var(--accent)}
@@ -589,6 +627,14 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   max-width:920px;height:100%;margin:0 auto;background:var(--card);
   border-radius:var(--r-card);box-shadow:var(--shadow-1);
   display:flex;overflow:hidden;
+}
+
+/* 玻璃覆层：各卡片表面统一半透 + 背景模糊 + 内高光描边（.rows .skel 的更高优先级规则不受影响） */
+.ov-card,.rows,.panel-in,.settings-card,.skel{
+  background:var(--glass-card);
+  -webkit-backdrop-filter:blur(26px) saturate(1.55);backdrop-filter:blur(26px) saturate(1.55);
+  border:1px solid var(--glass-line);
+  box-shadow:var(--glass-shadow);
 }
 .settings-nav{
   flex:none;width:172px;padding:20px 12px;
