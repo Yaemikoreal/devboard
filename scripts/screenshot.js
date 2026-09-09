@@ -66,22 +66,27 @@ app.whenReady().then(() => {
       : { enabled: true, engine: { id: 'kimi', label: 'Kimi Code', cmd: 'kimi' } }));
     const atWeekly = new Date(Date.now() - 47 * 60000).toISOString();
     const atAdvice = new Date(Date.now() - 2 * 3600000).toISOString();
+    // DEVBOARD_MOCK_AI_DELAY=毫秒：模拟真实 CLI 耗时，验证生成任务后台执行与切页恢复（issue #40）
+    const aiDelay = Number(process.env.DEVBOARD_MOCK_AI_DELAY || 0);
+    const delayed = (v) => (aiDelay && !(v && v.cached)
+      ? new Promise((res) => setTimeout(() => res(v), aiDelay))
+      : v);
     ipcMain.handle('ai:ask', (_e, payload) => {
       const engine = { id: 'kimi', label: 'Kimi Code', cmd: 'kimi' };
       if (payload && payload.kind === 'filter') {
         return { ok: true, kind: 'filter', filter: { band: null, keyword: null, days: 7 }, engine };
       }
       if (payload && payload.kind === 'advice') {
-        return {
+        return delayed({
           ok: true, kind: 'advice', engine, cached: !!(payload && payload.cachedOnly), at: atAdvice,
           text: '- 18 个文件未提交超 3 天，建议先 commit 或 stash 收拢现场\n- 3 个提交领先远程，尽快 push 避免单机风险\n- 本周提交集中在设置页重构，可为下个小版本收尾',
-        };
+        });
       }
       if (payload && payload.cachedOnly) return { ok: false, kind: 'weekly', reason: 'no-cache' };
-      return {
+      return delayed({
         ok: true, kind: 'weekly', engine, cached: false, at: atWeekly,
         text: '近 7 天 8 个项目共 42 次提交，重心明显偏向 SignalBoard 的 AI 功能落地与截图工具链；wyy2qqmusic 有一次热修复，其余项目维持低速推进。\n本周建议关注：SignalBoard 的 AI 功能收尾与真实 CLI 联调。',
-      };
+      });
     });
     // 详情面板深区数据（issue #17 mock）：README 摘要 + AI 会话痕迹明细
     ipcMain.handle('project:detail', (_e, projectPath) => mockProjectDetail(projectPath));
@@ -155,7 +160,8 @@ app.whenReady().then(() => {
     }
     setTimeout(capture, 1500); // 等展开动画与柱图稳定
   }
-  setTimeout(capture, process.env.DEVBOARD_SHOT_WAIT === 'signal' ? 75000 : 30000); // 兜底：超时未就绪也截图退出
+  // 兜底：超时未就绪也截图退出；DEVBOARD_SHOT_TIMEOUT 可覆盖（真实 AI 回退链可能超过 75s，issue #41 验证）
+  setTimeout(capture, Number(process.env.DEVBOARD_SHOT_TIMEOUT || (process.env.DEVBOARD_SHOT_WAIT === 'signal' ? 75000 : 30000)));
 });
 
 app.on('window-all-closed', () => app.exit(0));

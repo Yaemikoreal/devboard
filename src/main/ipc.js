@@ -150,10 +150,27 @@ async function detectAiTools(cfg) {
   return list;
 }
 
-// AI 引擎解析（issue #29）：优先 config.aiEngine 指定项，未指定/不可用则取第一个已安装工具
-async function resolveEngine(cfg) {
+// AI 引擎解析（issue #29）：优先 config.aiEngine 指定项，其次最近成功引擎（issue #41），否则取第一个已安装工具
+async function resolveEngine(cfg, lastGoodId) {
+  const ordered = await resolveEngines(cfg, lastGoodId);
+  return ordered[0] || null;
+}
+
+// 引擎候选排序：显式指定 > 最近成功 > 清单默认顺序（稳定排序）；供 ai:ask 链式回退（issue #41）
+async function resolveEngines(cfg, lastGoodId) {
   const avail = (await detectAiTools(cfg)).filter((t) => t.installed);
-  return avail.find((t) => t.id === cfg.aiEngine) || avail[0] || null;
+  const pref = [cfg.aiEngine, lastGoodId].filter(Boolean);
+  const rank = (t) => {
+    const i = pref.indexOf(t.id);
+    return i < 0 ? pref.length : i;
+  };
+  return avail.slice().sort((a, b) => rank(a) - rank(b));
+}
+
+// 缓存结果的引擎徽标信息：引擎可能已卸载，从完整探测清单（含未安装项）取 label，找不到就裸显 id
+async function findToolInfo(cfg, engineId) {
+  const t = (await detectAiTools(cfg)).find((x) => x.id === engineId);
+  return { id: engineId || 'unknown', label: t ? t.label : String(engineId || 'AI'), cmd: t ? t.cmd : '' };
 }
 
 function localDateStr(d) {
@@ -340,32 +357,40 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   ipcMain.handle('ai:caps', async () => {
     const cfg = store.getConfig();
     const enabled = cfg.aiEnabled !== false;
-    const engine = enabled ? await resolveEngine(cfg) : null;
+    const engine = enabled ? await resolveEngine(cfg, store.getAiCache().lastGoodEngine) : null;
     return {
       enabled,
       engine: engine ? { id: engine.id, label: engine.label, cmd: engine.cmd } : null,
     };
   });
 
-  // AI 统一调用入口（issue #29）：prompt 组装 / ≤30s 超时 / 失败降级 / 结果缓存
+  // 在飞 AI 任务：同 kind+目标 的请求共享同一 Promise，切页后重复触发不会再起 CLI 进程（issue #40）
+  const aiInFlight = new Map();
+  // 会话级引擎黑名单：本进程内已失败过的引擎不再重复尝试（配额/挂起类故障在会话内不会自愈，issue #41）
+  const sessionBadEngines = new Set();
+
+  // AI 统一调用入口（issue #29）：prompt 组装 / 90s 超时 / 失败降级 / 结果缓存
   // kind: weekly（按当天缓存）| advice（按 项目+HEAD 缓存）| filter（不缓存）
-  ipcMain.handle('ai:ask', async (_e, payload) => {
+  // 引擎链式回退：首选失败后自动尝试其余已安装引擎，成功则记为最近可用（issue #41）
+  async function doAiAsk(payload) {
     const cfg = store.getConfig();
     if (cfg.aiEnabled === false) return { ok: false, reason: 'AI 功能已在设置中关闭' };
-    const engine = await resolveEngine(cfg);
-    if (!engine) return { ok: false, reason: '未检测到可用的 AI 命令行工具' };
-    const engineInfo = { id: engine.id, label: engine.label, cmd: engine.cmd };
+    const cache = store.getAiCache();
+    let engines = await resolveEngines(cfg, cache.lastGoodEngine);
+    if (!engines.length) return { ok: false, reason: '未检测到可用的 AI 命令行工具' };
+    const healthy = engines.filter((t) => !sessionBadEngines.has(t.id));
+    if (healthy.length) engines = healthy; // 全灭时也照旧全试一遍（可能已恢复）
     const kind = payload && payload.kind;
     const now = new Date();
-    const cache = store.getAiCache();
 
     let prompt = '';
     let cacheWrite = null;
     if (kind === 'weekly') {
       const today = localDateStr(now);
       const hit = cache.weekly;
-      if (hit && hit.date === today && hit.engine === engine.id && hit.text) {
-        return { ok: true, kind, text: hit.text, engine: engineInfo, cached: true, at: hit.at || null };
+      if (hit && hit.date === today && hit.text) {
+        const eng = await findToolInfo(cfg, hit.engine);
+        return { ok: true, kind, text: hit.text, engine: eng, cached: true, at: hit.at || null };
       }
       if (payload.cachedOnly) return { ok: false, kind, reason: 'no-cache' };
       const projects = Object.values(store.getScanCache().projects);
@@ -373,9 +398,10 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
         return { ok: false, reason: '近 7 天没有提交活动，暂无可摘要的内容' };
       }
       prompt = ai.buildWeeklyPrompt(projects, now);
-      cacheWrite = (text) => {
+      cacheWrite = (text, engineId) => {
         const cur = store.getAiCache();
-        cur.weekly = { date: today, engine: engine.id, text, at: now.toISOString() };
+        cur.weekly = { date: today, engine: engineId, text, at: now.toISOString() };
+        cur.lastGoodEngine = engineId;
         store.setAiCache(cur);
       };
     } else if (kind === 'advice') {
@@ -383,14 +409,16 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
       if (!p) return { ok: false, reason: '项目不在扫描缓存中' };
       const head = p.headSha || 'nohead';
       const hit = cache.advice[p.path];
-      if (hit && hit.head === head && hit.engine === engine.id && hit.text) {
-        return { ok: true, kind, text: hit.text, engine: engineInfo, cached: true, at: hit.at || null };
+      if (hit && hit.head === head && hit.text) {
+        const eng = await findToolInfo(cfg, hit.engine);
+        return { ok: true, kind, text: hit.text, engine: eng, cached: true, at: hit.at || null };
       }
       if (payload.cachedOnly) return { ok: false, kind, reason: 'no-cache' };
       prompt = ai.buildAdvicePrompt(p, now);
-      cacheWrite = (text) => {
+      cacheWrite = (text, engineId) => {
         const cur = store.getAiCache();
-        cur.advice[p.path] = { head, engine: engine.id, text, at: now.toISOString() };
+        cur.advice[p.path] = { head, engine: engineId, text, at: now.toISOString() };
+        cur.lastGoodEngine = engineId;
         store.setAiCache(cur);
       };
     } else if (kind === 'filter') {
@@ -401,15 +429,43 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
       return { ok: false, reason: '未知的 AI 请求类型' };
     }
 
-    const r = await ai.runCli(engine.cmd, prompt, { toolId: engine.id });
-    if (!r.ok) return { ok: false, kind, reason: r.reason, engine: engineInfo };
-    if (kind === 'filter') {
-      const filter = ai.parseFilter(r.text);
-      if (!filter) return { ok: false, kind, reason: 'parse', engine: engineInfo };
-      return { ok: true, kind, filter, engine: engineInfo };
+    const fails = [];
+    for (const engine of engines) {
+      const engineInfo = { id: engine.id, label: engine.label, cmd: engine.cmd };
+      const r = await ai.runCli(engine.cmd, prompt, { toolId: engine.id });
+      if (!r.ok) {
+        sessionBadEngines.add(engine.id);
+        fails.push(engine.label + '：' + r.reason);
+        continue;
+      }
+      if (kind === 'filter') {
+        const filter = ai.parseFilter(r.text);
+        if (!filter) {
+          fails.push(engine.label + '：输出无法解析');
+          continue;
+        }
+        return { ok: true, kind, filter, engine: engineInfo };
+      }
+      if (cacheWrite) cacheWrite(r.text, engine.id);
+      return { ok: true, kind, text: r.text, engine: engineInfo, cached: false, at: now.toISOString() };
     }
-    if (cacheWrite) cacheWrite(r.text);
-    return { ok: true, kind, text: r.text, engine: engineInfo, cached: false, at: now.toISOString() };
+    return { ok: false, kind, reason: fails.join('；') || '所有可用 AI 引擎均调用失败' };
+  }
+
+  ipcMain.handle('ai:ask', (_e, payload) => {
+    const kind = String((payload && payload.kind) || '');
+    const key = kind + '|' + String((payload && (payload.path || payload.query)) || '');
+    if (payload && payload.cachedOnly) {
+      // 只读缓存不进在飞表；若同任务在飞则回 pending，渲染层据此转为正式请求并入该任务（issue #40）
+      return doAiAsk(payload).then((r) => {
+        if (!r.ok && r.reason === 'no-cache' && aiInFlight.has(key)) return { ok: false, kind, reason: 'pending' };
+        return r;
+      });
+    }
+    if (aiInFlight.has(key)) return aiInFlight.get(key);
+    const job = doAiAsk(payload).finally(() => aiInFlight.delete(key));
+    aiInFlight.set(key, job);
+    return job;
   });
 
   // 详情面板深区数据：README 首段摘要 + AI 会话痕迹明细（issue #17）

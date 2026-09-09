@@ -6,8 +6,24 @@
 const { spawn } = require('child_process');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const AI_TIMEOUT_MS = 30000; // 单次调用上限（issue 约束 ≤30s）
+// 单次调用上限：30s 对周报/建议类长 prompt 太紧（实测 kimi 简单 filter 已需 16s），放宽到 90s（issue #41）
+const AI_TIMEOUT_MS = 90000;
 const MAX_OUTPUT = 4000; // 渲染层展示与缓存的文本上限
+
+// 引擎级错误特征：配额耗尽 / 鉴权失败 / 接口报错。
+// 实测 claude 配额耗尽时会立刻输出 429 错误但进程挂起不退出（SessionEnd hook 卡住），
+// 必须流式命中即快速失败，否则用户只能干等到超时（issue #41）
+const ENGINE_ERROR_RE = /API Error|error[^\n]{0,20}\b(?:401|403|429)\b|\b(?:401|403|429)\b|unauthorized|invalid[-_ ]?api[-_ ]?key|unrecognized_model|quota|insufficient|token plan|用量上限|余额不足/i;
+
+// 从原始输出中提取第一条引擎错误行（无则返回空串）
+function engineErrorLine(raw) {
+  const lines = stripAnsi(raw).split('\n');
+  for (const l of lines) {
+    const t = l.trim();
+    if (t && ENGINE_ERROR_RE.test(t)) return t.slice(0, 120);
+  }
+  return '';
+}
 
 // 各 CLI 的一次性打印模式调用规格。
 // shell: claude 是 npm .cmd shim，Windows 下必须经 shell 启动（Node 对 .cmd 的 CVE 限制）；
@@ -80,16 +96,33 @@ function runCli(cmd, prompt, opts) {
       clearTimeout(timer);
       resolve({ ok, text: ok ? cleanOutput(out, spec) : '', reason: reason || '' });
     };
+    // 超时不等于没结果：进程「输出完毕但不退出」（如 claude SessionEnd hook 挂起）时采用已有输出（issue #41）
     const timer = setTimeout(() => {
       try { child.kill(); } catch { /* 已退出 */ }
+      const errLine = engineErrorLine(out) || engineErrorLine(errText);
+      if (errLine) { finish(false, '引擎报错：' + errLine); return; }
+      const partial = cleanOutput(out, spec);
+      if (partial) { finish(true); return; }
       finish(false, 'AI 响应超时（' + Math.round(timeout / 1000) + ' 秒）');
     }, timeout);
     child.on('error', (err) => finish(false, '启动失败：' + err.message));
-    child.stdout.on('data', (d) => { out += d.toString('utf8'); });
-    child.stderr.on('data', (d) => { errText += d.toString('utf8'); });
+    // 流式检测引擎报错（stdout 与 stderr 都查：claude 的 unrecognized_model 走 stderr）：
+    // 命中即终止，快速失败交给上层回退下一引擎（issue #41）
+    const checkStream = () => {
+      const errLine = engineErrorLine(out) || engineErrorLine(errText);
+      if (errLine) {
+        try { child.kill(); } catch { /* 已退出 */ }
+        finish(false, '引擎报错：' + errLine);
+      }
+    };
+    child.stdout.on('data', (d) => { out += d.toString('utf8'); checkStream(); });
+    child.stderr.on('data', (d) => { errText += d.toString('utf8'); checkStream(); });
     child.on('close', (code) => {
       const text = cleanOutput(out, spec);
-      if (code === 0 && text) finish(true);
+      const errLine = engineErrorLine(text || out) || engineErrorLine(errText);
+      // exit 0 也可能是引擎把 API 错误写进 stdout（claude 429 实测如此），不能误判为成功
+      if (errLine) finish(false, '引擎报错：' + errLine);
+      else if (code === 0 && text) finish(true);
       else finish(false, stripAnsi(errText).trim().split('\n')[0] || '退出码 ' + code);
     });
     if (spec.stdin) child.stdin.write(prompt, 'utf8');
@@ -186,6 +219,8 @@ function parseFilter(text) {
 module.exports = {
   TOOL_SPECS,
   AI_TIMEOUT_MS,
+  ENGINE_ERROR_RE,
+  engineErrorLine,
   runCli,
   cleanOutput,
   buildWeeklyPrompt,

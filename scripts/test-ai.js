@@ -93,6 +93,34 @@ async function main() {
   r = await ai.runCli('definitely-not-a-cmd-xyz', 'x', { timeout: 5000 });
   assert.ok(!r.ok && r.reason, '不存在的命令应降级为 ok:false，实际: ' + JSON.stringify(r));
 
+  // --- 引擎错误特征识别（issue #41）---
+  assert.ok(ai.engineErrorLine('API Error: Request rejected (429) · 用量上限'), '应识别 API Error/429');
+  assert.ok(ai.engineErrorLine('Error: 401 unauthorized'), '应识别 401');
+  assert.strictEqual(ai.engineErrorLine('- 建议先提交代码\n- 尽快 push'), '', '正常建议文本不应误判');
+
+  // --- runCli：引擎报错后进程挂起 → 流式命中即快速失败（claude 429 实测场景）---
+  const tFast = Date.now();
+  r = await ai.runCli(process.execPath, 'x', {
+    spec: { args: ['-e', 'console.log("API Error: Request rejected (429)"); setTimeout(()=>{},60000)'], stdin: false, shell: false },
+    timeout: 30000,
+  });
+  assert.ok(!r.ok && r.reason.includes('429'), '引擎报错应快速失败并带原因，实际: ' + JSON.stringify(r));
+  assert.ok(Date.now() - tFast < 10000, '引擎报错应立即终止进程，不应等到超时');
+
+  // --- runCli：exit 0 但 stdout 是引擎错误 → 不能误判成功 ---
+  r = await ai.runCli(process.execPath, 'x', {
+    spec: { args: ['-e', 'console.log("Error: 401 unauthorized")'], stdin: false, shell: false },
+    timeout: 10000,
+  });
+  assert.ok(!r.ok && r.reason.includes('401'), 'exit 0 的引擎错误输出应判失败，实际: ' + JSON.stringify(r));
+
+  // --- runCli：超时但已有有效输出 → 采用部分输出（进程输出完毕却不退出的兜底）---
+  r = await ai.runCli(process.execPath, 'x', {
+    spec: { args: ['-e', 'console.log("- 已产出的建议内容"); setTimeout(()=>{},60000)'], stdin: false, shell: false },
+    timeout: 500,
+  });
+  assert.ok(r.ok && r.text.includes('已产出的建议内容'), '超时应采用已产出的部分输出，实际: ' + JSON.stringify(r));
+
   console.log('test-ai: 全部断言通过');
 
   // --- --real：真实 kimi 冒烟（本机已装已登录时）---

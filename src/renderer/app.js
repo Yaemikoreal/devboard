@@ -27,6 +27,7 @@
     aiTools: null, // aitools:list 结果（含 installed 标记，issue #15）
     aiCaps: null, // ai:caps 结果 { enabled, engine }（issue #29）
     aiFilter: null, // AI 自然语言筛选 { raw, keyword, days }（issue #29，band 并入 state.band）
+    aiJobs: {}, // AI 后台任务注册表 'kind|path' -> { status, startAt, result }（issue #40，切页不中断）
     details: {}, // path -> { readme, aiSessions } | 'loading'（issue #17 懒取）
     streamShown: 3, // 活动流默认展示近 3 个月，「显示更早的活动」展开
     heatMonth: {}, // path -> 详情面板月份热力图翻页偏移（0 = 当月，-1 上一月；issue #34）
@@ -685,42 +686,105 @@
     box.appendChild(meta);
   }
 
-  /* ----- P0 · AI 周报（总览页独立模块，issue #32；手动触发，当天缓存） ----- */
+  /* ----- AI 后台任务（issue #40）：任务注册表 + 切页恢复 ----- */
+  // 任务一旦发起即在后台执行：切换项目/视图不中断、不重复发起；回来恢复「生成中」进度或展出结果
+  function aiJobKey(kind, path) { return kind + '|' + (path || ''); }
+
+  function startAiJob(kind, payload) {
+    var key = aiJobKey(kind, payload.path);
+    var job = state.aiJobs[key];
+    if (job && job.status === 'running') return job; // 在飞任务复用（主进程侧同样有在飞去重）
+    job = state.aiJobs[key] = { status: 'running', startAt: Date.now(), result: null };
+    api.aiAsk(payload).then(function (r) {
+      job.status = r && r.ok ? 'done' : 'error';
+      job.result = r || null;
+    }).catch(function () {
+      job.status = 'error';
+      job.result = null;
+    }).finally(function () {
+      refreshAiJobViews(key);
+      // 注册表只承担「在飞态 + 一次性交接结果」：重绘后即清除，
+      // 之后各视图统一走主进程 ai-cache 展出（单一事实源，HEAD 变化后不会出现陈旧建议）
+      delete state.aiJobs[key];
+    });
+    return job;
+  }
+
+  // 任务落幕后重绘受影响视图：周报卡 / 当前打开的详情面板
+  function refreshAiJobViews(key) {
+    var kind = key.split('|')[0];
+    if (kind === 'weekly') { renderAiWeeklyEntry(); return; }
+    if (kind === 'advice') {
+      var path = key.slice('advice|'.length);
+      if (state.selectedPath === path) {
+        var p = findProject(path);
+        if (p) renderPanel(p);
+      }
+    }
+  }
+
+  // 「生成中」进行态：已等待秒数每秒刷新；行被重绘移除后定时器自清
+  function paintAiRunning(box, btn, job) {
+    box.classList.remove('hidden');
+    box.innerHTML = '';
+    // 注意：渲染分支调用时所在 section 可能尚未挂上 DOM，首帧文案必须无条件写入，
+    // 定时器只在「曾挂载后被移除」时自清（issue #40 实测 bug）
+    var line = el('div', 'ai-err', '');
+    var makeText = function () {
+      return 'AI 生成中…（本机 ' + state.aiCaps.engine.label + '，已等待 ' +
+        Math.max(0, Math.round((Date.now() - job.startAt) / 1000)) + ' 秒；可切换到别处，完成后回来查看）';
+    };
+    line.textContent = makeText();
+    box.appendChild(line);
+    var timer = setInterval(function () {
+      if (!line.isConnected) { clearInterval(timer); return; }
+      line.textContent = makeText();
+    }, 1000);
+    btn.dataset.busy = '1';
+    btn.textContent = '生成中…';
+  }
+
+  /* ----- P0 · AI 周报（总览页独立模块，issue #32；手动触发，当天缓存；后台执行 issue #40） ----- */
   function renderAiWeeklyEntry() {
     var card = document.getElementById('aiWeeklyCard');
     if (!card) return;
     card.classList.toggle('hidden', !aiReady());
     if (!aiReady()) return;
-    // 今日已生成过的周报直接展出（只读缓存，不触发新生成），模块内标明模型与生成时间
+    var btn = document.getElementById('aiWeeklyBtn');
+    var box = document.getElementById('aiWeeklyBox');
+    var job = state.aiJobs[aiJobKey('weekly')];
+    if (job && job.status === 'running') { paintAiRunning(box, btn, job); return; }
+    delete btn.dataset.busy;
+    btn.textContent = '✦ 生成周报';
+    if (job) {
+      // 刚完成的后台任务：直接展出交接结果
+      box.classList.remove('hidden');
+      fillAiBox(box, job.result);
+      return;
+    }
+    // 今日已生成过的周报直接展出（只读缓存，不触发新生成），模块内标明模型与生成时间；
+    // 主进程有同任务在飞时回 pending（如页面重载后）→ 转为正式请求并入该任务
     api.aiAsk({ kind: 'weekly', cachedOnly: true }).then(function (r) {
       if (r && r.ok) {
-        var box = document.getElementById('aiWeeklyBox');
         box.classList.remove('hidden');
         fillAiBox(box, r);
+      } else if (r && r.reason === 'pending') {
+        startAiJob('weekly', { kind: 'weekly' });
+        renderAiWeeklyEntry();
       }
     }).catch(function () {});
   }
 
   function bindAiWeekly() {
     var btn = document.getElementById('aiWeeklyBtn');
-    var box = document.getElementById('aiWeeklyBox');
     btn.addEventListener('click', function () {
       if (btn.dataset.busy) return;
-      btn.dataset.busy = '1';
-      box.classList.remove('hidden');
-      box.innerHTML = '';
-      box.appendChild(el('div', 'ai-err', 'AI 生成中…（本机 ' + state.aiCaps.engine.label + '，最长 30 秒）'));
-      api.aiAsk({ kind: 'weekly' }).then(function (r) {
-        fillAiBox(box, r);
-      }).catch(function () {
-        fillAiBox(box, null);
-      }).finally(function () {
-        delete btn.dataset.busy;
-      });
+      startAiJob('weekly', { kind: 'weekly' });
+      renderAiWeeklyEntry();
     });
   }
 
-  /* ----- P0 · 项目 AI 建议（详情面板，按 项目+HEAD 缓存） ----- */
+  /* ----- P0 · 项目 AI 建议（详情面板，按 项目+HEAD 缓存；后台执行 issue #40） ----- */
   // 生成按钮收进标题行（issue #38）；已缓存的建议打开面板即默认展开，不再多点一次
   function renderAiAdviceSec(p) {
     if (!aiReady()) return null;
@@ -731,32 +795,32 @@
     s.firstChild.appendChild(btn);
     var box = el('div', 'ai-box hidden');
     s.appendChild(box);
-    // 默认展开：只取缓存（不触发生成），命中即展示并标明生成时间
-    api.aiAsk({ kind: 'advice', path: p.path, cachedOnly: true }).then(function (r) {
-      if (r && r.ok) {
-        box.classList.remove('hidden');
-        fillAiBox(box, r);
-        btn.textContent = '✦ 重新生成';
-      }
-    }).catch(function () {});
+    var key = aiJobKey('advice', p.path);
+    var job = state.aiJobs[key];
+    if (job && job.status === 'running') {
+      paintAiRunning(box, btn, job); // 后台任务在飞：切出去再回来恢复进行态
+    } else if (job) {
+      box.classList.remove('hidden');
+      fillAiBox(box, job.result); // 刚完成的后台任务：直接展出交接结果
+      if (job.result && job.result.ok) btn.textContent = '✦ 重新生成';
+    } else {
+      // 默认展开：只取缓存（不触发生成），命中即展示并标明生成时间；pending = 主进程在飞，并入
+      api.aiAsk({ kind: 'advice', path: p.path, cachedOnly: true }).then(function (r) {
+        if (r && r.ok) {
+          box.classList.remove('hidden');
+          fillAiBox(box, r);
+          btn.textContent = '✦ 重新生成';
+        } else if (r && r.reason === 'pending') {
+          startAiJob('advice', { kind: 'advice', path: p.path });
+          if (box.isConnected && state.aiJobs[key]) paintAiRunning(box, btn, state.aiJobs[key]);
+        }
+      }).catch(function () {});
+    }
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
       if (btn.dataset.busy) return;
-      btn.dataset.busy = '1';
-      var orig = btn.textContent;
-      btn.textContent = '生成中…';
-      box.classList.remove('hidden');
-      box.innerHTML = '';
-      box.appendChild(el('div', 'ai-err', 'AI 生成中…（最长 30 秒）'));
-      api.aiAsk({ kind: 'advice', path: p.path }).then(function (r) {
-        fillAiBox(box, r);
-        if (r && r.ok) orig = '✦ 重新生成';
-      }).catch(function () {
-        fillAiBox(box, null);
-      }).finally(function () {
-        delete btn.dataset.busy;
-        btn.textContent = orig;
-      });
+      var j = startAiJob('advice', { kind: 'advice', path: p.path });
+      paintAiRunning(box, btn, j);
     });
     return s;
   }
