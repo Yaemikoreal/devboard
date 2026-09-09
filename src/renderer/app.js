@@ -1133,9 +1133,66 @@
     });
   }
 
-  /* ---------- 主题（issue #27）：强调色 → 派生阶梯（热力图/高亮/光晕/聚焦环） ---------- */
+  /* ---------- 主题（issue #27）：整体主题预设 + 强调色派生阶梯 ---------- */
   var DEFAULT_ACCENT = '#f5d90a';
   var THEME_PRESETS = ['#f5d90a', '#e8850c', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
+  var CUSTOM_COLORS = [
+    '#e5484d', '#f76b15', '#eab308', '#46a758', '#12a594', '#3b82f6',
+    '#c0392b', '#d98e32', '#b8a60a', '#2e7d32', '#0e8074', '#1d4ed8',
+    '#ef4444', '#f59e0b', '#f5d90a', '#10b981', '#14b8a6', '#60a5fa',
+    '#6e56cf', '#d6409f', '#8b5cf6', '#ec4899', '#64748b', '#181818',
+  ];
+  // 整体主题：一套完整 token（背景/卡片/文字/深色块/分带/阴影），强调色在其上派生
+  var THEMES = {
+    warm: {
+      label: '暖阳', accentDefault: '#f5d90a',
+      vars: {
+        '--bg': '#f5f2e8', '--card': '#fdfcf8', '--well': '#ece9dd',
+        '--ink': '#181818', '--ink-2': '#4d463c', '--ink-3': '#857d6b',
+        '--line': 'rgba(24,24,24,.09)', '--tile': '#322e27', '--tile-ink': '#fdfcf8', '--tile-ink2': '#a89f8e',
+        '--shadow-1': '0 1px 2px rgba(24,24,24,.04),0 14px 34px rgba(24,24,24,.05)',
+        '--shadow-2': '0 2px 6px rgba(24,24,24,.06),0 22px 48px rgba(24,24,24,.09)',
+        '--btn-line': 'rgba(24,24,24,.16)', '--btn-fail-bg': '#e8b4b0',
+        '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#b3ac9a', '--band-arch': '#d8d3c2',
+      },
+    },
+    mist: {
+      label: '雾蓝', accentDefault: '#3b82f6',
+      vars: {
+        '--bg': '#edf0f4', '--card': '#fbfcfd', '--well': '#e2e7ed',
+        '--ink': '#181c22', '--ink-2': '#47505b', '--ink-3': '#828b96',
+        '--line': 'rgba(24,28,34,.09)', '--tile': '#2b313a', '--tile-ink': '#fbfcfd', '--tile-ink2': '#98a1ac',
+        '--shadow-1': '0 1px 2px rgba(24,28,34,.04),0 14px 34px rgba(24,28,34,.05)',
+        '--shadow-2': '0 2px 6px rgba(24,28,34,.06),0 22px 48px rgba(24,28,34,.09)',
+        '--btn-line': 'rgba(24,28,34,.16)', '--btn-fail-bg': '#e8b4b0',
+        '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#a8b0b8', '--band-arch': '#d3d8de',
+      },
+    },
+    meadow: {
+      label: '青野', accentDefault: '#10b981',
+      vars: {
+        '--bg': '#eef3ec', '--card': '#fcfdfb', '--well': '#e1e9df',
+        '--ink': '#17201a', '--ink-2': '#45544a', '--ink-3': '#7f8d82',
+        '--line': 'rgba(23,32,26,.09)', '--tile': '#28332b', '--tile-ink': '#fcfdfb', '--tile-ink2': '#9aaa9d',
+        '--shadow-1': '0 1px 2px rgba(23,32,26,.04),0 14px 34px rgba(23,32,26,.05)',
+        '--shadow-2': '0 2px 6px rgba(23,32,26,.06),0 22px 48px rgba(23,32,26,.09)',
+        '--btn-line': 'rgba(23,32,26,.16)', '--btn-fail-bg': '#e8b4b0',
+        '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#a9b1a4', '--band-arch': '#d5dcd0',
+      },
+    },
+    dark: {
+      label: '暗夜', accentDefault: '#f5d90a',
+      vars: {
+        '--bg': '#1b1915', '--card': '#26231d', '--well': '#353126',
+        '--ink': '#f0ece1', '--ink-2': '#c8c2b2', '--ink-3': '#8a8474',
+        '--line': 'rgba(240,236,225,.10)', '--tile': '#ece7d8', '--tile-ink': '#1b1915', '--tile-ink2': '#6e695b',
+        '--shadow-1': '0 1px 2px rgba(0,0,0,.30),0 14px 34px rgba(0,0,0,.35)',
+        '--shadow-2': '0 2px 6px rgba(0,0,0,.35),0 22px 48px rgba(0,0,0,.45)',
+        '--btn-line': 'rgba(240,236,225,.18)', '--btn-fail-bg': '#7a3d3a',
+        '--band-active': '#d98e32', '--band-cool': '#6b8296', '--band-stale': '#6f695b', '--band-arch': '#4a463e',
+      },
+    },
+  };
 
   function hexToRgb(h) {
     h = String(h || '').replace('#', '');
@@ -1158,9 +1215,12 @@
     var c = hexToRgb(hex);
     return c ? 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + alpha + ')' : hex;
   }
-  function applyTheme(accent) {
-    if (!hexToRgb(accent)) accent = DEFAULT_ACCENT;
+  // 应用整体主题：先铺主题 token，再从强调色派生阶梯（热力图/高亮/光晕/聚焦环）
+  function applyTheme(themeId, accent) {
+    var t = THEMES[themeId] || THEMES.warm;
+    if (!hexToRgb(accent)) accent = t.accentDefault;
     var st = document.documentElement.style;
+    Object.keys(t.vars).forEach(function (k) { st.setProperty(k, t.vars[k]); });
     st.setProperty('--accent', accent);
     st.setProperty('--accent-soft', mixHex(accent, '#ffffff', 0.55));
     st.setProperty('--accent-deep', mixHex(accent, '#000000', 0.12));
@@ -1168,8 +1228,10 @@
     st.setProperty('--accent-glow', rgbaOf(accent, 0.45));
     st.setProperty('--accent-ring', rgbaOf(accent, 0.25));
   }
-  function savedAccent() {
-    return (state.settings && state.settings.theme && state.settings.theme.accent) || DEFAULT_ACCENT;
+  function savedTheme() {
+    var t = (state.settings && state.settings.theme) || {};
+    var id = THEMES[t.id] ? t.id : 'warm';
+    return { id: id, accent: hexToRgb(t.accent) ? t.accent : THEMES[id].accentDefault };
   }
 
   /* ---------- 设置视图 ---------- */
@@ -1198,12 +1260,45 @@
     });
   });
 
-  /* ----- 外观：主题色选择与即时预览（issue #27） ----- */
-  var themeAccent = DEFAULT_ACCENT; // 设置页内的预览值，「保存」才落盘
-  function setThemeAccent(hex) {
-    themeAccent = hex;
-    applyTheme(hex); // 即时预览，全界面联动
+  /* ----- 外观：整体主题 + 强调色（issue #27），更改即生效并自动保存 ----- */
+  var themeId = 'warm';
+  var themeAccent = DEFAULT_ACCENT;
+  function setTheme(id, accent) {
+    themeId = THEMES[id] ? id : 'warm';
+    themeAccent = hexToRgb(accent) ? accent : THEMES[themeId].accentDefault;
+    applyTheme(themeId, themeAccent);
+    renderThemeCards();
     renderSwatches();
+    scheduleSave();
+  }
+  function setThemeAccent(hex) { setTheme(themeId, hex); }
+  function renderThemeCards() {
+    var box = document.getElementById('themeCards');
+    if (!box || box.childElementCount === 0) {
+      // 首次构建：mini 预览 = 主题底色 + 卡片色 + 默认强调色点
+      box.innerHTML = '';
+      Object.keys(THEMES).forEach(function (id) {
+        var t = THEMES[id];
+        var b = el('button', 'theme-card');
+        b.type = 'button';
+        b.dataset.theme = id;
+        var prev = el('span', 'tc-preview');
+        prev.style.background = t.vars['--bg'];
+        var card = el('i', 'tc-card');
+        card.style.background = t.vars['--card'];
+        var dot = el('i', 'tc-dot');
+        dot.style.background = t.accentDefault;
+        prev.appendChild(card);
+        prev.appendChild(dot);
+        b.appendChild(prev);
+        b.appendChild(el('span', null, t.label));
+        b.addEventListener('click', function () { setTheme(id, THEMES[id].accentDefault); });
+        box.appendChild(b);
+      });
+    }
+    Array.prototype.forEach.call(box.children, function (b) {
+      b.classList.toggle('active', b.dataset.theme === themeId);
+    });
   }
   function renderSwatches() {
     var box = document.getElementById('swatches');
@@ -1217,10 +1312,38 @@
       b.addEventListener('click', function () { setThemeAccent(hex); });
       box.appendChild(b);
     });
-    document.getElementById('fAccent').value = themeAccent;
+    var hexIn = document.getElementById('fAccentHex');
+    hexIn.value = themeAccent.replace('#', '');
   }
-  document.getElementById('fAccent').addEventListener('input', function (e) { setThemeAccent(e.target.value); });
-  document.getElementById('themeReset').addEventListener('click', function () { setThemeAccent(DEFAULT_ACCENT); });
+  // 自定义调色板浮层（替代原生取色器）
+  var colorPop = document.getElementById('colorPop');
+  var colorGrid = document.getElementById('colorGrid');
+  CUSTOM_COLORS.forEach(function (hex) {
+    var c = el('button', 'color-cell');
+    c.type = 'button';
+    c.style.background = hex;
+    c.title = hex;
+    c.addEventListener('click', function () {
+      setThemeAccent(hex);
+      colorPop.classList.remove('open');
+    });
+    colorGrid.appendChild(c);
+  });
+  document.getElementById('customColorBtn').addEventListener('click', function (e) {
+    e.stopPropagation();
+    closeDrops();
+    colorPop.classList.toggle('open');
+  });
+  document.getElementById('fAccentHex').addEventListener('change', function (e) {
+    var v = e.target.value.trim().replace('#', '');
+    if (/^[0-9a-fA-F]{6}$/.test(v)) {
+      setThemeAccent('#' + v);
+      colorPop.classList.remove('open');
+    } else {
+      e.target.value = themeAccent.replace('#', '');
+    }
+  });
+  document.getElementById('themeReset').addEventListener('click', function () { setTheme('warm', DEFAULT_ACCENT); });
 
   function lines(id) {
     return document.getElementById(id).value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
@@ -1236,12 +1359,12 @@
     var browse = el('button', 'browse', '浏览…');
     browse.type = 'button';
     browse.addEventListener('click', function () {
-      api.pickPath('directory').then(function (p) { if (p) input.value = p; });
+      api.pickPath('directory').then(function (p) { if (p) { input.value = p; scheduleSave(); } });
     });
     row.appendChild(browse);
     var del = el('button', 'del', '删除');
     del.type = 'button';
-    del.addEventListener('click', function () { row.remove(); });
+    del.addEventListener('click', function () { row.remove(); scheduleSave(); });
     row.appendChild(del);
     listEl.appendChild(row);
   }
@@ -1269,7 +1392,7 @@
     sel.value = logoKey || '';
     var del = el('button', 'del', '删除');
     del.type = 'button';
-    del.addEventListener('click', function () { row.remove(); });
+    del.addEventListener('click', function () { row.remove(); scheduleSave(); });
     row.appendChild(l);
     row.appendChild(c);
     row.appendChild(sel);
@@ -1401,10 +1524,13 @@
       fTerminal.value = cfg.terminalCmd || '';
       fHotkey.value = cfg.hotkey || '';
       fAutoStart.checked = !!cfg.autoStart;
-      themeAccent = savedAccent();
+      var th = savedTheme();
+      themeId = th.id;
+      themeAccent = th.accent;
+      renderThemeCards();
       renderSwatches();
       ghStateText();
-      document.getElementById('settingsMsg').textContent = '';
+      document.getElementById('settingsHint').textContent = '更改即时生效，自动保存';
       document.getElementById('hotkeyErr').textContent = '';
       ['previewRes', 'testGhRes', 'checkEditorRes', 'checkTerminalRes', 'ghAuthRes'].forEach(function (id) {
         var e = document.getElementById(id);
@@ -1423,10 +1549,34 @@
   function hideSettings() {
     appEl.classList.remove('show-settings');
     stopDeviceFlow();
-    applyTheme(savedAccent()); // 未保存的换色预览在退出设置时回退（issue #27）
+    flushSave(); // 关闭前把停顿中的未落盘改动立即保存（自动保存，issue #27 反馈）
   }
 
-  function saveSettings() {
+  /* ----- 自动保存：更改即生效，无保存按钮；输入停顿 700ms 静默落盘，按改动域触发副作用 ----- */
+  var saveTimer = null;
+  var hintTimer = null;
+  function showHint(text, isErr) {
+    var h = document.getElementById('settingsHint');
+    h.textContent = text;
+    h.classList.toggle('err', !!isErr);
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(function () {
+      h.textContent = '更改即时生效，自动保存';
+      h.classList.remove('err');
+    }, 3000);
+  }
+  function scheduleSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () { saveTimer = null; silentSave(); }, 700);
+  }
+  function flushSave() { // 关闭设置页前把未落盘的改动立即保存
+    if (!saveTimer) return;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    silentSave();
+  }
+  function silentSave() {
+    var prev = state.settings || {};
     var patch = {
       roots: collectPaths(rootsList),
       extraPaths: collectPaths(extraList),
@@ -1437,33 +1587,55 @@
       terminalCmd: fTerminal.value.trim(),
       hotkey: fHotkey.value.trim(),
       autoStart: fAutoStart.checked,
-      theme: { accent: themeAccent }, // 外观（issue #27）
+      theme: { id: themeId, accent: themeAccent }, // 外观（issue #27）
     };
     var typedToken = fToken.value.trim();
     if (typedToken) patch.githubToken = typedToken; // 留空 = 保持已存 token（issue #12）
+    // 改动域检测：避免每次击键都重扫 PATH / 重扫磁盘 / 重渲染
+    var pathsChanged = JSON.stringify([patch.roots, patch.extraPaths, patch.blacklist]) !==
+      JSON.stringify([prev.roots || [], prev.extraPaths || [], prev.blacklist || []]);
+    var toolsChanged = JSON.stringify(patch.aiTools) !== JSON.stringify(prev.aiTools || []);
+    var hotkeyChanged = patch.hotkey !== (prev.hotkey || '');
     api.setSettings(patch).then(function (cfg) {
       state.settings = cfg;
       ghStateText();
-      fToken.value = '';
-      loadAiTools(); // 自定义工具清单可能已变，重扫 PATH
-      return Promise.all([api.getHotkeyError(), api.scanPreview({})]);
+      if (typedToken) fToken.value = '';
+      var jobs = [];
+      if (hotkeyChanged) jobs.push(api.getHotkeyError());
+      if (pathsChanged) jobs.push(api.scanPreview({}));
+      return Promise.all(jobs);
     }).then(function (rs) {
-      var hkErr = rs[0];
-      var prev = rs[1];
-      var msg = document.getElementById('settingsMsg');
-      if (hkErr) {
-        msg.textContent = '已保存，但' + hkErr;
-        msg.classList.add('err');
-      } else {
-        msg.textContent = '已保存，热键与自启即时生效 · 扫描发现 ' + prev.count + ' 个项目';
-        msg.classList.remove('err');
+      var msg = '已自动保存';
+      var bad = false;
+      if (hotkeyChanged) {
+        var hkErr = rs.shift();
+        document.getElementById('hotkeyErr').textContent = hkErr || '';
+        if (hkErr) { msg = '已保存，但' + hkErr; bad = true; }
       }
-      document.getElementById('hotkeyErr').textContent = hkErr || '';
-      markRows(rootsList, prev.invalidRoots);
-      markRows(extraList, prev.invalidExtra);
-      refresh(false);
+      if (pathsChanged) {
+        var pv = rs.shift();
+        markRows(rootsList, pv.invalidRoots);
+        markRows(extraList, pv.invalidExtra);
+        var badN = pv.invalidRoots.length + pv.invalidExtra.length;
+        if (badN) { msg = '已保存 · ' + badN + ' 条路径无效'; bad = true; }
+      }
+      showHint(msg, bad);
+      if (toolsChanged) loadAiTools(); // 自定义工具清单已变，重扫 PATH
+      if (pathsChanged || toolsChanged) refresh(false);
     });
   }
+
+  // 设置即输即存：文本输入停顿落盘；勾选/下拉/色板选择立即；token 失焦才提交（避免半段 token 落盘）
+  var settingsBody = document.querySelector('.settings-body');
+  settingsBody.addEventListener('input', function (e) {
+    if (e.target === fToken || e.target.id === 'fAccentHex') return;
+    scheduleSave();
+  });
+  settingsBody.addEventListener('change', function (e) {
+    if (e.target === fToken && !fToken.value.trim()) return;
+    if (e.target.id === 'fAccentHex') return; // hex 输入在自身 change 校验里处理
+    scheduleSave();
+  });
 
   /* ---------- 事件绑定 ---------- */
   document.getElementById('winMin').addEventListener('click', api.winMin);
@@ -1473,8 +1645,6 @@
   document.getElementById('settingsBtn').addEventListener('click', function () {
     if (appEl.classList.contains('show-settings')) hideSettings(); else showSettings();
   });
-  document.getElementById('settingsBack').addEventListener('click', hideSettings);
-  document.getElementById('settingsSave').addEventListener('click', saveSettings);
   document.getElementById('addRoot').addEventListener('click', function () { pathRow(rootsList, ''); });
   document.getElementById('addExtra').addEventListener('click', function () { pathRow(extraList, ''); });
   document.getElementById('addAiTool').addEventListener('click', function () { aiToolRow('', ''); });
@@ -1483,7 +1653,7 @@
     renderStream();
   });
   document.getElementById('browseEditor').addEventListener('click', function () {
-    api.pickPath('file').then(function (p) { if (p) fEditor.value = p; });
+    api.pickPath('file').then(function (p) { if (p) { fEditor.value = p; scheduleSave(); } });
   });
   document.getElementById('previewBtn').addEventListener('click', function () {
     var res = document.getElementById('previewRes');
@@ -1548,7 +1718,7 @@
     e.preventDefault();
     e.stopPropagation();
     if (e.key === 'Escape') { fHotkey.blur(); return; }
-    if (e.key === 'Backspace' || e.key === 'Delete') { fHotkey.value = ''; return; }
+    if (e.key === 'Backspace' || e.key === 'Delete') { fHotkey.value = ''; scheduleSave(); return; }
     if (['Control', 'Shift', 'Alt', 'Meta'].indexOf(e.key) >= 0) return;
     var parts = [];
     if (e.ctrlKey) parts.push('Ctrl');
@@ -1559,6 +1729,7 @@
     if (parts.length === 0 && !/^F\d{1,2}$/.test(k)) return; // 至少一个修饰键（F 功能键除外）
     parts.push(k);
     fHotkey.value = parts.join('+');
+    scheduleSave();
   });
 
   // 顶层导航：总览 | 项目（issue #14）
@@ -1636,7 +1807,7 @@
 
   // 点击空白处：关闭浮层（分支下拉 / 补全 / 排序 / 工具项目选择器）
   document.addEventListener('click', function (e) {
-    if (anyDropOpen() && !e.target.closest('.bdrop') && !e.target.closest('.search') && !e.target.closest('.sort-wrap')) closeDrops();
+    if (anyDropOpen() && !e.target.closest('.bdrop') && !e.target.closest('.search') && !e.target.closest('.sort-wrap') && !e.target.closest('.custom-color')) closeDrops();
     if (toolPickEl && !e.target.closest('.tool-pick') && !e.target.closest('.tool-btn')) closeToolPicker();
   });
 
@@ -1666,7 +1837,10 @@
   renderSkeleton();
   api.getSettings().then(function (cfg) {
     state.settings = cfg;
-    applyTheme(savedAccent()); // 启动时恢复用户主题色（issue #27）
+    var th = savedTheme(); // 启动时恢复用户主题（整体配色 + 强调色，issue #27）
+    themeId = th.id;
+    themeAccent = th.accent;
+    applyTheme(th.id, th.accent);
   });
   api.getPrefs().then(function (p) {
     state.prefs = p;

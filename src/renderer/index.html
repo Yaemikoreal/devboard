@@ -165,14 +165,26 @@
 
           <div class="set-pane" id="pane-appearance">
             <div class="set-group">
-              <h3>主题色</h3>
-              <div class="group-desc">自定义界面强调色，热力图色阶、分带芯片与强调元素随之联动；选择后即时预览，保存后持久生效</div>
+              <h3>主题</h3>
+              <div class="group-desc">整体配色方案，背景、卡片、文字与深色块一并切换；选择即生效</div>
+              <div class="theme-cards" id="themeCards"></div>
+            </div>
+            <div class="set-group">
+              <h3>强调色</h3>
+              <div class="group-desc">热力图色阶、分带芯片与强调元素随之联动；选择即生效</div>
               <div class="field">
-                <label>强调色</label>
                 <div class="swatches" id="swatches"></div>
                 <div class="custom-color">
-                  <input type="color" id="fAccent" value="#f5d90a" title="自定义强调色">
-                  <span class="hint">预设不满意？点左侧色块自定义，实时预览</span>
+                  <button class="swatch custom" id="customColorBtn" type="button" title="自定义颜色">+</button>
+                  <span class="hint">预设不满意？点 + 打开调色板自定义</span>
+                  <!-- 自定义调色板浮层：替代原生取色器，与整体美术风格统一 -->
+                  <div class="drop color-pop" id="colorPop">
+                    <div class="color-grid" id="colorGrid"></div>
+                    <div class="color-hex-row">
+                      <span class="mono">#</span>
+                      <input type="text" id="fAccentHex" spellcheck="false" maxlength="6" placeholder="f5d90a">
+                    </div>
+                  </div>
                 </div>
               </div>
               <div class="inline-check">
@@ -266,11 +278,8 @@
 
         </div>
 
-        <div class="settings-actions">
-          <span class="settings-msg" id="settingsMsg"></span>
-          <button class="btn" id="settingsBack">返回</button>
-          <button class="btn solid" id="settingsSave">保存</button>
-        </div>
+        <!-- 自动保存：更改即生效，这里只留一条瞬时状态提示（无返回/保存按钮） -->
+        <div class="settings-hint" id="settingsHint">更改即时生效，自动保存</div>
       </div>
     </div>
   </section>

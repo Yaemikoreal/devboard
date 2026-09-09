@@ -15,7 +15,7 @@ const DEFAULT_CONFIG = {
   hotkey: 'Ctrl+Shift+D',
   autoStart: true,
   aiTools: [], // 自定义 AI 工具清单：[{label, cmd}]，与默认 claude/codex/kimi/grok 合并（issue #15）
-  theme: { accent: '#f5d90a' }, // 外观：强调色，渲染层据此派生热力图色阶等（issue #27）
+  theme: { id: 'warm', accent: '#f5d90a' }, // 外观：整体主题 + 强调色（issue #27）
 };
 
 const DEFAULT_PREFS = {

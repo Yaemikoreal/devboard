@@ -605,8 +605,14 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .sn-item.active{background:var(--tile);color:var(--tile-ink);font-weight:600}
 .settings-main{flex:1;min-width:0;display:flex;flex-direction:column}
 .settings-body{flex:1;min-height:0;overflow-y:auto;padding:22px 26px}
-.set-pane{display:none}
+.set-pane{display:none;max-width:620px}
 .set-pane.active{display:block}
+/* 自动保存瞬时提示（替代原返回/保存操作条） */
+.settings-hint{
+  flex:none;padding:10px 26px;border-top:1px solid var(--line);
+  font-size:11px;color:var(--ink-3);letter-spacing:.03em;
+}
+.settings-hint.err{color:#c0392b}
 /* 窄窗口兜底：导航折叠为纯图标 */
 @media (max-width:900px){
   .settings-nav{width:58px;padding:20px 8px}
@@ -615,24 +621,56 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   .sn-item span{display:none}
 }
 
-/* 外观：强调色预设色板 + 自定义取色（issue #27） */
+/* 外观：整体主题卡片（issue #27 整体主题化） */
+.theme-cards{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+.theme-card{
+  display:flex;flex-direction:column;align-items:center;gap:7px;
+  border:1px solid var(--line);border-radius:var(--r-chip);background:transparent;
+  padding:12px 16px 10px;cursor:pointer;font:inherit;font-size:12px;color:var(--ink-2);
+  transition:border-color .15s ease,color .15s ease;
+}
+.theme-card:hover{border-color:var(--ink-3);color:var(--ink)}
+.theme-card.active{border-color:var(--ink);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px var(--ink)}
+.tc-preview{
+  width:52px;height:34px;border-radius:7px;position:relative;overflow:hidden;
+  box-shadow:inset 0 0 0 1px rgba(24,24,24,.10);
+}
+.tc-preview i{position:absolute;display:block}
+.tc-card{left:6px;top:7px;width:26px;height:20px;border-radius:4px}
+.tc-dot{right:6px;bottom:7px;width:9px;height:9px;border-radius:50%}
+
+/* 外观：强调色预设色板 + 自定义调色板（issue #27） */
 .swatches{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
 .swatch{
   width:34px;height:34px;border-radius:50%;cursor:pointer;border:0;padding:0;
   position:relative;box-shadow:inset 0 0 0 1px rgba(24,24,24,.08);
   transition:transform .15s ease;
+  font:inherit;font-size:18px;font-weight:400;line-height:1;color:var(--ink-3);
 }
 .swatch:hover{transform:scale(1.1)}
 .swatch.active::after{
   content:"";position:absolute;inset:-5px;border-radius:50%;
   border:1.5px solid var(--ink);
 }
-.custom-color{display:flex;align-items:center;gap:10px}
-.custom-color input[type=color]{
-  width:40px;height:28px;border:1px solid var(--line);border-radius:var(--r-chip);
-  background:var(--bg);padding:2px;cursor:pointer;
-}
+.swatch.custom{background:var(--well);box-shadow:inset 0 0 0 1px var(--line)}
+.swatch.custom:hover{color:var(--ink)}
+.custom-color{display:flex;align-items:center;gap:10px;position:relative}
 .custom-color .hint{font-size:11px;color:var(--ink-3)}
+/* 自定义调色板浮层：沿用 .drop 浮层语言 */
+.color-pop{left:0;top:calc(100% + 8px);min-width:0;width:248px;padding:12px}
+.color-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:10px}
+.color-cell{
+  width:24px;height:24px;border-radius:50%;border:0;padding:0;cursor:pointer;
+  box-shadow:inset 0 0 0 1px rgba(24,24,24,.08);transition:transform .12s ease;
+}
+.color-cell:hover{transform:scale(1.18)}
+.color-hex-row{display:flex;align-items:center;gap:6px}
+.color-hex-row .mono{font-size:12px;color:var(--ink-3)}
+.color-hex-row input{
+  flex:1;border:1px solid var(--line);border-radius:7px;background:var(--bg);
+  color:var(--ink);font:12px ui-monospace,Consolas,monospace;padding:5px 9px;outline:none;
+}
+.color-hex-row input:focus{border-color:var(--ink-3)}
 .set-group{margin-bottom:20px}
 .set-group > h3{
   font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--ink-3);
@@ -691,14 +729,6 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .inline-check .res{font-size:11.5px}
 .inline-check .res.ok{color:#2e7d32}
 .inline-check .res.bad{color:#c0392b}
-
-.settings-actions{
-  flex:none;display:flex;gap:10px;align-items:center;
-  padding:14px 26px;border-top:1px solid var(--line);
-}
-.settings-actions .btn{padding:8px 24px;font-size:13px}
-.settings-msg{font-size:12px;color:var(--ink-3);margin-right:auto}
-.settings-msg.err{color:#c0392b}
 
 /* ---------- 浮层组件 ---------- */
 /* 通用下拉菜单：分支下拉 / 搜索补全 / 排序下拉 / 工具项目选择器共用 */
