@@ -432,7 +432,9 @@
     var max = m.rows.length ? m.rows[0].count : 1;
     m.rows.forEach(function (r) {
       var row = el('div', 'stream-proj');
-      row.appendChild(el('span', 'nm', r.p.name));
+      var nm = el('span', 'nm', r.p.name);
+      nm.title = r.p.name;
+      row.appendChild(nm);
       row.appendChild(el('span', 'ct', r.count + ' 次提交'));
       var bar = el('span', 'bar');
       bar.style.width = Math.max(8, Math.round(r.count / max * 160)) + 'px';
@@ -456,7 +458,9 @@
     board.attention.forEach(function (a) {
       var item = el('div', 'attn-item');
       item.appendChild(el('span', 'ic'));
-      item.appendChild(el('span', 'nm mono', a.name));
+      var nm = el('span', 'nm mono', a.name);
+      nm.title = a.name;
+      item.appendChild(nm);
       item.appendChild(el('span', 'ds', a.label));
       item.appendChild(el('span', 'mk'));
       item.addEventListener('click', function () { jumpToProject(a.path); });
@@ -949,11 +953,15 @@
     var row = el('div', 'row' + (state.selectedPath === p.path ? ' selected' : ''));
     row.setAttribute('data-band', p.band);
     row.dataset.path = p.path;
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
     if (canDrag()) row.draggable = true;
 
     var main = el('div', 'r-main');
     var top = el('div', 'r-top');
-    top.appendChild(el('span', 'r-name mono', p.name));
+    var name = el('span', 'r-name mono', p.name);
+    name.title = p.name;
+    top.appendChild(name);
     if (p.branch) top.appendChild(el('span', 'r-branch mono', p.branch));
     main.appendChild(top);
     main.appendChild(el('div', 'r-sub' + (p.memo ? '' : ' empty'), p.memo || '无备忘'));
@@ -985,6 +993,14 @@
 
     row.addEventListener('click', function () {
       selectProject(state.selectedPath === p.path ? null : p.path);
+    });
+    // 键盘打开详情：焦点在行内控件（图钉/展开钮）时不触发行切换
+    row.addEventListener('keydown', function (e) {
+      if (e.target !== row) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        selectProject(state.selectedPath === p.path ? null : p.path);
+      }
     });
 
     // 手动位序下拖拽重排（issue #18）
@@ -2206,8 +2222,9 @@
     runCheck(fTerminal.value, res);
   });
 
-  // 热键录入器：聚焦后按组合键录入；Backspace/Delete 清空；Esc 取消
+  // 热键录入器：聚焦后按组合键录入；Backspace/Delete 清空；Esc 取消；Tab 放行让焦点正常移走
   fHotkey.addEventListener('keydown', function (e) {
+    if (e.key === 'Tab') return;
     e.preventDefault();
     e.stopPropagation();
     if (e.key === 'Escape') { fHotkey.blur(); return; }
