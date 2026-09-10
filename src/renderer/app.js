@@ -20,6 +20,7 @@
     sortMode: 'manual', // manual / activity / name（issue #18，持久化在 prefs.sortMode）
     selectedPath: null, // 详情面板当前项目（issue #17）
     loading: false,
+    loadPromise: null, // 在飞 load 的 Promise：去重时复用，refresh spinner 不提前熄灭
     awaitPatch: false,
     branchSel: {}, // path -> 选中分支名（issue #4，持久化在 prefs.branchSel）
     branchDetail: {}, // path + ' ' + branch -> { lastCommitAt, commits } | 'loading'
@@ -1463,6 +1464,26 @@
   function renderSkeleton() {
     rowsEl.innerHTML = '';
     for (var i = 0; i < 6; i++) rowsEl.appendChild(el('div', 'skel'));
+    // 总览统计在首次成功加载前显示占位，避免误导性的 0
+    setStat('statTotal', '--', '个');
+    setStat('statCommits', '--', '次');
+    setStat('statAttn', '--', '项');
+  }
+
+  // 首屏加载失败：项目区骨架替换为错误条，重试按钮重新调 load
+  function renderLoadError() {
+    rowsEl.innerHTML = '';
+    var box = el('div', 'board-empty');
+    box.appendChild(el('div', 't', '加载失败'));
+    box.appendChild(el('div', null, '项目数据加载出错，请稍后重试'));
+    var retry = el('button', 'btn', '重试');
+    retry.type = 'button';
+    retry.addEventListener('click', function () {
+      renderSkeleton();
+      load(false);
+    });
+    box.appendChild(retry);
+    rowsEl.appendChild(box);
   }
 
   /* ---------- 数据 ---------- */
@@ -1473,12 +1494,12 @@
   }
 
   function load(force) {
-    if (state.loading) return Promise.resolve(); // 唤出重扫与定时 tick 去重
+    if (state.loading) return state.loadPromise; // 唤出重扫与定时 tick 去重，调用方挂在同一次在飞加载上
     state.loading = true;
     state.awaitPatch = false;
     setScanning(true);
     var promise = force ? api.rescan() : api.getBoard();
-    return promise.then(function (board) {
+    var p = promise.then(function (board) {
       state.board = board;
       renderAll();
       console.log('[devboard] rendered'); // 供 scripts/screenshot.js 等待
@@ -1486,10 +1507,15 @@
       if (board && board.fromCache) state.awaitPatch = true;
     }).catch(function (err) {
       console.error('board 加载失败', err);
+      // 首屏没有数据时骨架会永远停驻，换成可重试的错误条；已有旧板则保留
+      if (!state.board) renderLoadError();
     }).finally(function () {
       state.loading = false;
+      state.loadPromise = null;
       if (!state.awaitPatch) setScanning(false);
     });
+    state.loadPromise = p;
+    return p;
   }
 
   // 后台重扫补丁（issue #22）：整板替换渲染；若期间用户又在手动刷新则丢弃
