@@ -180,6 +180,8 @@ function localDateStr(d) {
 function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   let refreshInFlight = false;
   let scanInFlight = false;
+  let scanPromise = null; // 在飞全量扫描：并发触发复用同一 Promise，避免重复双扫
+  let scanGeneration = 0; // 扫描代次号：新扫描落地后，旧扫描迟到的最终补丁直接丢弃
 
   // .git 文件监听：项目有提交/暂存变化时自动增量重扫该项目并推补丁（issue #25）
   const gitWatcher = createGitWatcher({
@@ -234,9 +236,17 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     };
   }
 
+  // 全量扫描入口：在飞时复用同一 Promise（首启 buildBoard 与渲染层 board:get 会并发触发）
+  function scanAndCache() {
+    if (scanPromise) return scanPromise;
+    const gen = ++scanGeneration;
+    scanPromise = doScanAndCache(gen).finally(() => { scanPromise = null; });
+    return scanPromise;
+  }
+
   // 全量扫描（HEAD 分档 + 3s 预算），成功后写磁盘缓存（issue #22/#23/#24）
   // 超预算的慢项目由 onLate 在真实扫描完成后回补缓存，避免永远拿不到数据
-  async function scanAndCache() {
+  async function doScanAndCache(gen) {
     const config = store.getConfig();
     const cache = store.getScanCache();
     gitWatcher.setScanning(true);
@@ -261,7 +271,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     }
     store.setScanCache(next);
     gitWatcher.syncWatchers(projects.map((p) => p.path)); // 对齐监听清单，顺带重建失效 watcher
-    return { projects, config, settled: projects.settled || Promise.resolve() };
+    return { projects, config, settled: projects.settled || Promise.resolve(), gen };
   }
 
   // 后台重扫：完成后给渲染层推补丁（issue #22）；在飞则去重
@@ -273,13 +283,14 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
       if (win && !win.isDestroyed()) win.webContents.send('board:patch', board);
     };
     scanAndCache()
-      .then(({ projects, config, settled }) => {
+      .then(({ projects, config, settled, gen }) => {
         const { board, stale } = assembleBoard(projects, config, false);
         maybeRefreshGithub(false, stale, projects, config);
         sendPatch(board);
         // 有降级条目时，等迟到的真实扫描全部落地后再推一次最终补丁
         if (projects.some((p) => p.degraded)) {
           settled.then(() => {
+            if (gen !== scanGeneration) return; // 已有更新扫描落地，过期补丁丢弃，避免盖回旧数据
             const cur = store.getScanCache();
             const finalProjects = projects.map((p) => (p.degraded && cur.projects[p.path]) || p);
             const { board: finalBoard } = assembleBoard(finalProjects, config, false);
@@ -309,7 +320,8 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
       const { board } = assembleBoard(projs, store.getConfig(), true);
       const win = getWindow && getWindow();
       if (win && !win.isDestroyed()) win.webContents.send('board:patch', board);
-    }).finally(() => { refreshInFlight = false; });
+    }).catch((err) => console.error('[devboard] GitHub 缓存刷新失败', err))
+      .finally(() => { refreshInFlight = false; });
   }
 
   // 历史安装自愈：token 已配置但 username 为空（旧版导入不落登录名，issue #44）时，

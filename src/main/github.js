@@ -103,9 +103,18 @@ function attachFromCache(projects, config, store) {
 // 返回是否有可见变化（供主进程补推整板补丁，issue #44）
 async function refreshCache(remotes, config, store) {
   if (!remotes.length || !config.githubToken) return false;
+  // 按 owner/repo 去重：多项目指向同一仓库时只拉一次（stale 列表与强制刷新清单都可能带重复项）
+  const seen = new Set();
+  const uniq = [];
+  for (const r of remotes) {
+    const key = `${r.owner}/${r.repo}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniq.push(r);
+  }
   const cache = store.getGithubCache();
   const results = await Promise.all(
-    remotes.map((r) =>
+    uniq.map((r) =>
       fetchIssues(r.owner, r.repo, config.githubToken).then(
         (data) => ({ data }),
         (err) => ({ error: String((err && err.message) || err || '网络请求失败') })
@@ -116,7 +125,7 @@ async function refreshCache(remotes, config, store) {
   let changed = false; // 有可见变化（新数据 / 新失败态）→ 需要推补丁
   let dirty = false; // 有任何落盘必要（含仅刷新失败时间戳）
   results.forEach((res, i) => {
-    const key = `${remotes[i].owner}/${remotes[i].repo}`;
+    const key = `${uniq[i].owner}/${uniq[i].repo}`;
     if (res.data) {
       cache.repos[key] = { fetchedAt: now, data: res.data };
       changed = dirty = true;
@@ -135,9 +144,10 @@ async function refreshCache(remotes, config, store) {
   return changed;
 }
 
-// PR 警示需要在 github 挂接后补充
+// PR 警示需要在 github 挂接后补充；同一批对象可能重复挂接（最终补丁二次拼装），先清旧值保证幂等
 function applyPrWarnings(projects) {
   for (const p of projects) {
+    p.warnings = p.warnings.filter((w) => w.type !== 'pr');
     if (p.github && p.github.openPRs > 0) {
       p.warnings.push({ type: 'pr', label: `${p.github.openPRs} 个开放 PR` });
     }
