@@ -81,6 +81,7 @@ function createWindow() {
     setTimeout(() => {
       if (win) win.webContents.send('board:tick');
     }, 120);
+    maybeNotify();
   });
 
   win.on('close', (e) => {
@@ -99,7 +100,7 @@ function toggleWindow() {
 }
 
 function updateTrayTooltip(attentionCount) {
-  if (tray) tray.setToolTip(`SignalBoard · ${attentionCount} 待关注`);
+  if (tray) tray.setToolTip(`SignalBoard · ${attentionCount} 个项目需要关注`);
 }
 
 function createTray() {
@@ -150,8 +151,11 @@ function applySettings(cfg) {
   app.setLoginItemSettings({ openAtLogin: !!cfg.autoStart });
 }
 
-// 每天首次启动且有待关注项目时弹一条摘要
+// 每天首次启动或唤出窗口且有待关注项目时弹一条摘要（托盘常驻下进程很少重启，靠唤出兜底）
+let notifyInFlight = false;
 async function maybeNotify() {
+  if (notifyInFlight) return;
+  notifyInFlight = true;
   try {
     const today = new Date().toISOString().slice(0, 10);
     if (store.getLastNotifyDate() === today) return;
@@ -159,14 +163,20 @@ async function maybeNotify() {
     updateTrayTooltip(board.stats.attentionCount);
     if (board.stats.attentionCount > 0 && Notification.isSupported()) {
       const names = board.attention.slice(0, 3).map((a) => a.name).join('、');
-      new Notification({
+      const n = new Notification({
         title: 'SignalBoard',
         body: `${board.stats.attentionCount} 个项目需要关注：${names}${board.attention.length > 3 ? ' 等' : ''}`,
-      }).show();
+      });
+      n.on('click', () => {
+        if (win) { win.show(); win.focus(); } else createWindow();
+      });
+      n.show();
     }
     store.setLastNotifyDate(today);
   } catch (err) {
     console.error('[devboard] 启动通知失败:', err.message);
+  } finally {
+    notifyInFlight = false;
   }
 }
 
@@ -179,6 +189,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
+    app.setAppUserModelId('com.yaemikoreal.signalboard'); // 与 build.appId 一致，通知才能正确归因与响应点击
     migrateUserDataIfNeeded();
     store = new Store(app.getPath('userData'), require('./token-vault'));
     ({ buildBoard, gitWatcher } = registerIpc({

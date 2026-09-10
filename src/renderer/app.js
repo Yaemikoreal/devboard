@@ -451,7 +451,7 @@
     var list = document.getElementById('attnList');
     list.innerHTML = '';
     sub.textContent = board.attention.length
-      ? board.attention.length + ' 个项目有待处理信号'
+      ? board.attention.length + ' 个项目有警示标记'
       : '一切正常，暂无警示';
     board.attention.forEach(function (a) {
       var item = el('div', 'attn-item');
@@ -1103,7 +1103,7 @@
       var msg = noToken ? '未配置 GitHub'
         : p.githubError ? '同步失败：' + p.githubError + '（稍后自动重试）'
         : p.githubOwned ? 'GitHub 数据同步中…（完成后自动展示）'
-        : '非本人仓库，不拉取 GitHub 数据';
+        : '非本人项目，不拉取 GitHub 数据';
       parent.appendChild(el('div', 'gh-empty' + (p.githubError ? ' bad' : ''), msg));
       return;
     }
