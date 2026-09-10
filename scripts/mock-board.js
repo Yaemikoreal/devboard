@@ -85,6 +85,7 @@ function mockBoard() {
       activity365: yearActivity(5), aiSessionAt: isoDaysAgo(10), memo: '实验性 skill 集合',
       band: 'cooling',
       warnings: [{ type: 'dirty', label: '5 文件未提交超3天' }], github: null,
+      githubOwned: true, githubError: '网络请求失败', // GitHub 同步失败态演示（issue #46）
     },
     {
       path: 'E:\\myproject\\GithubHarticipant\\httpie-cli', name: 'httpie-cli', branch: 'master',

@@ -331,7 +331,9 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
       const cachedProjects = Object.values(cache.projects);
       if (cachedProjects.length > 0) {
         const config = store.getConfig();
-        const { board } = assembleBoard(cachedProjects, config, true);
+        const { board, stale } = assembleBoard(cachedProjects, config, true);
+        // GitHub 拉取与重扫并行：不再等全量扫描结束才开始取数（详情页「同步中」停留过久，issue #46）
+        maybeRefreshGithub(false, stale, cachedProjects, config);
         rescanInBackground();
         return board;
       }

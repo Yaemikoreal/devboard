@@ -137,14 +137,14 @@ function daysAgo(iso, now) {
 
 const PRIVACY_NOTE = '说明：以上仅为统计事实与提交信息文本，不包含代码内容，也不要求查看任何代码。';
 
-// P0 · 周报摘要：近 7 天跨项目提交事实 → 一段摘要 + 一句本周建议关注
+// P0 · 周报摘要：近 7 天跨项目提交事实 → 总览 + 逐项目进展 + 建议关注（结构化排版，issue #47）
 function buildWeeklyPrompt(projects, now) {
   const active = (projects || [])
     .filter((p) => p.commits7d > 0)
     .sort((a, b) => b.commits7d - a.commits7d)
     .slice(0, 12);
   const lines = active.map((p) => {
-    const msgs = (p.recentCommits || []).slice(0, 3).map((c) => c.msg).join('；');
+    const msgs = (p.recentCommits || []).slice(0, 5).map((c) => c.msg).join('；');
     return `- ${p.name}${p.branch ? '（分支 ' + p.branch + '）' : ''}：近 7 天 ${p.commits7d} 次提交${msgs ? '；最近提交：' + msgs : ''}`;
   });
   return [
@@ -152,13 +152,15 @@ function buildWeeklyPrompt(projects, now) {
     '以下是近 7 天各项目的 git 提交事实：',
     lines.join('\n'),
     PRIVACY_NOTE,
-    '请用中文输出两部分：先写一段 120 字以内的自然语言摘要，概括本周整体进展与精力分布；',
-    '然后另起一行，以「本周建议关注：」开头，给出一句最值得关注的方向。',
-    '只输出这两部分内容，不要使用标题、列表以外的格式，不要复述输入数据。',
+    '请用中文输出，严格按以下结构，让读者能一眼看清每个项目的近况：',
+    '1. 第一行以「本周总览：」开头，用一句话（60 字以内）概括本周整体进展与精力分布。',
+    '2. 随后逐行列出每个项目的进展：每行以「- 」开头，项目名用 **项目名** 加粗，后接一句 45 字以内的描述，点明提交次数与主线内容。每个项目都要单列一行，不要合并或省略。',
+    '3. 最后一行以「本周建议关注：」开头，给出 1-2 句最值得关注的方向。',
+    '只输出以上内容，不要使用 # 标题符号，不要复述输入数据。',
   ].join('\n');
 }
 
-// P0 · 项目建议：单项目 git 信号 → 2-3 条下一步行动建议
+// P0 · 项目建议：单项目 git 信号 → 近况概览 + 下一步建议（结构化排版，issue #48）
 function buildAdvicePrompt(p, now) {
   const facts = [`项目名：${p.name}`];
   if (p.branch) facts.push(`当前分支：${p.branch}`);
@@ -179,8 +181,10 @@ function buildAdvicePrompt(p, now) {
     '该项目的 git 事实如下：',
     facts.join('\n'),
     PRIVACY_NOTE,
-    '请给出 2-3 条具体、可执行的下一步建议：每条一行、以「- 」开头、不超过 40 字，用中文。',
-    '只输出这些建议行，不要输出任何其他内容。',
+    '请用中文输出，严格按以下结构：',
+    '1. 第一行以「近况概览：」开头，用 1-2 句话概括该项目当前进度与状态（活跃度、未提交/未推送等待办风险），结合最近提交说明在做什么。',
+    '2. 随后给出 2-4 条具体、可执行的下一步建议，每条一行、以「- 」开头、不超过 50 字，紧扣上面的 git 事实。',
+    '只输出以上内容，不要使用 # 标题符号，不要复述输入数据。',
   ].join('\n');
 }
 

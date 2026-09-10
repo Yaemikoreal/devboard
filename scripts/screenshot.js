@@ -78,13 +78,13 @@ app.whenReady().then(() => {
       if (payload && payload.kind === 'advice') {
         return delayed({
           ok: true, kind: 'advice', engine, cached: !!(payload && payload.cachedOnly), at: atAdvice,
-          text: '- 18 个文件未提交超 3 天，建议先 commit 或 stash 收拢现场\n- 3 个提交领先远程，尽快 push 避免单机风险\n- 本周提交集中在设置页重构，可为下个小版本收尾',
+          text: '近况概览：项目处于活跃推进期，近 7 天 14 次提交集中在歌单解析与批量导入；当前有 3 个文件未提交、2 个提交未推送，存在一定的现场丢失风险。\n- 先 commit 或 stash 收拢 3 个未提交文件，避免与迁移脚本联调互相污染\n- 尽快 push 领先的 2 个提交，降低单机风险\n- cookie 失效问题（issue #3）建议下一步处理，它阻塞自动刷新主流程',
         });
       }
       if (payload && payload.cachedOnly) return { ok: false, kind: 'weekly', reason: 'no-cache' };
       return delayed({
         ok: true, kind: 'weekly', engine, cached: false, at: atWeekly,
-        text: '近 7 天 8 个项目共 42 次提交，重心明显偏向 SignalBoard 的 AI 功能落地与截图工具链；wyy2qqmusic 有一次热修复，其余项目维持低速推进。\n本周建议关注：SignalBoard 的 AI 功能收尾与真实 CLI 联调。',
+        text: '本周总览：近 7 天 8 个项目共 42 次提交，精力集中在 SignalBoard 的 AI 功能落地，其余项目低速推进。\n- **SignalBoard**：20 次提交，AI 周报/建议全链路打通并完成 UI 优化\n- **wyy2qqmusic**：14 次提交，歌单批量导入与登录模块拆分进入联调\n- **chat-analysis**：4 次提交，PDF 模板 v2 布局收尾，修复长图分页溢出\n- **kimi-skill-lab**：2 次提交，新增实验性 skill 骨架\n- **devboard**：2 次提交，设计方向与色彩规范落定\n本周建议关注：SignalBoard 的 AI 能力正沉淀为可复用底座，优先固化稳定性并补齐文档。',
       });
     });
     // 详情面板深区数据（issue #17 mock）：README 摘要 + AI 会话痕迹明细
@@ -136,7 +136,8 @@ app.whenReady().then(() => {
     const msg = e.message || '';
     if (process.env.DEVBOARD_DEBUG === '1') console.log('[renderer]', msg);
     if (msg.includes('[devboard] shot-ready')) {
-      capture(); // SHOT_JS 前置脚本声明就绪（如等待 AI 结果），立即截图
+      // 延迟一拍再截：console-message 事件内立即 capturePage 会拿到上一帧（离屏渲染实测，issue #46 验证）
+      setTimeout(capture, 400);
       return;
     }
     if (msg.includes('[devboard] rendered')) {
@@ -150,9 +151,9 @@ app.whenReady().then(() => {
 
   function afterRender() {
     if (process.env.DEVBOARD_SHOT_SETTINGS === '1') {
-      // 设置页截图：展开设置视图再拍
+      // 设置页截图：展开设置视图再拍；SHOT_JS 可在其后追加前置操作（如切换到指定 pane）
       win.webContents.executeJavaScript(
-        "document.getElementById('settingsBtn').click(); void 0"
+        "document.getElementById('settingsBtn').click();" + (process.env.DEVBOARD_SHOT_JS || '') + '; void 0'
       ).then(() => setTimeout(capture, 1200));
       return;
     }

@@ -671,14 +671,52 @@
     }).catch(function () { state.aiCaps = { enabled: false, engine: null }; });
   }
 
-  // AI 结果区：徽标（引擎 + 生成时间，issue #43 精简）+ 正文/错误；box 内重建
+  // AI 正文结构化渲染（issue #47/#48）：识别小标题 / 列表行 / **加粗**，把 markdown-lite 排成可读版式；
+  // 引擎输出不守约定时退化为普通段落，不会渲染出原始符号噪声
+  function aiInline(node, text) {
+    String(text).split(/(\*\*[^*\n]+\*\*)/g).forEach(function (pt) {
+      var b = pt.match(/^\*\*([^*\n]+)\*\*$/);
+      if (b) node.appendChild(el('b', null, b[1]));
+      else if (pt) node.appendChild(document.createTextNode(pt));
+    });
+    return node;
+  }
+
+  function appendAiRich(container, text) {
+    var list = null;
+    String(text || '').split('\n').forEach(function (raw) {
+      var line = raw.trim();
+      if (!line) { list = null; return; }
+      var m = line.charAt(0) === '#'
+        ? line.match(/^#{1,4}\s*(.+?)\s*#*$/)
+        : line.match(/^【(.{1,30})】$/);
+      if (m) {
+        list = null;
+        container.appendChild(aiInline(el('div', 'ai-h'), m[1]));
+        return;
+      }
+      var b = line.match(/^[-*•·]\s+(.+)$/) || line.match(/^\d{1,2}[.、)]\s*(.+)$/);
+      if (b) {
+        if (!list) { list = el('ul', 'ai-list'); container.appendChild(list); }
+        list.appendChild(aiInline(el('li'), b[1]));
+        return;
+      }
+      list = null;
+      var key = /^(本周总览|本周建议关注|近况概览|下周建议|建议关注)[:：]/.test(line);
+      container.appendChild(aiInline(el('div', key ? 'ai-p ai-key' : 'ai-p'), line));
+    });
+  }
+
+  // AI 结果区：徽标（引擎 + 生成时间，issue #43 精简）+ 结构化正文/错误；box 内重建
   function fillAiBox(box, r) {
     box.innerHTML = '';
     if (!r || !r.ok) {
       box.appendChild(el('div', 'ai-err', (r && r.reason) ? 'AI 生成失败：' + r.reason : 'AI 生成失败，可稍后重试'));
       return;
     }
-    box.appendChild(el('div', 'ai-text', r.text));
+    var body = el('div', 'ai-text');
+    appendAiRich(body, r.text);
+    box.appendChild(body);
     var meta = el('div', 'ai-meta');
     meta.appendChild(el('span', 'ai-badge', r.engine.label + ' 生成'));
     if (r.at) meta.appendChild(el('span', 'ai-badge', relTime(r.at))); // 时效性（issue #32）
@@ -1061,11 +1099,12 @@
     var gh = p.github;
     if (!gh) {
       var noToken = state.settings && !(state.settings.hasGithubToken || state.settings.githubToken);
-      // 区分空态原因（issue #44）：未配置 / 本人仓库同步中（完成后主进程会推补丁自动展出）/ 非本人仓库
+      // 区分空态原因（issue #44/#46）：未配置 / 上次同步失败（短 TTL 后自动重试）/ 本人仓库同步中 / 非本人仓库
       var msg = noToken ? '未配置 GitHub'
+        : p.githubError ? '同步失败：' + p.githubError + '（稍后自动重试）'
         : p.githubOwned ? 'GitHub 数据同步中…（完成后自动展示）'
         : '非本人仓库，不拉取 GitHub 数据';
-      parent.appendChild(el('div', 'gh-empty', msg));
+      parent.appendChild(el('div', 'gh-empty' + (p.githubError ? ' bad' : ''), msg));
       return;
     }
     parent.appendChild(el('div', 'gh-empty', '开放 issue ' + gh.openIssues + ' · 开放 PR ' + gh.openPRs));

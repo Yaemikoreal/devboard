@@ -4,6 +4,8 @@
 const { execFile } = require('child_process');
 
 const TTL_MS = 10 * 60 * 1000;
+// 失败条目短 TTL：网络抖动恢复后 3 分钟内自动重试，不等完整 10 分钟（issue #46）
+const FAIL_TTL_MS = 3 * 60 * 1000;
 
 // OAuth Device Flow 需要在 GitHub 注册 OAuth App 后把 Client ID 填到这里（issue #12）；
 // 为空时设置页自动隐藏「设备码授权」入口，改用「从 gh CLI 导入」/ 手动粘贴 token。
@@ -20,12 +22,14 @@ function parseGitHubRemote(url) {
   return { owner: m[1], repo: m[2] };
 }
 
-// 单仓拉取：15s 超时 + 失败重试一次（本机到 api.github.com 偶发 TLS 断连，单次失败率不低，issue #44 实测）
+// 单仓拉取：12s 超时 + 至多 3 次尝试（递增退避）。
+// 本机到 api.github.com 偶发 TLS 断连，单次失败率不低（issue #44/#46 实测），
+// 多一次尝试可把「两次都撞上断连」的概率再压一个量级
 async function fetchIssues(owner, repo, token) {
   let lastErr = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const timer = setTimeout(() => ctrl.abort(), 12000);
     try {
       const res = await fetch(
         `https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=100`,
@@ -54,7 +58,7 @@ async function fetchIssues(owner, repo, token) {
     } catch (err) {
       lastErr = err;
       if (String(err && err.message).startsWith('GitHub API 4')) break; // 4xx 重试无意义
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 800 * (attempt + 1))); // 递增退避：0.8s / 1.6s
     } finally {
       clearTimeout(timer);
     }
@@ -72,6 +76,7 @@ function attachFromCache(projects, config, store) {
   for (const p of projects) {
     p.github = null;
     p.githubOwned = false;
+    p.githubError = null;
     if (!p.originUrl) continue;
     const remote = parseGitHubRemote(p.originUrl);
     if (!remote || remote.owner.toLowerCase() !== me) continue; // fork 上游跳过
@@ -79,9 +84,13 @@ function attachFromCache(projects, config, store) {
     if (!config.githubToken || !me) continue;
     const key = `${remote.owner}/${remote.repo}`;
     const entry = cache.repos[key];
-    if (entry) {
+    if (entry && entry.data) {
       p.github = entry.data;
       if (now - entry.fetchedAt >= TTL_MS) stale.push(remote);
+    } else if (entry && entry.error) {
+      // 失败条目（issue #46）：渲染层展示失败态而非永远「同步中」；短 TTL 后自动重试
+      p.githubError = entry.error;
+      if (now - entry.fetchedAt >= FAIL_TTL_MS) stale.push(remote);
     } else {
       stale.push(remote);
     }
@@ -89,21 +98,38 @@ function attachFromCache(projects, config, store) {
   return stale;
 }
 
-// 后台刷新缓存：失败静默保留旧缓存；返回是否有更新（供主进程补推整板补丁，issue #44）
+// 后台刷新缓存：成功条目覆盖写；失败时若已有旧数据则静默保留，
+// 否则落一条失败记录（渲染层据此展示「同步失败，稍后自动重试」而非永远停在同步中，issue #46）
+// 返回是否有可见变化（供主进程补推整板补丁，issue #44）
 async function refreshCache(remotes, config, store) {
   if (!remotes.length || !config.githubToken) return false;
   const cache = store.getGithubCache();
   const results = await Promise.all(
-    remotes.map((r) => fetchIssues(r.owner, r.repo, config.githubToken).catch(() => null))
+    remotes.map((r) =>
+      fetchIssues(r.owner, r.repo, config.githubToken).then(
+        (data) => ({ data }),
+        (err) => ({ error: String((err && err.message) || err || '网络请求失败') })
+      )
+    )
   );
-  let changed = false;
-  results.forEach((data, i) => {
-    if (!data) return;
-    cache.repos[`${remotes[i].owner}/${remotes[i].repo}`] = { fetchedAt: Date.now(), data };
-    changed = true;
+  const now = Date.now();
+  let changed = false; // 有可见变化（新数据 / 新失败态）→ 需要推补丁
+  let dirty = false; // 有任何落盘必要（含仅刷新失败时间戳）
+  results.forEach((res, i) => {
+    const key = `${remotes[i].owner}/${remotes[i].repo}`;
+    if (res.data) {
+      cache.repos[key] = { fetchedAt: now, data: res.data };
+      changed = dirty = true;
+      return;
+    }
+    const prev = cache.repos[key];
+    if (prev && prev.data) return; // 有旧数据：静默保留，失败不覆盖
+    if (!(prev && prev.error === res.error)) changed = true;
+    cache.repos[key] = { fetchedAt: now, error: res.error };
+    dirty = true;
   });
-  if (changed) {
-    cache.fetchedAt = Date.now();
+  if (dirty) {
+    cache.fetchedAt = now;
     store.setGithubCache(cache);
   }
   return changed;
@@ -119,23 +145,32 @@ function applyPrWarnings(projects) {
 }
 
 // 设置页「测试连接」：验证 token 有效性并返回实际登录名
+// 10s 超时 + 失败重试一次（弱网偶发 TLS 断连，避免状态卡误报「网络错误」，issue #49）
 async function testConnection(token) {
-  try {
-    const res = await fetch('https://api.github.com/user', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'devboard',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-    });
-    if (res.status === 401) return { ok: false, reason: 'Token 无效或已过期' };
-    if (!res.ok) return { ok: false, reason: `GitHub API ${res.status}` };
-    const data = await res.json();
-    // 顺带带回头像与显示名，设置页账户状态卡用（issue #45）
-    return { ok: true, login: data.login, name: data.name || '', avatarUrl: data.avatar_url || '' };
-  } catch {
-    return { ok: false, reason: '网络错误，无法连接 GitHub' };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    try {
+      const res = await fetch('https://api.github.com/user', {
+        signal: ctrl.signal,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'devboard',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      });
+      if (res.status === 401) return { ok: false, reason: 'Token 无效或已过期' };
+      if (!res.ok) return { ok: false, reason: `GitHub API ${res.status}` };
+      const data = await res.json();
+      // 顺带带回头像与显示名，设置页账户状态卡用（issue #45）
+      return { ok: true, login: data.login, name: data.name || '', avatarUrl: data.avatar_url || '' };
+    } catch {
+      if (attempt === 1) return { ok: false, reason: '网络错误，无法连接 GitHub' };
+      await new Promise((r) => setTimeout(r, 1000));
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 
