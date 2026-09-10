@@ -180,8 +180,8 @@
     return pinned.concat(rest);
   }
 
-  // 拖拽只在手动位序 + 全部分带下可用（筛选子集上重排会破坏位序语义）
-  function canDrag() { return state.sortMode === 'manual' && state.band === 'all'; }
+  // 拖拽只在手动位序 + 全部分带 + 无 AI 筛选下可用（筛选子集上重排会破坏位序语义）
+  function canDrag() { return state.sortMode === 'manual' && state.band === 'all' && !state.aiFilter; }
 
   /* ---------- 分支选择（issue #4） ---------- */
   function selBranch(p) {
@@ -1129,10 +1129,12 @@
   }
 
   function renderPanel(p) {
-    // 后台补丁重渲染时保住备忘编辑中的内容与焦点
+    // 后台补丁重渲染时保住备忘编辑中的内容/焦点/光标与面板滚动位置
     var memoLive = document.activeElement && document.activeElement.classList &&
       document.activeElement.classList.contains('memo-input') && panelIn.contains(document.activeElement);
     var memoVal = memoLive ? document.activeElement.value : null;
+    var memoSel = memoLive ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+    var scrollTop = panelIn.scrollTop;
     panelIn.innerHTML = '';
     var current = isCurrentBranch(p);
     var bd = branchDetailOf(p);
@@ -1167,7 +1169,8 @@
 
     // 备忘：可编辑，保存回填行（Enter / 失焦保存，Esc 还原）
     var ta = el('textarea', 'memo-input');
-    ta.value = p.memo || '';
+    var origMemo = p.memo || '';
+    ta.value = origMemo;
     ta.placeholder = '写点备忘…';
     ta.rows = 1;
     ta.addEventListener('input', function () {
@@ -1182,7 +1185,7 @@
     ta.addEventListener('keydown', function (ev) {
       ev.stopPropagation();
       if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ta.blur(); }
-      if (ev.key === 'Escape') { ta.value = p.memo || ''; ta.blur(); }
+      if (ev.key === 'Escape') { p.memo = origMemo; ta.value = origMemo; ta.blur(); }
     });
     ta.addEventListener('blur', function () {
       p.memo = ta.value.replace(/\s+$/, '');
@@ -1193,6 +1196,7 @@
     if (memoVal !== null) {
       ta.value = memoVal;
       ta.focus();
+      if (memoSel) ta.setSelectionRange(memoSel[0], memoSel[1]);
     }
     autosize(ta);
 
@@ -1333,6 +1337,7 @@
     var gSec = sec('GitHub');
     renderGithub(gSec, p);
     panelIn.appendChild(gSec);
+    panelIn.scrollTop = scrollTop;
   }
 
   /* ---------- 视图切换与跳转 ---------- */
@@ -2211,6 +2216,18 @@
   // 账户状态卡操作（issue #45）：重新验证 / 断开连接
   document.getElementById('ghRecheckBtn').addEventListener('click', renderGhAccount);
   document.getElementById('ghDisconnectBtn').addEventListener('click', function () {
+    var btn = document.getElementById('ghDisconnectBtn');
+    if (!btn.dataset.confirm) {
+      btn.dataset.confirm = '1';
+      btn.textContent = '再点一次确认断开';
+      setTimeout(function () {
+        delete btn.dataset.confirm;
+        btn.textContent = '断开连接';
+      }, 2000);
+      return;
+    }
+    delete btn.dataset.confirm;
+    btn.textContent = '断开连接';
     api.githubDisconnect().then(function () {
       state.settings = Object.assign({}, state.settings, { hasGithubToken: false, githubUsername: '' });
       fUsername.value = '';
@@ -2345,7 +2362,7 @@
     if (toolPickEl && !e.target.closest('.tool-pick') && !e.target.closest('.tool-btn')) closeToolPicker();
   });
 
-  // 键盘流：Esc 逐层关闭（选择器/补全/下拉 → 详情面板 → 设置 → 隐藏到托盘）；/ 聚焦搜索
+  // 键盘流：Esc 逐层关闭（选择器/补全/下拉 → 设置 → 详情面板 → 隐藏到托盘）；/ 聚焦搜索
   document.addEventListener('keydown', function (e) {
     var tag = (e.target.tagName || '').toLowerCase();
     var typing = tag === 'input' || tag === 'textarea' || e.target.isContentEditable;
@@ -2353,9 +2370,9 @@
       if (typing) return; // 输入框内的 Esc 由各控件自理
       if (toolPickEl) { closeToolPicker(); return; }
       if (anyDropOpen()) { closeDrops(); return; }
+      if (appEl.classList.contains('show-settings')) { hideSettings(); return; }
       if (state.selectedPath) { selectProject(null); return; }
-      if (appEl.classList.contains('show-settings')) hideSettings();
-      else api.winClose();
+      api.winClose();
       return;
     }
     if (e.key === '/' && !typing) {
