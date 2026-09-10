@@ -74,6 +74,11 @@
     return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
   }
 
+  // 与主进程 localDateStr 一致：AI 周报缓存的当天日期键
+  function localDateStr(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
   function flashBtn(b, text, ok) {
     if (b.dataset.busy) return;
     var orig = b.textContent;
@@ -202,17 +207,21 @@
     return selBranch(p) === p.branch;
   }
 
+  // 分支提交懒取：选中非当前分支时才跑 git log（issue #4）；缓存失效后再次调用即重新拉取
+  function ensureBranchDetail(p, name) {
+    if (!name || name === p.branch || state.branchDetail[p.path + ' ' + name]) return;
+    state.branchDetail[p.path + ' ' + name] = 'loading';
+    api.branchCommits(p.path, name).then(function (d) {
+      state.branchDetail[p.path + ' ' + name] = d || { lastCommitAt: null, commits: [] };
+      renderAll();
+    });
+  }
+
   function selectBranch(p, name) {
     if (name === p.branch) delete state.branchSel[p.path];
     else state.branchSel[p.path] = name;
     api.setPrefs({ branchSel: state.branchSel });
-    if (name !== p.branch && !state.branchDetail[p.path + ' ' + name]) {
-      state.branchDetail[p.path + ' ' + name] = 'loading';
-      api.branchCommits(p.path, name).then(function (d) {
-        state.branchDetail[p.path + ' ' + name] = d || { lastCommitAt: null, commits: [] };
-        renderAll();
-      });
-    }
+    ensureBranchDetail(p, name);
     renderAll();
   }
 
@@ -789,7 +798,7 @@
   /* ----- P0 · AI 周报（总览页独立模块，issue #32；手动触发，当天缓存；后台执行 issue #40） ----- */
   // 打开应用即有周报（issue #42）：今日无缓存时启动后自动生成一次（后台执行）；
   // 自动生成失败保持安静（不展示错误条），用户仍可手动点「生成周报」
-  var weeklyAutoTried = false;
+  var weeklyAutoDay = ''; // 自动生成标记与当天日期绑定：应用常驻跨天后复位，第二天无缓存时再自动生成一次
 
   function renderAiWeeklyEntry() {
     var card = document.getElementById('aiWeeklyCard');
@@ -819,8 +828,8 @@
       } else if (r && r.reason === 'pending') {
         startAiJob('weekly', { kind: 'weekly' });
         renderAiWeeklyEntry();
-      } else if (r && r.reason === 'no-cache' && !weeklyAutoTried) {
-        weeklyAutoTried = true;
+      } else if (r && r.reason === 'no-cache' && weeklyAutoDay !== localDateStr(new Date())) {
+        weeklyAutoDay = localDateStr(new Date());
         var j = startAiJob('weekly', { kind: 'weekly' });
         j.auto = true;
         renderAiWeeklyEntry();
@@ -1085,17 +1094,20 @@
       return;
     }
     renderPanel(p);
-    // README 摘要 / AI 会话痕迹明细按需懒取
-    if (!state.details[p.path]) {
-      state.details[p.path] = 'loading';
-      api.projectDetail(p.path).then(function (d) {
-        state.details[p.path] = d || { readme: '', aiSessions: [] };
-        if (state.selectedPath === p.path) {
-          var cur = findProject(p.path);
-          if (cur) renderPanel(cur);
-        }
-      }).catch(function () { state.details[p.path] = { readme: '', aiSessions: [] }; });
-    }
+    ensureDetail(p);
+  }
+
+  // README 摘要 / AI 会话痕迹明细按需懒取；缓存失效后再次调用即重新拉取
+  function ensureDetail(p) {
+    if (state.details[p.path]) return;
+    state.details[p.path] = 'loading';
+    api.projectDetail(p.path).then(function (d) {
+      state.details[p.path] = d || { readme: '', aiSessions: [] };
+      if (state.selectedPath === p.path) {
+        var cur = findProject(p.path);
+        if (cur) renderPanel(cur);
+      }
+    }).catch(function () { state.details[p.path] = { readme: '', aiSessions: [] }; });
   }
 
   function sec(title) {
@@ -1532,6 +1544,25 @@
     document.getElementById('scanLabel').textContent = on ? '扫描中' : '最后扫描';
   }
 
+  // 缓存失效：新板数据到达时，HEAD 已变的项目清掉 README 摘要/AI 会话明细与分支提交缓存，
+  // 否则旧内容会一直展到重启；面板正开在被清项目上时随即重新懒取
+  function invalidateDetailCaches(board) {
+    if (!state.board || !board) return;
+    var prevHead = {};
+    state.board.projects.forEach(function (p) { prevHead[p.path] = p.headSha; });
+    board.projects.forEach(function (p) {
+      if (!(p.path in prevHead) || prevHead[p.path] === p.headSha) return;
+      delete state.details[p.path];
+      Object.keys(state.branchDetail).forEach(function (k) {
+        if (k.indexOf(p.path + ' ') === 0) delete state.branchDetail[k];
+      });
+      if (state.selectedPath === p.path) {
+        ensureDetail(p);
+        ensureBranchDetail(p, selBranch(p));
+      }
+    });
+  }
+
   function load(force) {
     if (state.loading) return state.loadPromise; // 唤出重扫与定时 tick 去重，调用方挂在同一次在飞加载上
     state.loading = true;
@@ -1539,6 +1570,7 @@
     setScanning(true);
     var promise = force ? api.rescan() : api.getBoard();
     var p = promise.then(function (board) {
+      invalidateDetailCaches(board);
       state.board = board;
       renderAll();
       console.log('[devboard] rendered'); // 供 scripts/screenshot.js 等待
@@ -1561,6 +1593,7 @@
   api.onBoardPatch(function (board) {
     if (state.loading) return;
     state.awaitPatch = false;
+    invalidateDetailCaches(board);
     state.board = board;
     renderAll();
     setScanning(false);
@@ -2427,7 +2460,7 @@
     }
   });
 
-  api.onTick(function () { refresh(false); });
+  api.onTick(function () { refresh(false); renderAiWeeklyEntry(); }); // 唤出/定时刷新时周报一并重估：跨天后无缓存可再自动生成一次
   api.onShowSettings(function () { showSettings(); });
 
   /* ---------- 启动 ---------- */
