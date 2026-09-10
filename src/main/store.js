@@ -67,8 +67,10 @@ class Store {
     delete out.hasGithubToken;
     if (this._canSeal()) {
       out.githubTokenEnc = cfg.githubToken ? this.vault.seal(cfg.githubToken) : '';
+      delete out.githubToken;
+    } else {
+      out.githubToken = cfg.githubToken || ''; // 无加密能力时按注释承诺退回明文兜底
     }
-    delete out.githubToken;
     this.writeJson('config.json', out);
   }
 

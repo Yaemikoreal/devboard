@@ -47,7 +47,8 @@ function git(projectPath, args, timeout = 5000) {
   return gitSlotAcquire().then(
     () =>
       new Promise((resolve, reject) => {
-        execFile('git', ['-C', projectPath].concat(args), { timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+        // core.quotepath=false：非 ASCII 文件名按 UTF-8 原文输出，否则 porcelain 给八进制转义，dirtyFiles/dirtyMtime 解析不到真实路径
+        execFile('git', ['-C', projectPath, '-c', 'core.quotepath=false'].concat(args), { timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
           if (err) reject(err);
           else resolve(stdout.trim());
         });
@@ -215,23 +216,38 @@ async function codexSessionMap() {
   const map = new Map();
   const files = [];
   const root = path.join(HOME, '.codex', 'sessions');
+  // 逐层 readdir 各自容错：混入一个坏目录/无权限项不应让整个探测中断、丢掉其余结果
+  let years = [];
   try {
-    for (const y of (await fsp.readdir(root)).sort().reverse()) {
-      for (const m of (await fsp.readdir(path.join(root, y))).sort().reverse()) {
-        for (const d of (await fsp.readdir(path.join(root, y, m))).sort().reverse()) {
-          if (Date.parse(`${y}-${m}-${d}T00:00:00`) < now - 120 * DAY_MS) break; // 日期目录倒序，遇老即停
-          for (const f of await fsp.readdir(path.join(root, y, m, d))) {
-            if (!f.endsWith('.jsonl')) continue;
-            files.push(path.join(root, y, m, d, f));
-            if (files.length >= 400) break;
-          }
+    years = await fsp.readdir(root);
+  } catch { /* 无 codex 会话目录 */ }
+  for (const y of years.sort().reverse()) {
+    let months = [];
+    try {
+      months = await fsp.readdir(path.join(root, y));
+    } catch { continue; }
+    for (const m of months.sort().reverse()) {
+      let days = [];
+      try {
+        days = await fsp.readdir(path.join(root, y, m));
+      } catch { continue; }
+      for (const d of days.sort().reverse()) {
+        if (Date.parse(`${y}-${m}-${d}T00:00:00`) < now - 120 * DAY_MS) break; // 日期目录倒序，遇老即停
+        let names = [];
+        try {
+          names = await fsp.readdir(path.join(root, y, m, d));
+        } catch { continue; }
+        for (const f of names) {
+          if (!f.endsWith('.jsonl')) continue;
+          files.push(path.join(root, y, m, d, f));
           if (files.length >= 400) break;
         }
         if (files.length >= 400) break;
       }
       if (files.length >= 400) break;
     }
-  } catch { /* 无 codex 会话目录 */ }
+    if (files.length >= 400) break;
+  }
   await Promise.all(files.map(async (f) => {
     try {
       const fh = await fsp.open(f, 'r');

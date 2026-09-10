@@ -12,8 +12,9 @@ const MAX_OUTPUT = 4000; // 渲染层展示与缓存的文本上限
 
 // 引擎级错误特征：配额耗尽 / 鉴权失败 / 接口报错。
 // 实测 claude 配额耗尽时会立刻输出 429 错误但进程挂起不退出（SessionEnd hook 卡住），
-// 必须流式命中即快速失败，否则用户只能干等到超时（issue #41）
-const ENGINE_ERROR_RE = /API Error|error[^\n]{0,20}\b(?:401|403|429)\b|\b(?:401|403|429)\b|unauthorized|invalid[-_ ]?api[-_ ]?key|unrecognized_model|quota|insufficient|token plan|用量上限|余额不足/i;
+// 必须流式命中即快速失败，否则用户只能干等到超时（issue #41）。
+// 数字错误码（401/403/429）要求同行伴随错误语义词才判定：AI 正常中文输出也会提到这些数字，裸匹配会误伤引擎
+const ENGINE_ERROR_RE = /API Error|(?=[^\n]*(?:error|unauthorized|forbidden|rate.?limit|错误|未授权|超限))[^\n]*\b(?:401|403|429)\b|unauthorized|invalid[-_ ]?api[-_ ]?key|unrecognized_model|quota|insufficient|token plan|用量上限|余额不足/i;
 
 // 从原始输出中提取第一条引擎错误行（无则返回空串）
 function engineErrorLine(raw) {
@@ -68,6 +69,18 @@ function cleanOutput(raw, spec) {
     .slice(0, MAX_OUTPUT);
 }
 
+// 终止子进程：shell:true 时 child 是 cmd.exe 壳，直接 kill 只杀壳、真 AI 进程成孤儿；
+// Windows 下改用 taskkill /T 连带整棵进程树
+function killChild(child, spec) {
+  try {
+    if (spec.shell && process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => {});
+    } else {
+      child.kill();
+    }
+  } catch { /* 已退出 */ }
+}
+
 // 调用本机 CLI：返回 { ok, text, reason }；超时/启动失败/空输出均降级为 ok:false
 function runCli(cmd, prompt, opts) {
   const o = opts || {};
@@ -98,7 +111,7 @@ function runCli(cmd, prompt, opts) {
     };
     // 超时不等于没结果：进程「输出完毕但不退出」（如 claude SessionEnd hook 挂起）时采用已有输出（issue #41）
     const timer = setTimeout(() => {
-      try { child.kill(); } catch { /* 已退出 */ }
+      killChild(child, spec);
       const errLine = engineErrorLine(out) || engineErrorLine(errText);
       if (errLine) { finish(false, '引擎报错：' + errLine); return; }
       const partial = cleanOutput(out, spec);
@@ -111,7 +124,7 @@ function runCli(cmd, prompt, opts) {
     const checkStream = () => {
       const errLine = engineErrorLine(out) || engineErrorLine(errText);
       if (errLine) {
-        try { child.kill(); } catch { /* 已退出 */ }
+        killChild(child, spec);
         finish(false, '引擎报错：' + errLine);
       }
     };
@@ -125,6 +138,8 @@ function runCli(cmd, prompt, opts) {
       else if (code === 0 && text) finish(true);
       else finish(false, stripAnsi(errText).trim().split('\n')[0] || '退出码 ' + code);
     });
+    // 子进程启动即死时写 stdin 会触发 EPIPE，吞掉避免 uncaughtException
+    child.stdin.on('error', () => {});
     if (spec.stdin) child.stdin.write(prompt, 'utf8');
     child.stdin.end();
   });

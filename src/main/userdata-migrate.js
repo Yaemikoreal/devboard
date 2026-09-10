@@ -7,7 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_FILES = ['config.json', 'prefs.json', 'memos.json', 'scan-cache.json', 'github-cache.json', 'meta.json'];
+const DATA_FILES = ['config.json', 'prefs.json', 'memos.json', 'scan-cache.json', 'github-cache.json', 'meta.json', 'ai-cache.json'];
 
 // oldDirs 按优先级排列，使用第一个含 config.json 的目录
 function migrateUserData(newDir, oldDirs, log = console.log) {

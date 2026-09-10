@@ -20,6 +20,7 @@
     sortMode: 'manual', // manual / activity / name（issue #18，持久化在 prefs.sortMode）
     selectedPath: null, // 详情面板当前项目（issue #17）
     loading: false,
+    loadPromise: null, // 在飞 load 的 Promise：去重时复用，refresh spinner 不提前熄灭
     awaitPatch: false,
     branchSel: {}, // path -> 选中分支名（issue #4，持久化在 prefs.branchSel）
     branchDetail: {}, // path + ' ' + branch -> { lastCommitAt, commits } | 'loading'
@@ -184,8 +185,8 @@
     return pinned.concat(rest);
   }
 
-  // 拖拽只在手动位序 + 全部分带下可用（筛选子集上重排会破坏位序语义）
-  function canDrag() { return state.sortMode === 'manual' && state.band === 'all'; }
+  // 拖拽只在手动位序 + 全部分带 + 无 AI 筛选下可用（筛选子集上重排会破坏位序语义）
+  function canDrag() { return state.sortMode === 'manual' && state.band === 'all' && !state.aiFilter; }
 
   /* ---------- 分支选择（issue #4） ---------- */
   function selBranch(p) {
@@ -441,7 +442,9 @@
     var max = m.rows.length ? m.rows[0].count : 1;
     m.rows.forEach(function (r) {
       var row = el('div', 'stream-proj');
-      row.appendChild(el('span', 'nm', r.p.name));
+      var nm = el('span', 'nm', r.p.name);
+      nm.title = r.p.name;
+      row.appendChild(nm);
       row.appendChild(el('span', 'ct', r.count + ' 次提交'));
       var bar = el('span', 'bar');
       bar.style.width = Math.max(8, Math.round(r.count / max * 160)) + 'px';
@@ -460,12 +463,14 @@
     var list = document.getElementById('attnList');
     list.innerHTML = '';
     sub.textContent = board.attention.length
-      ? board.attention.length + ' 个项目有待处理信号'
+      ? board.attention.length + ' 个项目有警示标记'
       : '一切正常，暂无警示';
     board.attention.forEach(function (a) {
       var item = el('div', 'attn-item');
       item.appendChild(el('span', 'ic'));
-      item.appendChild(el('span', 'nm mono', a.name));
+      var nm = el('span', 'nm mono', a.name);
+      nm.title = a.name;
+      item.appendChild(nm);
       item.appendChild(el('span', 'ds', a.label));
       item.appendChild(el('span', 'mk'));
       item.addEventListener('click', function () { jumpToProject(a.path); });
@@ -958,11 +963,15 @@
     var row = el('div', 'row' + (state.selectedPath === p.path ? ' selected' : ''));
     row.setAttribute('data-band', p.band);
     row.dataset.path = p.path;
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
     if (canDrag()) row.draggable = true;
 
     var main = el('div', 'r-main');
     var top = el('div', 'r-top');
-    top.appendChild(el('span', 'r-name mono', p.name));
+    var name = el('span', 'r-name mono', p.name);
+    name.title = p.name;
+    top.appendChild(name);
     if (p.branch) top.appendChild(el('span', 'r-branch mono', p.branch));
     main.appendChild(top);
     main.appendChild(el('div', 'r-sub' + (p.memo ? '' : ' empty'), p.memo || '无备忘'));
@@ -994,6 +1003,14 @@
 
     row.addEventListener('click', function () {
       selectProject(state.selectedPath === p.path ? null : p.path);
+    });
+    // 键盘打开详情：焦点在行内控件（图钉/展开钮）时不触发行切换
+    row.addEventListener('keydown', function (e) {
+      if (e.target !== row) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        selectProject(state.selectedPath === p.path ? null : p.path);
+      }
     });
 
     // 手动位序下拖拽重排（issue #18）
@@ -1034,10 +1051,28 @@
     if (!state.board) return;
     var list = sortedProjects();
     if (!list.length) {
-      rowsEl.appendChild(el('div', 'rows-empty', state.board.projects.length ? '该分带下没有项目' : '还没有发现任何项目，去设置里添加扫描根目录'));
+      if (state.board.projects.length) rowsEl.appendChild(el('div', 'rows-empty', '该分带下没有项目'));
+      else rowsEl.appendChild(emptyGuide());
       return;
     }
     list.forEach(function (p) { rowsEl.appendChild(projectRow(p)); });
+  }
+
+  // 空项目引导卡：一句话简介 + 三步指引 + 打开设置主按钮
+  function emptyGuide() {
+    var box = el('div', 'board-empty');
+    box.appendChild(el('div', 't', '还没有发现任何项目'));
+    box.appendChild(el('div', 'be-desc', 'SignalBoard 自动聚合各项目的近况信号：提交、未提交改动、AI 会话痕迹、GitHub issues/PR，帮你一眼回忆起每个项目做到哪了。'));
+    var steps = el('ol', 'be-steps');
+    ['打开设置，添加扫描根目录', '用「扫描预览」确认能发现项目', '保存后自动开始扫描，项目随即展出'].forEach(function (s) {
+      steps.appendChild(el('li', null, s));
+    });
+    box.appendChild(steps);
+    var btn = el('button', 'btn solid', '打开设置');
+    btn.type = 'button';
+    btn.addEventListener('click', function () { showSettings(); });
+    box.appendChild(btn);
+    return box;
   }
 
   /* ---------- 详情面板（issue #17） ---------- */
@@ -1115,7 +1150,7 @@
       var msg = noToken ? '未配置 GitHub'
         : p.githubError ? '同步失败：' + p.githubError + '（稍后自动重试）'
         : p.githubOwned ? 'GitHub 数据同步中…（完成后自动展示）'
-        : '非本人仓库，不拉取 GitHub 数据';
+        : '非本人项目，不拉取 GitHub 数据';
       parent.appendChild(el('div', 'gh-empty' + (p.githubError ? ' bad' : ''), msg));
       return;
     }
@@ -1140,10 +1175,12 @@
   }
 
   function renderPanel(p) {
-    // 后台补丁重渲染时保住备忘编辑中的内容与焦点
+    // 后台补丁重渲染时保住备忘编辑中的内容/焦点/光标与面板滚动位置
     var memoLive = document.activeElement && document.activeElement.classList &&
       document.activeElement.classList.contains('memo-input') && panelIn.contains(document.activeElement);
     var memoVal = memoLive ? document.activeElement.value : null;
+    var memoSel = memoLive ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+    var scrollTop = panelIn.scrollTop;
     panelIn.innerHTML = '';
     var current = isCurrentBranch(p);
     var bd = branchDetailOf(p);
@@ -1178,7 +1215,8 @@
 
     // 备忘：可编辑，保存回填行（Enter / 失焦保存，Esc 还原）
     var ta = el('textarea', 'memo-input');
-    ta.value = p.memo || '';
+    var origMemo = p.memo || '';
+    ta.value = origMemo;
     ta.placeholder = '写点备忘…';
     ta.rows = 1;
     ta.addEventListener('input', function () {
@@ -1193,7 +1231,7 @@
     ta.addEventListener('keydown', function (ev) {
       ev.stopPropagation();
       if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ta.blur(); }
-      if (ev.key === 'Escape') { ta.value = p.memo || ''; ta.blur(); }
+      if (ev.key === 'Escape') { p.memo = origMemo; ta.value = origMemo; ta.blur(); }
     });
     ta.addEventListener('blur', function () {
       p.memo = ta.value.replace(/\s+$/, '');
@@ -1204,6 +1242,7 @@
     if (memoVal !== null) {
       ta.value = memoVal;
       ta.focus();
+      if (memoSel) ta.setSelectionRange(memoSel[0], memoSel[1]);
     }
     autosize(ta);
 
@@ -1344,6 +1383,7 @@
     var gSec = sec('GitHub');
     renderGithub(gSec, p);
     panelIn.appendChild(gSec);
+    panelIn.scrollTop = scrollTop;
   }
 
   /* ---------- 视图切换与跳转 ---------- */
@@ -1475,6 +1515,26 @@
   function renderSkeleton() {
     rowsEl.innerHTML = '';
     for (var i = 0; i < 6; i++) rowsEl.appendChild(el('div', 'skel'));
+    // 总览统计在首次成功加载前显示占位，避免误导性的 0
+    setStat('statTotal', '--', '个');
+    setStat('statCommits', '--', '次');
+    setStat('statAttn', '--', '项');
+  }
+
+  // 首屏加载失败：项目区骨架替换为错误条，重试按钮重新调 load
+  function renderLoadError() {
+    rowsEl.innerHTML = '';
+    var box = el('div', 'board-empty');
+    box.appendChild(el('div', 't', '加载失败'));
+    box.appendChild(el('div', null, '项目数据加载出错，请稍后重试'));
+    var retry = el('button', 'btn', '重试');
+    retry.type = 'button';
+    retry.addEventListener('click', function () {
+      renderSkeleton();
+      load(false);
+    });
+    box.appendChild(retry);
+    rowsEl.appendChild(box);
   }
 
   /* ---------- 数据 ---------- */
@@ -1504,12 +1564,12 @@
   }
 
   function load(force) {
-    if (state.loading) return Promise.resolve(); // 唤出重扫与定时 tick 去重
+    if (state.loading) return state.loadPromise; // 唤出重扫与定时 tick 去重，调用方挂在同一次在飞加载上
     state.loading = true;
     state.awaitPatch = false;
     setScanning(true);
     var promise = force ? api.rescan() : api.getBoard();
-    return promise.then(function (board) {
+    var p = promise.then(function (board) {
       invalidateDetailCaches(board);
       state.board = board;
       renderAll();
@@ -1518,10 +1578,15 @@
       if (board && board.fromCache) state.awaitPatch = true;
     }).catch(function (err) {
       console.error('board 加载失败', err);
+      // 首屏没有数据时骨架会永远停驻，换成可重试的错误条；已有旧板则保留
+      if (!state.board) renderLoadError();
     }).finally(function () {
       state.loading = false;
+      state.loadPromise = null;
       if (!state.awaitPatch) setScanning(false);
     });
+    state.loadPromise = p;
+    return p;
   }
 
   // 后台重扫补丁（issue #22）：整板替换渲染；若期间用户又在手动刷新则丢弃
@@ -1697,6 +1762,7 @@
   var fAiEngine = document.getElementById('fAiEngine');
   var deviceBox = document.getElementById('deviceBox');
   var deviceTimer = null;
+  var deviceGen = 0; // 轮询代次号：stopDeviceFlow 递增，作废旧轮询链上在飞的回调
   fHotkey.readOnly = true; // 热键通过按键捕捉录入
 
   /* ----- 子模块导航（issue #26）：面板常驻 DOM 仅切换显隐，未保存输入不丢 ----- */
@@ -1957,6 +2023,7 @@
   }
 
   function stopDeviceFlow() {
+    deviceGen += 1;
     if (deviceTimer) {
       clearTimeout(deviceTimer);
       deviceTimer = null;
@@ -1965,8 +2032,11 @@
   }
 
   function pollDevice(deviceCode, intervalSec, deadline) {
+    var gen = deviceGen;
     deviceTimer = setTimeout(function () {
+      if (gen !== deviceGen) return;
       api.githubDevicePoll(deviceCode).then(function (r) {
+        if (gen !== deviceGen) return;
         if (r.status === 'success') {
           stopDeviceFlow();
           state.settings = Object.assign({}, state.settings, { hasGithubToken: true, githubUsername: r.login || '' });
@@ -1989,12 +2059,14 @@
           ghAuthResult(false, '设备码已过期，请重新开始');
         }
       }).catch(function () {
+        if (gen !== deviceGen) return;
         if (Date.now() < deadline) pollDevice(deviceCode, intervalSec, deadline);
       });
     }, intervalSec * 1000);
   }
 
   function startDeviceFlow() {
+    stopDeviceFlow(); // 先作废旧轮询链，避免连点产生并行轮询
     var res = document.getElementById('ghAuthRes');
     res.textContent = '请求设备码…';
     res.className = 'res';
@@ -2013,8 +2085,12 @@
     });
   }
 
+  var firstRun = false; // 首次启动标记：自动打开设置并展示一次性欢迎提示
+
   function showSettings() {
     appEl.classList.add('show-settings');
+    document.getElementById('welcomeNote').classList.toggle('hidden', !firstRun);
+    firstRun = false;
     api.getSettings().then(function (cfg) {
       state.settings = cfg;
       rootsList.innerHTML = '';
@@ -2218,6 +2294,18 @@
   // 账户状态卡操作（issue #45）：重新验证 / 断开连接
   document.getElementById('ghRecheckBtn').addEventListener('click', renderGhAccount);
   document.getElementById('ghDisconnectBtn').addEventListener('click', function () {
+    var btn = document.getElementById('ghDisconnectBtn');
+    if (!btn.dataset.confirm) {
+      btn.dataset.confirm = '1';
+      btn.textContent = '再点一次确认断开';
+      setTimeout(function () {
+        delete btn.dataset.confirm;
+        btn.textContent = '断开连接';
+      }, 2000);
+      return;
+    }
+    delete btn.dataset.confirm;
+    btn.textContent = '断开连接';
     api.githubDisconnect().then(function () {
       state.settings = Object.assign({}, state.settings, { hasGithubToken: false, githubUsername: '' });
       fUsername.value = '';
@@ -2239,8 +2327,9 @@
     runCheck(fTerminal.value, res);
   });
 
-  // 热键录入器：聚焦后按组合键录入；Backspace/Delete 清空；Esc 取消
+  // 热键录入器：聚焦后按组合键录入；Backspace/Delete 清空；Esc 取消；Tab 放行让焦点正常移走
   fHotkey.addEventListener('keydown', function (e) {
+    if (e.key === 'Tab') return;
     e.preventDefault();
     e.stopPropagation();
     if (e.key === 'Escape') { fHotkey.blur(); return; }
@@ -2352,7 +2441,7 @@
     if (toolPickEl && !e.target.closest('.tool-pick') && !e.target.closest('.tool-btn')) closeToolPicker();
   });
 
-  // 键盘流：Esc 逐层关闭（选择器/补全/下拉 → 详情面板 → 设置 → 隐藏到托盘）；/ 聚焦搜索
+  // 键盘流：Esc 逐层关闭（选择器/补全/下拉 → 设置 → 详情面板 → 隐藏到托盘）；/ 聚焦搜索
   document.addEventListener('keydown', function (e) {
     var tag = (e.target.tagName || '').toLowerCase();
     var typing = tag === 'input' || tag === 'textarea' || e.target.isContentEditable;
@@ -2360,9 +2449,9 @@
       if (typing) return; // 输入框内的 Esc 由各控件自理
       if (toolPickEl) { closeToolPicker(); return; }
       if (anyDropOpen()) { closeDrops(); return; }
+      if (appEl.classList.contains('show-settings')) { hideSettings(); return; }
       if (state.selectedPath) { selectProject(null); return; }
-      if (appEl.classList.contains('show-settings')) hideSettings();
-      else api.winClose();
+      api.winClose();
       return;
     }
     if (e.key === '/' && !typing) {
@@ -2389,6 +2478,12 @@
     state.sortMode = (p && p.sortMode) || 'manual';
     document.getElementById('sortLabel').textContent = '排序：' + SORT_LABEL[state.sortMode];
     renderSortDrop();
+    if (!p || !p.onboarded) { // 首次启动：自动打开一次设置，引导配置扫描根目录
+      firstRun = true;
+      state.prefs = Object.assign({}, state.prefs, { onboarded: true });
+      api.setPrefs({ onboarded: true });
+      showSettings();
+    }
     if (state.board) renderAll();
   });
   loadAiTools();

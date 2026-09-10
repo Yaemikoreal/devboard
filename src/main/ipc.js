@@ -11,14 +11,23 @@ const { spawn, execFile } = require('child_process');
 const scanner = require('./scanner');
 const github = require('./github');
 const ai = require('./ai');
+const { DEFAULT_CONFIG } = require('./store');
 const { createGitWatcher } = require('./watcher');
 
 // 启动子进程并给出真实结果：立即非零退出视为失败，存活超过 800ms 视为成功
+// shell:true 时 Node 把 [cmd].concat(args).join(' ') 交给 cmd.exe 且不逐个加引号，
+// 含空格路径会被拆碎、& | " 等元字符有注入面；这里对含空白/元字符的参数自行加引号并转义内嵌引号，
+// 裸 token（如 start 后的 cmd）保持原样——start 会把首个带引号参数当作窗口标题
+const SHELL_ARG_NEEDS_QUOTE = /[\s"&|<>^%()]/;
+function quoteShellArg(a) {
+  const s = String(a);
+  return !s || SHELL_ARG_NEEDS_QUOTE.test(s) ? '"' + s.replace(/"/g, '\\"') + '"' : s;
+}
 function spawnResult(cmd, args, opts) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(cmd, args, Object.assign({ detached: true, stdio: 'ignore', shell: true }, opts));
+      child = spawn(cmd, args.map(quoteShellArg), Object.assign({ detached: true, stdio: 'ignore', shell: true }, opts));
     } catch {
       resolve(false);
       return;
@@ -67,7 +76,9 @@ function applySnoozes(projects, snoozes) {
 // 命令可用性校验：含路径的查文件存在，否则用 where 查 PATH。
 // 杀软扫描下本机进程创建可能需 1-3s，超时放宽到 10s 避免启动负载期误报未安装（issue #29 实测）
 function checkCommand(cmd) {
-  const first = String(cmd || '').trim().split(/\s+/)[0].replace(/^"|"$/g, '');
+  // 首 token 先匹配引号段："C:\Program Files\...\Code.exe" --flag 不应被解析成 C:\Program
+  const m = String(cmd || '').trim().match(/^"([^"]+)"|^(\S+)/);
+  const first = m ? m[1] || m[2] : '';
   if (!first) return Promise.resolve({ ok: false, reason: '命令为空' });
   if (/[\\/]/.test(first) || /\.(exe|cmd|bat)$/i.test(first)) {
     const exists = fs.existsSync(first);
@@ -180,6 +191,8 @@ function localDateStr(d) {
 function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   let refreshInFlight = false;
   let scanInFlight = false;
+  let scanPromise = null; // 在飞全量扫描：并发触发复用同一 Promise，避免重复双扫
+  let scanGeneration = 0; // 扫描代次号：新扫描落地后，旧扫描迟到的最终补丁直接丢弃
 
   // .git 文件监听：项目有提交/暂存变化时自动增量重扫该项目并推补丁（issue #25）
   const gitWatcher = createGitWatcher({
@@ -234,9 +247,17 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     };
   }
 
+  // 全量扫描入口：在飞时复用同一 Promise（首启 buildBoard 与渲染层 board:get 会并发触发）
+  function scanAndCache() {
+    if (scanPromise) return scanPromise;
+    const gen = ++scanGeneration;
+    scanPromise = doScanAndCache(gen).finally(() => { scanPromise = null; });
+    return scanPromise;
+  }
+
   // 全量扫描（HEAD 分档 + 3s 预算），成功后写磁盘缓存（issue #22/#23/#24）
   // 超预算的慢项目由 onLate 在真实扫描完成后回补缓存，避免永远拿不到数据
-  async function scanAndCache() {
+  async function doScanAndCache(gen) {
     const config = store.getConfig();
     const cache = store.getScanCache();
     gitWatcher.setScanning(true);
@@ -261,7 +282,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     }
     store.setScanCache(next);
     gitWatcher.syncWatchers(projects.map((p) => p.path)); // 对齐监听清单，顺带重建失效 watcher
-    return { projects, config, settled: projects.settled || Promise.resolve() };
+    return { projects, config, settled: projects.settled || Promise.resolve(), gen };
   }
 
   // 后台重扫：完成后给渲染层推补丁（issue #22）；在飞则去重
@@ -273,13 +294,14 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
       if (win && !win.isDestroyed()) win.webContents.send('board:patch', board);
     };
     scanAndCache()
-      .then(({ projects, config, settled }) => {
+      .then(({ projects, config, settled, gen }) => {
         const { board, stale } = assembleBoard(projects, config, false);
         maybeRefreshGithub(false, stale, projects, config);
         sendPatch(board);
         // 有降级条目时，等迟到的真实扫描全部落地后再推一次最终补丁
         if (projects.some((p) => p.degraded)) {
           settled.then(() => {
+            if (gen !== scanGeneration) return; // 已有更新扫描落地，过期补丁丢弃，避免盖回旧数据
             const cur = store.getScanCache();
             const finalProjects = projects.map((p) => (p.degraded && cur.projects[p.path]) || p);
             const { board: finalBoard } = assembleBoard(finalProjects, config, false);
@@ -309,7 +331,8 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
       const { board } = assembleBoard(projs, store.getConfig(), true);
       const win = getWindow && getWindow();
       if (win && !win.isDestroyed()) win.webContents.send('board:patch', board);
-    }).finally(() => { refreshInFlight = false; });
+    }).catch((err) => console.error('[devboard] GitHub 缓存刷新失败', err))
+      .finally(() => { refreshInFlight = false; });
   }
 
   // 历史安装自愈：token 已配置但 username 为空（旧版导入不落登录名，issue #44）时，
@@ -504,8 +527,22 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     return Object.assign({}, cfg, { githubToken: '', hasGithubToken: !!cfg.githubToken });
   });
 
+  // settings:set 白名单：仅 DEFAULT_CONFIG 已知字段可落盘，renderer 传入的未知 key 直接忽略；
+  // 数组字段拒绝非数组值（roots 另拒空数组，与 getConfig 有效性口径一致）——非法值保持原值，
+  // 避免经 setConfig 回写时被 getConfig 重置为默认 roots 而误清用户配置
+  const CONFIG_KEYS = new Set(Object.keys(DEFAULT_CONFIG));
+  const CONFIG_ARRAY_KEYS = new Set(['roots', 'extraPaths', 'blacklist', 'aiTools']);
   ipcMain.handle('settings:set', (_e, patch) => {
-    const p = Object.assign({}, patch || {});
+    const raw = Object.assign({}, patch || {});
+    const p = {};
+    for (const k of Object.keys(raw)) {
+      if (!CONFIG_KEYS.has(k)) continue;
+      if (CONFIG_ARRAY_KEYS.has(k)) {
+        if (!Array.isArray(raw[k])) continue;
+        if (k === 'roots' && raw[k].length === 0) continue;
+      }
+      p[k] = raw[k];
+    }
     if (!p.githubToken) delete p.githubToken; // 空值 = 不改动已存 token（清空走 github:importGh 失败态外的显式入口）
     const cfg = store.setConfig(p);
     applySettings(cfg); // 热键重注册 + 开机自启即时生效
