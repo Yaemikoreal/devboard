@@ -14,11 +14,19 @@ const ai = require('./ai');
 const { createGitWatcher } = require('./watcher');
 
 // 启动子进程并给出真实结果：立即非零退出视为失败，存活超过 800ms 视为成功
+// shell:true 时 Node 把 [cmd].concat(args).join(' ') 交给 cmd.exe 且不逐个加引号，
+// 含空格路径会被拆碎、& | " 等元字符有注入面；这里对含空白/元字符的参数自行加引号并转义内嵌引号，
+// 裸 token（如 start 后的 cmd）保持原样——start 会把首个带引号参数当作窗口标题
+const SHELL_ARG_NEEDS_QUOTE = /[\s"&|<>^%()]/;
+function quoteShellArg(a) {
+  const s = String(a);
+  return !s || SHELL_ARG_NEEDS_QUOTE.test(s) ? '"' + s.replace(/"/g, '\\"') + '"' : s;
+}
 function spawnResult(cmd, args, opts) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(cmd, args, Object.assign({ detached: true, stdio: 'ignore', shell: true }, opts));
+      child = spawn(cmd, args.map(quoteShellArg), Object.assign({ detached: true, stdio: 'ignore', shell: true }, opts));
     } catch {
       resolve(false);
       return;
@@ -67,7 +75,9 @@ function applySnoozes(projects, snoozes) {
 // 命令可用性校验：含路径的查文件存在，否则用 where 查 PATH。
 // 杀软扫描下本机进程创建可能需 1-3s，超时放宽到 10s 避免启动负载期误报未安装（issue #29 实测）
 function checkCommand(cmd) {
-  const first = String(cmd || '').trim().split(/\s+/)[0].replace(/^"|"$/g, '');
+  // 首 token 先匹配引号段："C:\Program Files\...\Code.exe" --flag 不应被解析成 C:\Program
+  const m = String(cmd || '').trim().match(/^"([^"]+)"|^(\S+)/);
+  const first = m ? m[1] || m[2] : '';
   if (!first) return Promise.resolve({ ok: false, reason: '命令为空' });
   if (/[\\/]/.test(first) || /\.(exe|cmd|bat)$/i.test(first)) {
     const exists = fs.existsSync(first);
