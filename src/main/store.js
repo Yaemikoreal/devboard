@@ -61,6 +61,11 @@ class Store {
     return !!(this.vault && this.vault.available());
   }
 
+  // 设置页据此提示「当前环境无法加密存储」（issue #65）：无 keyring 环境下 token 退回明文落盘
+  cryptoAvailable() {
+    return this._canSeal();
+  }
+
   // 落盘前把 githubToken 转为 githubTokenEnc（加密 base64），config.json 不留明文
   _writeConfig(cfg) {
     const out = Object.assign({}, cfg);

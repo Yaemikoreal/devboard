@@ -32,6 +32,7 @@
     details: {}, // path -> { readme, aiSessions } | 'loading'（issue #17 懒取）
     streamShown: 3, // 活动流默认展示近 3 个月，「显示更早的活动」展开
     heatMonth: {}, // path -> 详情面板月份热力图翻页偏移（0 = 当月，-1 上一月；issue #34）
+    panelPath: null, // 详情面板上次渲染的项目 path：仅同项目重渲染时恢复滚动位置（issue #63）
   };
 
   var appEl = document.getElementById('app');
@@ -1178,9 +1179,11 @@
     // 后台补丁重渲染时保住备忘编辑中的内容/焦点/光标与面板滚动位置
     var memoLive = document.activeElement && document.activeElement.classList &&
       document.activeElement.classList.contains('memo-input') && panelIn.contains(document.activeElement);
-    var memoVal = memoLive ? document.activeElement.value : null;
-    var memoSel = memoLive ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
-    var scrollTop = panelIn.scrollTop;
+    var memoTa = memoLive ? document.activeElement : null; // 旧 textarea：编辑会话基准随其 dataset 交接（issue #64）
+    var memoVal = memoLive ? memoTa.value : null;
+    var memoSel = memoLive ? [memoTa.selectionStart, memoTa.selectionEnd] : null;
+    // 换项目时面板从顶部开始；同一项目的后台补丁重渲染才保留滚动位置（issue #63）
+    var scrollTop = state.panelPath === p.path ? panelIn.scrollTop : 0;
     panelIn.innerHTML = '';
     var current = isCurrentBranch(p);
     var bd = branchDetailOf(p);
@@ -1215,7 +1218,11 @@
 
     // 备忘：可编辑，保存回填行（Enter / 失焦保存，Esc 还原）
     var ta = el('textarea', 'memo-input');
-    var origMemo = p.memo || '';
+    // Esc 还原基准 = 本次编辑会话起点（issue #64）：编辑中途的后台重绘会即时回填 p.memo，
+    // 不能再以 p.memo 为基准；会话起点挂在旧 textarea 的 dataset 上随重绘交接
+    // （须在面板清空前捕获旧节点，innerHTML 清空后 activeElement 已落到 body）
+    var origMemo = (memoTa && typeof memoTa.dataset.memoOrig === 'string') ? memoTa.dataset.memoOrig : (p.memo || '');
+    ta.dataset.memoOrig = origMemo;
     ta.value = origMemo;
     ta.placeholder = '写点备忘…';
     ta.rows = 1;
@@ -1383,6 +1390,7 @@
     var gSec = sec('GitHub');
     renderGithub(gSec, p);
     panelIn.appendChild(gSec);
+    state.panelPath = p.path;
     panelIn.scrollTop = scrollTop;
   }
 
@@ -1682,8 +1690,50 @@
         '--cell-empty': 'rgba(23,32,26,.06)', '--fade-rgb': '233,239,229',
       },
     },
+    sakura: {
+      label: '樱粉', accentDefault: '#ec4899',
+      vars: {
+        '--bg': '#f6eff0', '--card': '#fdfbf9', '--well': '#eee2e3',
+        '--ink': '#211a1c', '--ink-2': '#53474b', '--ink-3': '#8d7d81',
+        '--line': 'rgba(33,26,28,.09)', '--tile': '#382d31', '--tile-ink': '#fdfbf9', '--tile-ink2': '#b1a1a5',
+        '--shadow-1': '0 1px 2px rgba(33,26,28,.04),0 14px 34px rgba(33,26,28,.05)',
+        '--shadow-2': '0 2px 6px rgba(33,26,28,.06),0 22px 48px rgba(33,26,28,.09)',
+        '--btn-line': 'rgba(33,26,28,.16)', '--btn-fail-bg': '#e8b4b0',
+        '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#b3a9a4', '--band-arch': '#ddd2d0',
+        /* 透玻璃背景板：玫瑰灰底，桃光团转粉、青光收敛 */
+        '--bg-art': '#f3e9ea',
+        '--blob-2': 'rgba(158,196,167,.4)', '--blob-3': 'rgba(238,203,200,.8)', '--blob-4': 'rgba(179,199,216,.4)',
+        '--glass-card': 'rgba(253,251,249,.6)', '--glass-line': 'rgba(255,255,255,.62)',
+        '--glass-shadow': '0 1px 2px rgba(33,26,28,.05),0 22px 52px rgba(33,26,28,.09),inset 0 1px 0 rgba(255,255,255,.7)',
+        '--glass-tile': 'rgba(56,45,49,.9)', '--glass-tile-line': 'rgba(255,255,255,.13)',
+        '--glass-tile-shadow': '0 24px 56px rgba(33,26,28,.3),inset 0 1px 0 rgba(255,255,255,.1)',
+        '--glass-well': 'rgba(253,251,249,.5)',
+        '--cell-empty': 'rgba(33,26,28,.06)', '--fade-rgb': '243,233,234',
+      },
+    },
+    iris: {
+      label: '紫藤', accentDefault: '#8b5cf6',
+      vars: {
+        '--bg': '#f1f0f6', '--card': '#fbfbfd', '--well': '#e4e3ee',
+        '--ink': '#1e1b26', '--ink-2': '#4a4656', '--ink-3': '#847f92',
+        '--line': 'rgba(30,27,38,.09)', '--tile': '#302c3d', '--tile-ink': '#fbfbfd', '--tile-ink2': '#a29cae',
+        '--shadow-1': '0 1px 2px rgba(30,27,38,.04),0 14px 34px rgba(30,27,38,.05)',
+        '--shadow-2': '0 2px 6px rgba(30,27,38,.06),0 22px 48px rgba(30,27,38,.09)',
+        '--btn-line': 'rgba(30,27,38,.16)', '--btn-fail-bg': '#e8b4b0',
+        '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#aca7b5', '--band-arch': '#d8d6e0',
+        /* 透玻璃背景板：薰衣草灰底，顶部光团转紫 */
+        '--bg-art': '#eceaf2',
+        '--blob-2': 'rgba(158,196,167,.4)', '--blob-3': 'rgba(223,205,189,.6)', '--blob-4': 'rgba(190,183,220,.5)',
+        '--glass-card': 'rgba(251,251,253,.6)', '--glass-line': 'rgba(255,255,255,.64)',
+        '--glass-shadow': '0 1px 2px rgba(30,27,38,.05),0 22px 52px rgba(30,27,38,.09),inset 0 1px 0 rgba(255,255,255,.72)',
+        '--glass-tile': 'rgba(48,44,61,.9)', '--glass-tile-line': 'rgba(255,255,255,.13)',
+        '--glass-tile-shadow': '0 24px 56px rgba(30,27,38,.3),inset 0 1px 0 rgba(255,255,255,.1)',
+        '--glass-well': 'rgba(251,251,253,.5)',
+        '--cell-empty': 'rgba(30,27,38,.06)', '--fade-rgb': '236,234,242',
+      },
+    },
     dark: {
-      label: '暗夜', accentDefault: '#f5d90a',
+      label: '暗夜', accentDefault: '#f5d90a', dimBlob: true,
       vars: {
         '--bg': '#1b1915', '--card': '#26231d', '--well': '#353126',
         '--ink': '#f0ece1', '--ink-2': '#c8c2b2', '--ink-3': '#8a8474',
@@ -1702,6 +1752,30 @@
         '--glass-well': 'rgba(38,35,29,.5)',
         '--cell-empty': 'rgba(240,236,225,.08)', '--fade-rgb': '22,20,15',
         '--tile-line': 'rgba(24,24,24,.1)', '--tile-ic': 'rgba(24,24,24,.3)',
+        '--on-accent': '#1b1915',
+      },
+    },
+    abyss: {
+      label: '夜幕', accentDefault: '#60a5fa', dimBlob: true,
+      vars: {
+        '--bg': '#151a21', '--card': '#1e242e', '--well': '#2c333f',
+        '--ink': '#e9edf3', '--ink-2': '#c2c9d4', '--ink-3': '#7f8894',
+        '--line': 'rgba(233,237,243,.10)', '--tile': '#e4e9f0', '--tile-ink': '#151a21', '--tile-ink2': '#5c6570',
+        '--shadow-1': '0 1px 2px rgba(0,0,0,.30),0 14px 34px rgba(0,0,0,.35)',
+        '--shadow-2': '0 2px 6px rgba(0,0,0,.35),0 22px 48px rgba(0,0,0,.45)',
+        '--btn-line': 'rgba(233,237,243,.18)', '--btn-fail-bg': '#7a3d3a',
+        '--band-active': '#d98e32', '--band-cool': '#6b8296', '--band-stale': '#5b6470', '--band-arch': '#414a56',
+        /* 透玻璃背景板：藏青黑底 + 低明度光团，冷蓝加重；关注卡（浅色 tile）用浅色玻璃 */
+        '--bg-art': '#10141a',
+        '--blob-2': 'rgba(158,196,167,.2)', '--blob-3': 'rgba(223,205,189,.12)', '--blob-4': 'rgba(120,160,220,.25)',
+        '--glass-card': 'rgba(30,36,46,.55)', '--glass-line': 'rgba(255,255,255,.09)',
+        '--glass-shadow': '0 1px 2px rgba(0,0,0,.3),0 22px 52px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.06)',
+        '--glass-tile': 'rgba(228,233,240,.88)', '--glass-tile-line': 'rgba(24,24,24,.12)',
+        '--glass-tile-shadow': '0 24px 56px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.35)',
+        '--glass-well': 'rgba(30,36,46,.5)',
+        '--cell-empty': 'rgba(233,237,243,.08)', '--fade-rgb': '16,20,26',
+        '--tile-line': 'rgba(24,24,24,.1)', '--tile-ic': 'rgba(24,24,24,.3)',
+        '--on-accent': '#151a21',
       },
     },
   };
@@ -1727,20 +1801,27 @@
     var c = hexToRgb(hex);
     return c ? 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + alpha + ')' : hex;
   }
-  // 应用整体主题：先铺主题 token，再从强调色派生阶梯（热力图/高亮/光晕/聚焦环）
+  // 应用整体主题：先铺主题 token，再从强调色派生阶梯（热力图/高亮/光晕/聚焦环）。
+  // 只覆写不清理会让上一主题的私有 token（如深色主题的 --tile-line）残留（issue #68）：
+  // 切主题前先撤掉上一套里有、新套里没有的内联属性，回落至 :root 默认值
+  var appliedThemeKeys = [];
   function applyTheme(themeId, accent) {
     var t = THEMES[themeId] || THEMES.warm;
     if (!hexToRgb(accent)) accent = t.accentDefault;
     var st = document.documentElement.style;
+    appliedThemeKeys.forEach(function (k) {
+      if (!(k in t.vars)) st.removeProperty(k);
+    });
     Object.keys(t.vars).forEach(function (k) { st.setProperty(k, t.vars[k]); });
+    appliedThemeKeys = Object.keys(t.vars);
     st.setProperty('--accent', accent);
     st.setProperty('--accent-soft', mixHex(accent, '#ffffff', 0.55));
     st.setProperty('--accent-deep', mixHex(accent, '#000000', 0.12));
     st.setProperty('--accent-hl', rgbaOf(accent, 0.55));
     st.setProperty('--accent-glow', rgbaOf(accent, 0.45));
     st.setProperty('--accent-ring', rgbaOf(accent, 0.25));
-    // 右上光团跟随强调色；暗夜主题降低明度避免糊成一片
-    st.setProperty('--blob-1', rgbaOf(accent, t === THEMES.dark ? 0.45 : 0.55));
+    // 右上光团跟随强调色；深色主题降低明度避免糊成一片
+    st.setProperty('--blob-1', rgbaOf(accent, t.dimBlob ? 0.45 : 0.55));
   }
   function savedTheme() {
     var t = (state.settings && state.settings.theme) || {};
@@ -1978,10 +2059,16 @@
   /* ----- GitHub 鉴权（issue #12） ----- */
   function ghStateText() {
     var e = document.getElementById('ghConnState');
+    // 无 safeStorage 能力的环境（典型如无 keyring 的 Linux）token 明文落盘，如实告知（issue #65）
+    var enc = !state.settings || state.settings.tokenEncrypted !== false;
     if (state.settings && state.settings.hasGithubToken) {
-      e.textContent = '已连接 · token 经系统加密存储（输入新 token 可更换）';
+      e.textContent = enc
+        ? '已连接 · token 经系统加密存储（输入新 token 可更换）'
+        : '已连接 · 当前环境无法加密存储，token 以明文保存在本地配置文件中（输入新 token 可更换）';
     } else {
-      e.textContent = '未连接 · 推荐「设备码授权」或「从 gh CLI 导入」';
+      e.textContent = enc
+        ? '未连接 · 推荐「设备码授权」或「从 gh CLI 导入」'
+        : '未连接 · 注意：当前环境无法加密存储，授权后 token 将以明文保存在本地配置文件中';
     }
     fToken.placeholder = (state.settings && state.settings.hasGithubToken) ? '已保存（输入以更换）' : '粘贴 token';
   }
@@ -2067,10 +2154,12 @@
 
   function startDeviceFlow() {
     stopDeviceFlow(); // 先作废旧轮询链，避免连点产生并行轮询
+    var gen = deviceGen; // 在飞启动请求同样受代次保护（issue #62）：关设置页后回调直接丢弃
     var res = document.getElementById('ghAuthRes');
     res.textContent = '请求设备码…';
     res.className = 'res';
     api.githubDeviceStart().then(function (r) {
+      if (gen !== deviceGen) return;
       if (!r.ok) {
         ghAuthResult(false, r.reason || '无法开始设备码授权');
         return;

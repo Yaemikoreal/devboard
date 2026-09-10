@@ -242,7 +242,7 @@
           <div class="set-pane" id="pane-github">
             <div class="set-group">
               <h3>GitHub</h3>
-              <div class="group-desc">仅拉取 owner 是本人的仓库的开放 issues/PR（10 分钟缓存）；fork 的上游仓库自动跳过。Token 经系统加密存储，不落明文（issue #12）</div>
+              <div class="group-desc">仅拉取 owner 是本人的仓库的开放 issues/PR（10 分钟缓存）；fork 的上游仓库自动跳过。Token 优先经系统加密存储；无加密能力的环境退回明文兜底并在下方如实标注（issue #12/#65）</div>
               <div class="field">
                 <label>连接 GitHub</label>
                 <!-- 账户状态卡（issue #45）：已连接时展示头像 / 用户名 / 连通性，可重新验证或断开 -->

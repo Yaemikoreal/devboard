@@ -521,10 +521,15 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     return scanner.projectDetail(p);
   });
 
-  // token 不下发渲染层：只给「是否已配置」，磁盘与 IPC 全程无明文（issue #12）
+  // token 不下发渲染层：只给「是否已配置」，磁盘与 IPC 全程无明文（issue #12）；
+  // tokenEncrypted 标记系统加密能力，false 时 token 以明文落盘，设置页给出提示（issue #65）
   ipcMain.handle('settings:get', () => {
     const cfg = store.getConfig();
-    return Object.assign({}, cfg, { githubToken: '', hasGithubToken: !!cfg.githubToken });
+    return Object.assign({}, cfg, {
+      githubToken: '',
+      hasGithubToken: !!cfg.githubToken,
+      tokenEncrypted: store.cryptoAvailable(),
+    });
   });
 
   // settings:set 白名单：仅 DEFAULT_CONFIG 已知字段可落盘，renderer 传入的未知 key 直接忽略；
@@ -546,7 +551,11 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     if (!p.githubToken) delete p.githubToken; // 空值 = 不改动已存 token（清空走 github:importGh 失败态外的显式入口）
     const cfg = store.setConfig(p);
     applySettings(cfg); // 热键重注册 + 开机自启即时生效
-    return Object.assign({}, cfg, { githubToken: '', hasGithubToken: !!cfg.githubToken });
+    return Object.assign({}, cfg, {
+      githubToken: '',
+      hasGithubToken: !!cfg.githubToken,
+      tokenEncrypted: store.cryptoAvailable(),
+    });
   });
 
   // 保存设置后由渲染层查询热键注册结果（空串 = 成功）
