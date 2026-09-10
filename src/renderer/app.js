@@ -1026,10 +1026,28 @@
     if (!state.board) return;
     var list = sortedProjects();
     if (!list.length) {
-      rowsEl.appendChild(el('div', 'rows-empty', state.board.projects.length ? '该分带下没有项目' : '还没有发现任何项目，去设置里添加扫描根目录'));
+      if (state.board.projects.length) rowsEl.appendChild(el('div', 'rows-empty', '该分带下没有项目'));
+      else rowsEl.appendChild(emptyGuide());
       return;
     }
     list.forEach(function (p) { rowsEl.appendChild(projectRow(p)); });
+  }
+
+  // 空项目引导卡：一句话简介 + 三步指引 + 打开设置主按钮
+  function emptyGuide() {
+    var box = el('div', 'board-empty');
+    box.appendChild(el('div', 't', '还没有发现任何项目'));
+    box.appendChild(el('div', 'be-desc', 'SignalBoard 自动聚合各项目的近况信号：提交、未提交改动、AI 会话痕迹、GitHub issues/PR，帮你一眼回忆起每个项目做到哪了。'));
+    var steps = el('ol', 'be-steps');
+    ['打开设置，添加扫描根目录', '用「扫描预览」确认能发现项目', '保存后自动开始扫描，项目随即展出'].forEach(function (s) {
+      steps.appendChild(el('li', null, s));
+    });
+    box.appendChild(steps);
+    var btn = el('button', 'btn solid', '打开设置');
+    btn.type = 'button';
+    btn.addEventListener('click', function () { showSettings(); });
+    box.appendChild(btn);
+    return box;
   }
 
   /* ---------- 详情面板（issue #17） ---------- */
@@ -2011,8 +2029,12 @@
     });
   }
 
+  var firstRun = false; // 首次启动标记：自动打开设置并展示一次性欢迎提示
+
   function showSettings() {
     appEl.classList.add('show-settings');
+    document.getElementById('welcomeNote').classList.toggle('hidden', !firstRun);
+    firstRun = false;
     api.getSettings().then(function (cfg) {
       state.settings = cfg;
       rootsList.innerHTML = '';
@@ -2399,6 +2421,12 @@
     state.sortMode = (p && p.sortMode) || 'manual';
     document.getElementById('sortLabel').textContent = '排序：' + SORT_LABEL[state.sortMode];
     renderSortDrop();
+    if (!p || !p.onboarded) { // 首次启动：自动打开一次设置，引导配置扫描根目录
+      firstRun = true;
+      state.prefs = Object.assign({}, state.prefs, { onboarded: true });
+      api.setPrefs({ onboarded: true });
+      showSettings();
+    }
     if (state.board) renderAll();
   });
   loadAiTools();
