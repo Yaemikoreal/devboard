@@ -68,6 +68,18 @@ function cleanOutput(raw, spec) {
     .slice(0, MAX_OUTPUT);
 }
 
+// 终止子进程：shell:true 时 child 是 cmd.exe 壳，直接 kill 只杀壳、真 AI 进程成孤儿；
+// Windows 下改用 taskkill /T 连带整棵进程树
+function killChild(child, spec) {
+  try {
+    if (spec.shell && process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => {});
+    } else {
+      child.kill();
+    }
+  } catch { /* 已退出 */ }
+}
+
 // 调用本机 CLI：返回 { ok, text, reason }；超时/启动失败/空输出均降级为 ok:false
 function runCli(cmd, prompt, opts) {
   const o = opts || {};
@@ -98,7 +110,7 @@ function runCli(cmd, prompt, opts) {
     };
     // 超时不等于没结果：进程「输出完毕但不退出」（如 claude SessionEnd hook 挂起）时采用已有输出（issue #41）
     const timer = setTimeout(() => {
-      try { child.kill(); } catch { /* 已退出 */ }
+      killChild(child, spec);
       const errLine = engineErrorLine(out) || engineErrorLine(errText);
       if (errLine) { finish(false, '引擎报错：' + errLine); return; }
       const partial = cleanOutput(out, spec);
@@ -111,7 +123,7 @@ function runCli(cmd, prompt, opts) {
     const checkStream = () => {
       const errLine = engineErrorLine(out) || engineErrorLine(errText);
       if (errLine) {
-        try { child.kill(); } catch { /* 已退出 */ }
+        killChild(child, spec);
         finish(false, '引擎报错：' + errLine);
       }
     };
@@ -125,6 +137,8 @@ function runCli(cmd, prompt, opts) {
       else if (code === 0 && text) finish(true);
       else finish(false, stripAnsi(errText).trim().split('\n')[0] || '退出码 ' + code);
     });
+    // 子进程启动即死时写 stdin 会触发 EPIPE，吞掉避免 uncaughtException
+    child.stdin.on('error', () => {});
     if (spec.stdin) child.stdin.write(prompt, 'utf8');
     child.stdin.end();
   });
