@@ -12,8 +12,9 @@ const MAX_OUTPUT = 4000; // 渲染层展示与缓存的文本上限
 
 // 引擎级错误特征：配额耗尽 / 鉴权失败 / 接口报错。
 // 实测 claude 配额耗尽时会立刻输出 429 错误但进程挂起不退出（SessionEnd hook 卡住），
-// 必须流式命中即快速失败，否则用户只能干等到超时（issue #41）
-const ENGINE_ERROR_RE = /API Error|error[^\n]{0,20}\b(?:401|403|429)\b|\b(?:401|403|429)\b|unauthorized|invalid[-_ ]?api[-_ ]?key|unrecognized_model|quota|insufficient|token plan|用量上限|余额不足/i;
+// 必须流式命中即快速失败，否则用户只能干等到超时（issue #41）。
+// 数字错误码（401/403/429）要求同行伴随错误语义词才判定：AI 正常中文输出也会提到这些数字，裸匹配会误伤引擎
+const ENGINE_ERROR_RE = /API Error|(?=[^\n]*(?:error|unauthorized|forbidden|rate.?limit|错误|未授权|超限))[^\n]*\b(?:401|403|429)\b|unauthorized|invalid[-_ ]?api[-_ ]?key|unrecognized_model|quota|insufficient|token plan|用量上限|余额不足/i;
 
 // 从原始输出中提取第一条引擎错误行（无则返回空串）
 function engineErrorLine(raw) {

@@ -1664,6 +1664,7 @@
   var fAiEngine = document.getElementById('fAiEngine');
   var deviceBox = document.getElementById('deviceBox');
   var deviceTimer = null;
+  var deviceGen = 0; // 轮询代次号：stopDeviceFlow 递增，作废旧轮询链上在飞的回调
   fHotkey.readOnly = true; // 热键通过按键捕捉录入
 
   /* ----- 子模块导航（issue #26）：面板常驻 DOM 仅切换显隐，未保存输入不丢 ----- */
@@ -1924,6 +1925,7 @@
   }
 
   function stopDeviceFlow() {
+    deviceGen += 1;
     if (deviceTimer) {
       clearTimeout(deviceTimer);
       deviceTimer = null;
@@ -1932,8 +1934,11 @@
   }
 
   function pollDevice(deviceCode, intervalSec, deadline) {
+    var gen = deviceGen;
     deviceTimer = setTimeout(function () {
+      if (gen !== deviceGen) return;
       api.githubDevicePoll(deviceCode).then(function (r) {
+        if (gen !== deviceGen) return;
         if (r.status === 'success') {
           stopDeviceFlow();
           state.settings = Object.assign({}, state.settings, { hasGithubToken: true, githubUsername: r.login || '' });
@@ -1956,12 +1961,14 @@
           ghAuthResult(false, '设备码已过期，请重新开始');
         }
       }).catch(function () {
+        if (gen !== deviceGen) return;
         if (Date.now() < deadline) pollDevice(deviceCode, intervalSec, deadline);
       });
     }, intervalSec * 1000);
   }
 
   function startDeviceFlow() {
+    stopDeviceFlow(); // 先作废旧轮询链，避免连点产生并行轮询
     var res = document.getElementById('ghAuthRes');
     res.textContent = '请求设备码…';
     res.className = 'res';
