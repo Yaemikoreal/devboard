@@ -25,28 +25,35 @@ function parseGitHubRemote(url) {
 // 单仓拉取：12s 超时 + 至多 3 次尝试（递增退避）。
 // 本机到 api.github.com 偶发 TLS 断连，单次失败率不低（issue #44/#46 实测），
 // 多一次尝试可把「两次都撞上断连」的概率再压一个量级
+// 跟随分页拉全量（返回不足整页即末页），5 页封顶防失控：issue+PR 超 500 的仓库罕见
+const MAX_PAGES = 5;
 async function fetchIssues(owner, repo, token) {
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12000);
     try {
-      const res = await fetch(
-        `https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=100`,
-        {
-          signal: ctrl.signal,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/vnd.github+json',
-            'User-Agent': 'devboard',
-            'X-GitHub-Api-Version': '2022-11-28',
-          },
-        }
-      );
-      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-      const list = await res.json();
-      const issues = list.filter((it) => !it.pull_request);
-      const prs = list.filter((it) => it.pull_request);
+      const all = [];
+      for (let page = 1; page <= MAX_PAGES; page++) {
+        const res = await fetch(
+          `https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=100&page=${page}`,
+          {
+            signal: ctrl.signal,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/vnd.github+json',
+              'User-Agent': 'devboard',
+              'X-GitHub-Api-Version': '2022-11-28',
+            },
+          }
+        );
+        if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+        const list = await res.json();
+        all.push.apply(all, list);
+        if (list.length < 100) break; // 不足整页 = 已到末页
+      }
+      const issues = all.filter((it) => !it.pull_request);
+      const prs = all.filter((it) => it.pull_request);
       const toItem = (it, type) => ({ type, number: it.number, title: it.title, url: it.html_url });
       return {
         owner,

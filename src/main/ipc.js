@@ -11,6 +11,7 @@ const { spawn, execFile } = require('child_process');
 const scanner = require('./scanner');
 const github = require('./github');
 const ai = require('./ai');
+const { DEFAULT_CONFIG } = require('./store');
 const { createGitWatcher } = require('./watcher');
 
 // 启动子进程并给出真实结果：立即非零退出视为失败，存活超过 800ms 视为成功
@@ -526,8 +527,22 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     return Object.assign({}, cfg, { githubToken: '', hasGithubToken: !!cfg.githubToken });
   });
 
+  // settings:set 白名单：仅 DEFAULT_CONFIG 已知字段可落盘，renderer 传入的未知 key 直接忽略；
+  // 数组字段拒绝非数组值（roots 另拒空数组，与 getConfig 有效性口径一致）——非法值保持原值，
+  // 避免经 setConfig 回写时被 getConfig 重置为默认 roots 而误清用户配置
+  const CONFIG_KEYS = new Set(Object.keys(DEFAULT_CONFIG));
+  const CONFIG_ARRAY_KEYS = new Set(['roots', 'extraPaths', 'blacklist', 'aiTools']);
   ipcMain.handle('settings:set', (_e, patch) => {
-    const p = Object.assign({}, patch || {});
+    const raw = Object.assign({}, patch || {});
+    const p = {};
+    for (const k of Object.keys(raw)) {
+      if (!CONFIG_KEYS.has(k)) continue;
+      if (CONFIG_ARRAY_KEYS.has(k)) {
+        if (!Array.isArray(raw[k])) continue;
+        if (k === 'roots' && raw[k].length === 0) continue;
+      }
+      p[k] = raw[k];
+    }
     if (!p.githubToken) delete p.githubToken; // 空值 = 不改动已存 token（清空走 github:importGh 失败态外的显式入口）
     const cfg = store.setConfig(p);
     applySettings(cfg); // 热键重注册 + 开机自启即时生效
