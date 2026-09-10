@@ -20,42 +20,63 @@ function parseGitHubRemote(url) {
   return { owner: m[1], repo: m[2] };
 }
 
+// 单仓拉取：15s 超时 + 失败重试一次（本机到 api.github.com 偶发 TLS 断连，单次失败率不低，issue #44 实测）
 async function fetchIssues(owner, repo, token) {
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=100`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'devboard',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=100`,
+        {
+          signal: ctrl.signal,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'devboard',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+        }
+      );
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      const list = await res.json();
+      const issues = list.filter((it) => !it.pull_request);
+      const prs = list.filter((it) => it.pull_request);
+      const toItem = (it, type) => ({ type, number: it.number, title: it.title, url: it.html_url });
+      return {
+        owner,
+        repo,
+        openIssues: issues.length,
+        openPRs: prs.length,
+        items: prs.map((it) => toItem(it, 'pr')).concat(issues.map((it) => toItem(it, 'issue'))).slice(0, 20),
+      };
+    } catch (err) {
+      lastErr = err;
+      if (String(err && err.message).startsWith('GitHub API 4')) break; // 4xx 重试无意义
+      await new Promise((r) => setTimeout(r, 1500));
+    } finally {
+      clearTimeout(timer);
     }
-  );
-  if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-  const list = await res.json();
-  const issues = list.filter((it) => !it.pull_request);
-  const prs = list.filter((it) => it.pull_request);
-  const toItem = (it, type) => ({ type, number: it.number, title: it.title, url: it.html_url });
-  return {
-    owner,
-    repo,
-    openIssues: issues.length,
-    openPRs: prs.length,
-    items: prs.map((it) => toItem(it, 'pr')).concat(issues.map((it) => toItem(it, 'issue'))).slice(0, 20),
-  };
+  }
+  throw lastErr;
 }
 
 // 读缓存挂接 github 字段（不发网络请求）；返回需要刷新的 repo 列表
+// 同时标记 p.githubOwned（owner 是否本人，大小写不敏感），渲染层据此区分「同步中」与「非本人仓库」（issue #44）
 function attachFromCache(projects, config, store) {
   const cache = store.getGithubCache();
   const stale = [];
   const now = Date.now();
+  const me = String(config.githubUsername || '').toLowerCase();
   for (const p of projects) {
     p.github = null;
-    if (!config.githubToken || !config.githubUsername || !p.originUrl) continue;
+    p.githubOwned = false;
+    if (!p.originUrl) continue;
     const remote = parseGitHubRemote(p.originUrl);
-    if (!remote || remote.owner !== config.githubUsername) continue; // fork 上游跳过
+    if (!remote || remote.owner.toLowerCase() !== me) continue; // fork 上游跳过
+    p.githubOwned = true;
+    if (!config.githubToken || !me) continue;
     const key = `${remote.owner}/${remote.repo}`;
     const entry = cache.repos[key];
     if (entry) {
@@ -68,9 +89,9 @@ function attachFromCache(projects, config, store) {
   return stale;
 }
 
-// 后台刷新缓存：失败静默保留旧缓存
+// 后台刷新缓存：失败静默保留旧缓存；返回是否有更新（供主进程补推整板补丁，issue #44）
 async function refreshCache(remotes, config, store) {
-  if (!remotes.length || !config.githubToken) return;
+  if (!remotes.length || !config.githubToken) return false;
   const cache = store.getGithubCache();
   const results = await Promise.all(
     remotes.map((r) => fetchIssues(r.owner, r.repo, config.githubToken).catch(() => null))
@@ -85,6 +106,7 @@ async function refreshCache(remotes, config, store) {
     cache.fetchedAt = Date.now();
     store.setGithubCache(cache);
   }
+  return changed;
 }
 
 // PR 警示需要在 github 挂接后补充
@@ -110,7 +132,8 @@ async function testConnection(token) {
     if (res.status === 401) return { ok: false, reason: 'Token 无效或已过期' };
     if (!res.ok) return { ok: false, reason: `GitHub API ${res.status}` };
     const data = await res.json();
-    return { ok: true, login: data.login };
+    // 顺带带回头像与显示名，设置页账户状态卡用（issue #45）
+    return { ok: true, login: data.login, name: data.name || '', avatarUrl: data.avatar_url || '' };
   } catch {
     return { ok: false, reason: '网络错误，无法连接 GitHub' };
   }

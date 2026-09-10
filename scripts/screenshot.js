@@ -28,8 +28,7 @@ async function capture() {
 }
 
 app.whenReady().then(() => {
-  if (MOCK) {
-    // 布局密度验证：注入 8 个 mock 项目，只注册渲染所需的最小 IPC
+  if (MOCK) {    // 布局密度验证：注入 8 个 mock 项目，只注册渲染所需的最小 IPC
     const { mockBoard, mockProjectDetail } = require('./mock-board');
     ipcMain.handle('board:get', () => mockBoard());
     ipcMain.handle('board:rescan', () => mockBoard());
@@ -99,10 +98,18 @@ app.whenReady().then(() => {
     ipcMain.handle('github:deviceStart', () => ({ ok: false, reason: 'mock' }));
     ipcMain.handle('github:devicePoll', () => ({ status: 'error', reason: 'mock' }));
     ipcMain.handle('github:importGh', () => ({ ok: false, reason: 'mock' }));
+    // GitHub 账户状态卡 mock（issue #45）：已连接 + 连通正常，头像用内联 SVG 圆
+    ipcMain.handle('github:status', () => ({
+      configured: true, ok: true, login: 'yaemikoreal', name: 'Yaemiko',
+      avatarUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><circle cx="18" cy="18" r="18" fill="%23f5d90a"/><text x="18" y="23" text-anchor="middle" font-size="14" font-weight="700" font-family="sans-serif" fill="%23181818">Y</text></svg>',
+    }));
+    ipcMain.handle('github:disconnect', () => true);
     ipcMain.handle('win:min', () => {});
     ipcMain.handle('win:max', () => {});
     ipcMain.handle('win:close', () => {});
   } else {
+    // DEVBOARD_USERDATA：指向真实安装的 userData（如 %APPDATA%/SignalBoard），用真实配置/缓存验证（issue #44）
+    if (process.env.DEVBOARD_USERDATA) app.setPath('userData', process.env.DEVBOARD_USERDATA);
     const store = new Store(app.getPath('userData'), require('../src/main/token-vault'));
     registerIpc({ store, getWindow: () => win, applySettings: () => {} });
   }

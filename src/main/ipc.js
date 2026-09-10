@@ -292,19 +292,40 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   }
 
   function maybeRefreshGithub(forceGithubRefresh, stale, projects, config) {
-    if ((forceGithubRefresh || stale.length > 0) && !refreshInFlight) {
-      refreshInFlight = true;
-      const remotes = forceGithubRefresh
-        ? projects
-            .map((p) => github.parseGitHubRemote(p.originUrl))
-            .filter((r) => r && r.owner === config.githubUsername)
-        : stale;
-      github.refreshCache(remotes, config, store).finally(() => { refreshInFlight = false; });
-    }
+    if (!(forceGithubRefresh || stale.length > 0) || refreshInFlight) return;
+    refreshInFlight = true;
+    const me = String(config.githubUsername || '').toLowerCase();
+    const remotes = forceGithubRefresh
+      ? projects
+          .map((p) => github.parseGitHubRemote(p.originUrl))
+          .filter((r) => r && r.owner.toLowerCase() === me)
+      : stale;
+    github.refreshCache(remotes, config, store).then((changed) => {
+      // GitHub 数据落地后立即重推整板补丁：此前补丁发出时数据未到，UI 只能等下次启动（issue #44）
+      if (!changed) return;
+      const cur = store.getScanCache();
+      const projs = Object.values(cur.projects);
+      if (!projs.length) return;
+      const { board } = assembleBoard(projs, store.getConfig(), true);
+      const win = getWindow && getWindow();
+      if (win && !win.isDestroyed()) win.webContents.send('board:patch', board);
+    }).finally(() => { refreshInFlight = false; });
+  }
+
+  // 历史安装自愈：token 已配置但 username 为空（旧版导入不落登录名，issue #44）时，
+  // 用 token 反查登录名落盘，GitHub 数据挂接随之恢复
+  let ghHealTried = false;
+  function healGithubUsername(config) {
+    if (ghHealTried || !config.githubToken || config.githubUsername) return;
+    ghHealTried = true;
+    github.testConnection(config.githubToken).then((r) => {
+      if (r && r.ok && r.login) store.setConfig({ githubUsername: r.login });
+    }).catch(() => {});
   }
 
   // board:get：有磁盘缓存则陈旧数据先出 + 后台重扫补丁更新（issue #22）；无缓存走全量
   async function buildBoard(forceGithubRefresh) {
+    healGithubUsername(store.getConfig()); // 见函数注释：token 在而 username 空的历史安装自愈（issue #44）
     if (!forceGithubRefresh) {
       const cache = store.getScanCache();
       const cachedProjects = Object.values(cache.projects);
@@ -536,24 +557,39 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
 
   ipcMain.handle('github:deviceStart', () => github.deviceStart());
 
-  // 设备码轮询；成功即加密落盘 token 并返回实际登录名
+  // 设备码轮询；成功即加密落盘 token + 登录名（username 缺失会导致 GitHub 数据永不挂接，issue #44）
   ipcMain.handle('github:devicePoll', async (_e, deviceCode) => {
     const r = await github.devicePoll(String(deviceCode || ''));
     if (r.status !== 'success') return r;
     const t = await github.testConnection(r.token);
     if (!t.ok) return { status: 'error', reason: t.reason };
-    store.setConfig({ githubToken: r.token });
+    store.setConfig({ githubToken: r.token, githubUsername: t.login });
     return { status: 'success', login: t.login };
   });
 
-  // 从 gh CLI 导入 token：验证有效后加密落盘
+  // 从 gh CLI 导入 token：验证有效后加密落盘 token + 登录名（issue #44）
   ipcMain.handle('github:importGh', async () => {
     const token = await github.importGhToken();
     if (!token) return { ok: false, reason: '未检测到 gh CLI 登录（gh auth login 后重试）' };
     const t = await github.testConnection(token);
     if (!t.ok) return { ok: false, reason: t.reason };
-    store.setConfig({ githubToken: token });
+    store.setConfig({ githubToken: token, githubUsername: t.login });
     return { ok: true, login: t.login };
+  });
+
+  // 账户状态卡（issue #45）：已配置 token 时在线验证并返回头像/显示名/连通性
+  ipcMain.handle('github:status', async () => {
+    const cfg = store.getConfig();
+    if (!cfg.githubToken) return { configured: false };
+    const r = await github.testConnection(cfg.githubToken);
+    if (!r.ok) return { configured: true, ok: false, login: cfg.githubUsername || '', reason: r.reason };
+    return { configured: true, ok: true, login: r.login, name: r.name, avatarUrl: r.avatarUrl };
+  });
+
+  // 断开连接：清除 token 与登录名（GitHub 数据挂接随之停止）
+  ipcMain.handle('github:disconnect', () => {
+    store.setConfig({ githubToken: '', githubUsername: '' });
+    return true;
   });
 
   // 设置页辅助：扫描预览（用未保存的草稿值跑 discover，不落盘；附带无效路径清单）

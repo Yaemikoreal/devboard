@@ -671,7 +671,7 @@
     }).catch(function () { state.aiCaps = { enabled: false, engine: null }; });
   }
 
-  // AI 结果区：徽标（由本机 X 生成 · 生成时间 · 缓存标记）+ 正文/错误；box 内重建
+  // AI 结果区：徽标（引擎 + 生成时间，issue #43 精简）+ 正文/错误；box 内重建
   function fillAiBox(box, r) {
     box.innerHTML = '';
     if (!r || !r.ok) {
@@ -680,9 +680,8 @@
     }
     box.appendChild(el('div', 'ai-text', r.text));
     var meta = el('div', 'ai-meta');
-    meta.appendChild(el('span', 'ai-badge', '由本机 ' + r.engine.label + ' 生成'));
-    if (r.at) meta.appendChild(el('span', 'ai-badge', relTime(r.at) + '生成')); // 时效性（issue #32）
-    if (r.cached) meta.appendChild(el('span', 'ai-badge dim', '缓存命中'));
+    meta.appendChild(el('span', 'ai-badge', r.engine.label + ' 生成'));
+    if (r.at) meta.appendChild(el('span', 'ai-badge', relTime(r.at))); // 时效性（issue #32）
     box.appendChild(meta);
   }
 
@@ -745,6 +744,10 @@
   }
 
   /* ----- P0 · AI 周报（总览页独立模块，issue #32；手动触发，当天缓存；后台执行 issue #40） ----- */
+  // 打开应用即有周报（issue #42）：今日无缓存时启动后自动生成一次（后台执行）；
+  // 自动生成失败保持安静（不展示错误条），用户仍可手动点「生成周报」
+  var weeklyAutoTried = false;
+
   function renderAiWeeklyEntry() {
     var card = document.getElementById('aiWeeklyCard');
     if (!card) return;
@@ -757,19 +760,26 @@
     delete btn.dataset.busy;
     btn.textContent = '✦ 生成周报';
     if (job) {
+      if (job.status === 'error' && job.auto) return; // 自动生成失败保持安静（issue #42）
       // 刚完成的后台任务：直接展出交接结果
       box.classList.remove('hidden');
       fillAiBox(box, job.result);
       return;
     }
     // 今日已生成过的周报直接展出（只读缓存，不触发新生成），模块内标明模型与生成时间；
-    // 主进程有同任务在飞时回 pending（如页面重载后）→ 转为正式请求并入该任务
+    // 主进程有同任务在飞时回 pending（如页面重载后）→ 转为正式请求并入该任务；
+    // 今日无缓存 → 启动后自动后台生成一次（issue #42）
     api.aiAsk({ kind: 'weekly', cachedOnly: true }).then(function (r) {
       if (r && r.ok) {
         box.classList.remove('hidden');
         fillAiBox(box, r);
       } else if (r && r.reason === 'pending') {
         startAiJob('weekly', { kind: 'weekly' });
+        renderAiWeeklyEntry();
+      } else if (r && r.reason === 'no-cache' && !weeklyAutoTried) {
+        weeklyAutoTried = true;
+        var j = startAiJob('weekly', { kind: 'weekly' });
+        j.auto = true;
         renderAiWeeklyEntry();
       }
     }).catch(function () {});
@@ -1051,7 +1061,11 @@
     var gh = p.github;
     if (!gh) {
       var noToken = state.settings && !(state.settings.hasGithubToken || state.settings.githubToken);
-      parent.appendChild(el('div', 'gh-empty', noToken ? '未配置 GitHub' : '无 GitHub 数据（非本人仓库或尚未同步）'));
+      // 区分空态原因（issue #44）：未配置 / 本人仓库同步中（完成后主进程会推补丁自动展出）/ 非本人仓库
+      var msg = noToken ? '未配置 GitHub'
+        : p.githubOwned ? 'GitHub 数据同步中…（完成后自动展示）'
+        : '非本人仓库，不拉取 GitHub 数据';
+      parent.appendChild(el('div', 'gh-empty', msg));
       return;
     }
     parent.appendChild(el('div', 'gh-empty', '开放 issue ' + gh.openIssues + ' · 开放 PR ' + gh.openPRs));
@@ -1834,6 +1848,36 @@
     fToken.placeholder = (state.settings && state.settings.hasGithubToken) ? '已保存（输入以更换）' : '粘贴 token';
   }
 
+  // 账户状态卡（issue #45）：已连接时展示头像 / 用户名 / 连通性，未连接时隐藏
+  function renderGhAccount() {
+    var card = document.getElementById('ghAccount');
+    var conn = document.getElementById('ghConn');
+    if (!state.settings || !state.settings.hasGithubToken) {
+      card.classList.add('hidden');
+      return;
+    }
+    card.classList.remove('hidden');
+    conn.textContent = '正在验证连接…';
+    conn.className = 'gh-conn';
+    api.githubStatus().then(function (r) {
+      if (!r || !r.configured) { card.classList.add('hidden'); return; }
+      var avatar = document.getElementById('ghAvatar');
+      if (r.avatarUrl) {
+        avatar.src = r.avatarUrl;
+        avatar.classList.remove('hidden');
+      } else {
+        avatar.classList.add('hidden');
+      }
+      document.getElementById('ghName').textContent =
+        r.name ? (r.name + '（@' + r.login + '）') : ('@' + (r.login || '未知'));
+      conn.textContent = r.ok ? '连接正常' : ('连接失败：' + (r.reason || '未知错误'));
+      conn.classList.add(r.ok ? 'ok' : 'bad');
+    }).catch(function () {
+      conn.textContent = '连接失败：网络错误';
+      conn.classList.add('bad');
+    });
+  }
+
   function ghAuthResult(ok, text) {
     var res = document.getElementById('ghAuthRes');
     res.textContent = text;
@@ -1853,9 +1897,10 @@
       api.githubDevicePoll(deviceCode).then(function (r) {
         if (r.status === 'success') {
           stopDeviceFlow();
-          state.settings = Object.assign({}, state.settings, { hasGithubToken: true });
+          state.settings = Object.assign({}, state.settings, { hasGithubToken: true, githubUsername: r.login || '' });
           if (!fUsername.value.trim()) fUsername.value = r.login || '';
           ghStateText();
+          renderGhAccount();
           ghAuthResult(true, '授权成功 · 登录名 ' + (r.login || ''));
           return;
         }
@@ -1921,6 +1966,7 @@
       renderThemeCards();
       renderSwatches();
       ghStateText();
+      renderGhAccount();
       document.getElementById('settingsHint').textContent = '更改即时生效，自动保存';
       document.getElementById('hotkeyErr').textContent = '';
       ['previewRes', 'testGhRes', 'checkEditorRes', 'checkTerminalRes', 'ghAuthRes'].forEach(function (id) {
@@ -2087,13 +2133,25 @@
     res.className = 'res';
     api.githubImportGh().then(function (r) {
       if (r.ok) {
-        state.settings = Object.assign({}, state.settings, { hasGithubToken: true });
+        state.settings = Object.assign({}, state.settings, { hasGithubToken: true, githubUsername: r.login || '' });
         if (!fUsername.value.trim() && r.login) fUsername.value = r.login;
         ghStateText();
+        renderGhAccount();
         ghAuthResult(true, '已从 gh 导入 · 登录名 ' + (r.login || ''));
       } else {
         ghAuthResult(false, r.reason || '导入失败');
       }
+    });
+  });
+  // 账户状态卡操作（issue #45）：重新验证 / 断开连接
+  document.getElementById('ghRecheckBtn').addEventListener('click', renderGhAccount);
+  document.getElementById('ghDisconnectBtn').addEventListener('click', function () {
+    api.githubDisconnect().then(function () {
+      state.settings = Object.assign({}, state.settings, { hasGithubToken: false, githubUsername: '' });
+      fUsername.value = '';
+      document.getElementById('ghAccount').classList.add('hidden');
+      ghStateText();
+      ghAuthResult(true, '已断开 GitHub 连接');
     });
   });
   document.getElementById('checkEditor').addEventListener('click', function () {

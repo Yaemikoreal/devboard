@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld('devboard', {
   githubDeviceStart: () => ipcRenderer.invoke('github:deviceStart'),
   githubDevicePoll: (deviceCode) => ipcRenderer.invoke('github:devicePoll', deviceCode),
   githubImportGh: () => ipcRenderer.invoke('github:importGh'),
+  // GitHub 账户状态卡 + 断开（issue #45）
+  githubStatus: () => ipcRenderer.invoke('github:status'),
+  githubDisconnect: () => ipcRenderer.invoke('github:disconnect'),
   // AI 工具快捷启动（issue #15）
   aiToolsList: () => ipcRenderer.invoke('aitools:list'),
   aiToolsOpen: (cmd, projectPath) => ipcRenderer.invoke('aitools:open', cmd, projectPath),

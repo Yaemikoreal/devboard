@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://avatars.githubusercontent.com">
 <title>SignalBoard</title>
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -244,6 +244,18 @@
               <div class="group-desc">仅拉取 owner 是本人的仓库的开放 issues/PR（10 分钟缓存）；fork 的上游仓库自动跳过。Token 经系统加密存储，不落明文（issue #12）</div>
               <div class="field">
                 <label>连接 GitHub</label>
+                <!-- 账户状态卡（issue #45）：已连接时展示头像 / 用户名 / 连通性，可重新验证或断开 -->
+                <div class="gh-account hidden" id="ghAccount">
+                  <img class="gh-avatar" id="ghAvatar" alt="" referrerpolicy="no-referrer">
+                  <div class="gh-id">
+                    <div class="gh-name" id="ghName"></div>
+                    <div class="gh-conn" id="ghConn"></div>
+                  </div>
+                  <div class="gh-ops">
+                    <button id="ghRecheckBtn" type="button">重新验证</button>
+                    <button id="ghDisconnectBtn" type="button">断开连接</button>
+                  </div>
+                </div>
                 <div class="inline-check">
                   <button id="ghDeviceBtn" type="button">设备码授权</button>
                   <button id="ghImportBtn" type="button">从 gh CLI 导入</button>
