@@ -45,6 +45,7 @@
     aiJobs: {}, // AI 后台任务注册表 'kind|path' -> { status, startAt, result }（issue #40，切页不中断）
     details: {}, // path -> { readme, aiSessions } | 'loading'（issue #17 懒取）
     streamShown: 3, // 活动流默认展示近 3 个月，「显示更早的活动」展开
+    attnExpanded: false, // 需要关注「还有 N 条」展开态（issue #74），不持久化
     heatMonth: {}, // path -> 详情面板月份热力图翻页偏移（0 = 当月，-1 上一月；issue #34）
     panelPath: null, // 详情面板上次渲染的项目 path：仅同项目重渲染时恢复滚动位置（issue #63）
   };
@@ -471,16 +472,43 @@
     return wrap;
   }
 
-  // 需要关注：右栏固定位黑卡（issue #15）
+  // 需要关注：首屏主角（issue #74）；条目主进程已按严重度排序（未提交超期 > 未推送 > 开放 PR）
+  var ATTN_TOP = 5; // 分级截断：默认展 Top 5，其余收进「还有 N 条」，避免警报疲劳
   function renderAttn() {
     var board = state.board;
     var sub = document.getElementById('attnSub');
     var list = document.getElementById('attnList');
     list.innerHTML = '';
-    sub.textContent = board.attention.length
-      ? board.attention.length + ' 个项目有警示标记'
+    var items = board.attention;
+    sub.textContent = items.length
+      ? items.length + ' 个项目有警示标记'
       : '一切正常，暂无警示';
-    board.attention.forEach(function (a) {
+    if (!items.length) {
+      // 平静态（issue #74）：「没事发生」正是这个工具最想传达的好消息，给正向反馈 + 最近活跃锚点
+      var calm = el('div', 'attn-calm');
+      var ct = el('div', 'calm-t');
+      ct.appendChild(el('i', 'calm-ic'));
+      ct.appendChild(document.createTextNode('都在正轨上'));
+      calm.appendChild(ct);
+      calm.appendChild(el('div', 'calm-sub', '没有待处理的警示，最近活跃：'));
+      board.projects
+        .filter(function (p) { return p.lastActivityAt; })
+        .sort(function (a, b) { return a.lastActivityAt < b.lastActivityAt ? 1 : -1; })
+        .slice(0, 2)
+        .forEach(function (p) {
+          var r = el('div', 'calm-proj');
+          var nm = el('span', 'nm', p.name);
+          nm.title = p.name;
+          r.appendChild(nm);
+          r.appendChild(el('span', 'ago', relTime(p.lastActivityAt)));
+          r.addEventListener('click', function () { jumpToProject(p.path); });
+          calm.appendChild(r);
+        });
+      list.appendChild(calm);
+      return;
+    }
+    var shown = state.attnExpanded ? items : items.slice(0, ATTN_TOP);
+    shown.forEach(function (a) {
       var item = el('div', 'attn-item');
       // 类型图形（issue #77）：最严重一类的图形 + 警示色，不读文字即可区分
       var types = warnTypesOf(a.types);
@@ -495,13 +523,24 @@
       item.addEventListener('click', function () { jumpToProject(a.path); });
       list.appendChild(item);
     });
+    if (!state.attnExpanded && items.length > ATTN_TOP) {
+      var more = el('button', 'attn-more', '还有 ' + (items.length - ATTN_TOP) + ' 条，点击展开');
+      more.type = 'button';
+      more.addEventListener('click', function () {
+        state.attnExpanded = true;
+        renderAttn();
+      });
+      list.appendChild(more);
+    }
   }
 
   function renderOverview() {
     var board = state.board;
-    setStat('statTotal', board.stats.total, '个');
-    setStat('statCommits', board.stats.commits7d, '次');
+    // 统计行重排（issue #74）：需要关注大字号居首（>0 染警示色），项目总数降为小字
     setStat('statAttn', board.stats.attentionCount, '项');
+    document.getElementById('statAttn').classList.toggle('alert', board.stats.attentionCount > 0);
+    setStat('statCommits', board.stats.commits7d, '次');
+    document.getElementById('statTotal').textContent = board.stats.total;
 
     var act = globalActivity();
     var total = act.reduce(function (s, n) { return s + n; }, 0);
@@ -1546,9 +1585,9 @@
     rowsEl.innerHTML = '';
     for (var i = 0; i < 6; i++) rowsEl.appendChild(el('div', 'skel'));
     // 总览统计在首次成功加载前显示占位，避免误导性的 0
-    setStat('statTotal', '--', '个');
-    setStat('statCommits', '--', '次');
     setStat('statAttn', '--', '项');
+    setStat('statCommits', '--', '次');
+    document.getElementById('statTotal').textContent = '--';
   }
 
   // 首屏加载失败：项目区骨架替换为错误条，重试按钮重新调 load

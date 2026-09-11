@@ -49,48 +49,18 @@
   <!-- 顶栏→内容区过渡带：静止时为柔光渐变，滚动时内容在其下消融并浮现细分隔线（issue #28） -->
   <div class="top-fade" aria-hidden="true"></div>
 
-  <!-- ============ 总览（issue #14） ============ -->
+  <!-- ============ 总览（issue #14；首屏重排 issue #74：需要关注升为主角） ============ -->
   <main id="viewOverview">
+    <!-- 统计行（issue #74）：需要关注大字号居首，项目总数降为小字 -->
     <section class="stats">
-      <div class="stat"><div class="stat-num mono" id="statTotal">0<span class="unit">个</span></div><div class="stat-label">项目</div></div>
-      <div class="stat"><div class="stat-num mono" id="statCommits">0<span class="unit">次</span></div><div class="stat-label">近 7 天提交</div></div>
       <div class="stat"><div class="stat-num mono" id="statAttn">0<span class="unit">项</span></div><div class="stat-label">需要关注</div></div>
+      <div class="stat"><div class="stat-num mono" id="statCommits">0<span class="unit">次</span></div><div class="stat-label">近 7 天提交</div></div>
+      <div class="stat-dim"><b class="mono" id="statTotal">0</b> 个项目</div>
     </section>
 
-    <!-- 全局全年热力图：各项目 activity365 跨项目求和 -->
-    <div class="ov-card heat-card">
-      <div class="heat-head">
-        <span class="t" id="heatHead"></span>
-        <span class="heat-legend">少 <i class="cell"></i><i class="cell l1"></i><i class="cell l2"></i><i class="cell l3"></i> 多</span>
-      </div>
-      <div id="globalHeat"></div>
-    </div>
-
-    <!-- AI 周报：独立模块（issue #32），标明生成模型与生成时间；无可用引擎时整卡隐藏 -->
-    <div class="ov-card weekly-card hidden" id="aiWeeklyCard">
-      <div class="card-head">
-        <div>
-          <h3>AI 周报</h3>
-          <div class="sub">近 7 天跨项目提交事实的自然语言摘要</div>
-        </div>
-        <button class="ai-btn" id="aiWeeklyBtn" type="button" title="用本机 AI 工具总结近 7 天提交">✦ 生成周报</button>
-      </div>
-      <div class="ai-box hidden" id="aiWeeklyBox"></div>
-    </div>
-
     <div class="ov-grid">
-      <!-- 按月活动流（issue #14） -->
-      <div class="ov-card">
-        <div class="card-head">
-          <h3>活动流</h3>
-        </div>
-        <div class="sub">按月份分组的跨项目提交事实</div>
-        <div id="stream"></div>
-        <button class="show-more hidden" id="streamMore" type="button">显示更早的活动</button>
-      </div>
-
-      <!-- 右栏：工作台（需要关注固定位 + AI 工具，issue #15） -->
-      <div>
+      <!-- 左栏：需要关注（首屏主角，深色锚点身份保留，issue #74）+ 工作台 AI 工具（issue #15） -->
+      <div class="ov-rail">
         <div class="attn-card">
           <h3>需要关注</h3>
           <div class="sub" id="attnSub"></div>
@@ -101,6 +71,40 @@
           <h3>工作台 · AI 工具</h3>
           <div class="sub">按本机安装情况显示，点击后在所选项目目录启动</div>
           <div class="tools-grid" id="toolsGrid"></div>
+        </div>
+      </div>
+
+      <!-- 右栏主区：热力图（降噪退为质感背景，issue #74）+ AI 周报 + 活动流 -->
+      <div class="ov-main">
+        <!-- 全局全年热力图：各项目 activity365 跨项目求和 -->
+        <div class="ov-card heat-card">
+          <div class="heat-head">
+            <span class="t" id="heatHead"></span>
+            <span class="heat-legend">少 <i class="cell"></i><i class="cell l1"></i><i class="cell l2"></i><i class="cell l3"></i> 多</span>
+          </div>
+          <div id="globalHeat"></div>
+        </div>
+
+        <!-- AI 周报：独立模块（issue #32），标明生成模型与生成时间；无可用引擎时整卡隐藏 -->
+        <div class="ov-card weekly-card hidden" id="aiWeeklyCard">
+          <div class="card-head">
+            <div>
+              <h3>AI 周报</h3>
+              <div class="sub">近 7 天跨项目提交事实的自然语言摘要</div>
+            </div>
+            <button class="ai-btn" id="aiWeeklyBtn" type="button" title="用本机 AI 工具总结近 7 天提交">✦ 生成周报</button>
+          </div>
+          <div class="ai-box hidden" id="aiWeeklyBox"></div>
+        </div>
+
+        <!-- 按月活动流（issue #14） -->
+        <div class="ov-card">
+          <div class="card-head">
+            <h3>活动流</h3>
+          </div>
+          <div class="sub">按月份分组的跨项目提交事实</div>
+          <div id="stream"></div>
+          <button class="show-more hidden" id="streamMore" type="button">显示更早的活动</button>
         </div>
       </div>
     </div>

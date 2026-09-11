@@ -238,9 +238,15 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 }
 .stat{display:flex;align-items:baseline;gap:8px}
 .stat-num{font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1}
+.stat-num.alert{color:var(--warn)} /* 需要关注 >0 时数字染警示色（issue #74） */
 .stat-num .unit{font-size:12px;font-weight:500;color:var(--ink-3);margin-left:2px}
 .stat-label{font-size:12.5px;color:var(--ink-2)}
-.ov-grid{display:grid;grid-template-columns:1fr 360px;gap:16px;align-items:start}
+/* 项目总数降为小字（issue #74）：虚荣指标让位给需要关注 */
+.stat-dim{font-size:11.5px;color:var(--ink-3)}
+.stat-dim b{font-weight:600;color:var(--ink-2)}
+/* 首屏重排（issue #74）：左栏 = 需要关注 + 工作台；右栏主区 = 热力图 + AI 周报 + 活动流 */
+.ov-grid{display:grid;grid-template-columns:360px 1fr;gap:16px;align-items:start}
+.ov-rail,.ov-main{display:flex;flex-direction:column;gap:16px;min-width:0}
 .ov-card{
   background:var(--card);border-radius:var(--r-card);
   box-shadow:var(--shadow-1);padding:20px 22px;
@@ -248,8 +254,12 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .ov-card h3{font-size:13px;font-weight:700;letter-spacing:.02em;margin-bottom:4px}
 .ov-card .sub{font-size:11.5px;color:var(--ink-3);margin-bottom:12px}
 
-/* 全局全年热力图 */
-.heat-card{margin-bottom:16px}
+/* 全局全年热力图：默认降饱和降噪，从主角退为质感背景；hover 恢复全彩（issue #74） */
+.heat-card .gheat,.heat-card .heat-axis{
+  filter:saturate(.45);opacity:.75;
+  transition:filter .25s ease,opacity .25s ease;
+}
+.heat-card:hover .gheat,.heat-card:hover .heat-axis{filter:none;opacity:1}
 .heat-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}
 .heat-head .t{font-size:15px;font-weight:700}
 .heat-head .t b{font-size:22px;letter-spacing:-.02em;margin-right:6px}
@@ -325,7 +335,7 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
   border:1px solid var(--glass-tile-line);
   border-radius:var(--r-card);box-shadow:var(--glass-tile-shadow);
-  padding:16px 18px;margin-bottom:16px;
+  padding:16px 18px;
 }
 .attn-card h3{font-size:13px;font-weight:600}
 .attn-card .sub{font-size:11px;color:var(--tile-ink2);margin:4px 0 8px}
@@ -345,6 +355,31 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .attn-item .mk{width:8px;height:8px;flex:none;border-radius:50%;background:var(--warn-tile)}
 .attn-item:hover .ic{box-shadow:0 0 0 3px var(--warn-ring)}
 .attn-item:hover .nm{text-decoration:underline}
+/* 分级截断（issue #74）：默认展 Top 5，其余收进「还有 N 条」 */
+.attn-more{
+  width:100%;border:0;border-top:1px solid var(--tile-line);background:transparent;
+  color:var(--tile-ink2);font:inherit;font-size:11.5px;padding:8px 0 2px;
+  cursor:pointer;text-align:left;transition:color .15s ease;
+}
+.attn-more:hover{color:var(--tile-ink)}
+/* 平静态（issue #74）：零警示是好消息——「都在正轨上」+ 最近活跃锚点 */
+.attn-calm{padding:8px 0 2px}
+.calm-t{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700}
+.calm-ic{width:16px;height:16px;flex:none;border-radius:50%;border:1.3px solid var(--accent);position:relative}
+.calm-ic::after{
+  content:"";position:absolute;left:3.4px;top:4.2px;width:7px;height:4px;
+  border-left:1.4px solid var(--accent);border-bottom:1.4px solid var(--accent);
+  transform:rotate(-48deg);
+}
+.calm-sub{font-size:11.5px;color:var(--tile-ink2);margin:2px 0 6px}
+.calm-proj{
+  display:flex;align-items:baseline;gap:8px;padding:6px 0;
+  border-top:1px solid var(--tile-line);cursor:pointer;
+  font-size:11.5px;color:var(--tile-ink2);
+}
+.calm-proj .nm{font-weight:600;color:var(--tile-ink);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.calm-proj .ago{margin-left:auto;flex:none}
+.calm-proj:hover .nm{text-decoration:underline}
 
 /* 工作台：AI 工具快捷启动（issue #15，logo 徽章属 #21，本轮文字按钮） */
 .tools-card{position:relative}
@@ -1085,7 +1120,6 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .card-head h3{margin-bottom:4px}
 .card-head .sub{margin-bottom:12px}
-.weekly-card{margin-bottom:16px}
 .weekly-card .ai-box{margin-bottom:2px}
 .ai-btn{
   border:1px solid var(--line);background:transparent;color:var(--ink-2);
