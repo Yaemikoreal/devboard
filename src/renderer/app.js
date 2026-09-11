@@ -1831,7 +1831,7 @@
         '--warn': '#f0a53c', '--warn-tile': '#b25a08', '--warn-pill': '#f0a53c', '--on-warn': '#23180a',
         /* 透玻璃背景板：深棕黑底 + 低明度光团；卡片用深色玻璃，关注卡（浅色 tile）用浅色玻璃 */
         '--bg-art': '#16140f',
-        '--blob-2': 'rgba(158,196,167,.25)', '--blob-3': 'rgba(223,205,189,.18)', '--blob-4': 'rgba(179,199,216,.22)',
+        '--blob-2': 'rgba(158,196,167,.18)', '--blob-3': 'rgba(223,205,189,.12)', '--blob-4': 'rgba(179,199,216,.15)', /* 深色专项标定（issue #81）：光团降不透明度，避免深底糊亮 */
         '--glass-card': 'rgba(38,35,29,.55)', '--glass-line': 'rgba(255,255,255,.09)',
         '--glass-shadow': '0 1px 2px rgba(0,0,0,.3),0 22px 52px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.06)',
         '--glass-tile': 'rgba(236,231,216,.88)', '--glass-tile-line': 'rgba(24,24,24,.12)',
@@ -1855,7 +1855,7 @@
         '--warn': '#f2ab4a', '--warn-tile': '#b25a08', '--warn-pill': '#f2ab4a', '--on-warn': '#231a0b',
         /* 透玻璃背景板：藏青黑底 + 低明度光团，冷蓝加重；关注卡（浅色 tile）用浅色玻璃 */
         '--bg-art': '#10141a',
-        '--blob-2': 'rgba(158,196,167,.2)', '--blob-3': 'rgba(223,205,189,.12)', '--blob-4': 'rgba(120,160,220,.25)',
+        '--blob-2': 'rgba(158,196,167,.14)', '--blob-3': 'rgba(223,205,189,.09)', '--blob-4': 'rgba(120,160,220,.17)', /* 深色专项标定（issue #81）：光团降不透明度，避免深底糊亮 */
         '--glass-card': 'rgba(30,36,46,.55)', '--glass-line': 'rgba(255,255,255,.09)',
         '--glass-shadow': '0 1px 2px rgba(0,0,0,.3),0 22px 52px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.06)',
         '--glass-tile': 'rgba(228,233,240,.88)', '--glass-tile-line': 'rgba(24,24,24,.12)',
@@ -1903,7 +1903,8 @@
     Object.keys(t.vars).forEach(function (k) { st.setProperty(k, t.vars[k]); });
     appliedThemeKeys = Object.keys(t.vars);
     st.setProperty('--accent', accent);
-    st.setProperty('--accent-soft', mixHex(accent, '#ffffff', 0.55));
+    // 深色主题（dimBlob）降荧光：accent-soft 少掺白，避免热力图浅格/高亮块在深底上发荧（issue #81）
+    st.setProperty('--accent-soft', mixHex(accent, '#ffffff', t.dimBlob ? 0.32 : 0.55));
     st.setProperty('--accent-deep', mixHex(accent, '#000000', 0.12));
     st.setProperty('--accent-hl', rgbaOf(accent, 0.55));
     st.setProperty('--accent-glow', rgbaOf(accent, 0.45));
@@ -1916,7 +1917,14 @@
   function savedTheme() {
     var t = (state.settings && state.settings.theme) || {};
     var id = THEMES[t.id] ? t.id : 'warm';
-    return { id: id, accent: hexToRgb(t.accent) ? t.accent : THEMES[id].accentDefault };
+    return {
+      id: id,
+      accent: hexToRgb(t.accent) ? t.accent : THEMES[id].accentDefault,
+      // 跟随系统（issue #81）：浅/深主题对限同明暗组，脏数据回落默认 暖阳↔暗夜
+      mode: t.mode === 'auto' ? 'auto' : 'manual',
+      lightId: THEMES[t.lightId] && !isDarkTheme(t.lightId) ? t.lightId : 'warm',
+      darkId: isDarkTheme(t.darkId) ? t.darkId : 'dark',
+    };
   }
 
   /* ---------- 设置视图 ---------- */
@@ -2077,22 +2085,62 @@
   });
 
   /* ----- 外观：整体主题 + 强调色（issue #27），更改即生效并自动保存 ----- */
+  /* 跟随系统（issue #81）：mode=auto 时按系统明暗在浅/深主题对间切换；纯渲染层解析，主进程只存配置 */
   var themeId = 'warm';
   var themeAccent = DEFAULT_ACCENT;
+  var themeMode = 'manual';
+  var themeLightId = 'warm';
+  var themeDarkId = 'dark';
+  var schemeMq = window.matchMedia('(prefers-color-scheme: dark)');
+  function isDarkTheme(id) { return !!(THEMES[id] && THEMES[id].dimBlob); }
+  function resolvedThemeId() { return themeMode === 'auto' ? (schemeMq.matches ? themeDarkId : themeLightId) : themeId; }
+  function applyCurrentTheme() {
+    applyTheme(resolvedThemeId(), themeAccent); // 强调色浅/深共用
+    renderThemeCards();
+  }
+  function onSchemeChange() { if (themeMode === 'auto') applyCurrentTheme(); }
+  if (schemeMq.addEventListener) schemeMq.addEventListener('change', onSchemeChange);
+  else if (schemeMq.addListener) schemeMq.addListener(onSchemeChange); // 旧内核兜底
   function setTheme(id, accent) {
+    themeMode = 'manual';
     themeId = THEMES[id] ? id : 'warm';
     themeAccent = hexToRgb(accent) ? accent : THEMES[themeId].accentDefault;
-    applyTheme(themeId, themeAccent);
-    renderThemeCards();
+    applyCurrentTheme();
     renderSwatches();
     scheduleSave();
   }
-  function setThemeAccent(hex) { setTheme(themeId, hex); }
+  function setThemeAuto() {
+    themeMode = 'auto';
+    applyCurrentTheme();
+    renderSwatches();
+    scheduleSave();
+  }
+  function setThemeAccent(hex) {
+    // 强调色浅/深共用（issue #81）：自动模式下换色不退出跟随系统
+    themeAccent = hexToRgb(hex) ? hex : THEMES[resolvedThemeId()].accentDefault;
+    if (themeMode === 'auto') {
+      applyCurrentTheme();
+      renderSwatches();
+      scheduleSave();
+    } else {
+      setTheme(themeId, themeAccent);
+    }
+  }
   function renderThemeCards() {
     var box = document.getElementById('themeCards');
     if (!box || box.childElementCount === 0) {
-      // 首次构建：mini 预览 = 主题底色 + 卡片色 + 默认强调色点
+      // 首次构建：首张为「自动」（半明半暗预览），其后 mini 预览 = 主题底色 + 卡片色 + 默认强调色点
       box.innerHTML = '';
+      var auto = el('button', 'theme-card');
+      auto.type = 'button';
+      auto.dataset.theme = 'auto';
+      var aprev = el('span', 'tc-preview tc-split');
+      aprev.appendChild(el('i', 'tc-card'));
+      aprev.appendChild(el('i', 'tc-dot'));
+      auto.appendChild(aprev);
+      auto.appendChild(el('span', null, '自动'));
+      auto.addEventListener('click', function () { setThemeAuto(); });
+      box.appendChild(auto);
       Object.keys(THEMES).forEach(function (id) {
         var t = THEMES[id];
         var b = el('button', 'theme-card');
@@ -2113,9 +2161,25 @@
       });
     }
     Array.prototype.forEach.call(box.children, function (b) {
-      b.classList.toggle('active', b.dataset.theme === themeId);
+      b.classList.toggle('active', b.dataset.theme === (themeMode === 'auto' ? 'auto' : themeId));
     });
+    renderThemeAutoPair();
   }
+  // 浅/深主题对（issue #81）：选项按 dimBlob 标记分深色/浅色两组填充
+  var fThemeLight = document.getElementById('fThemeLight');
+  var fThemeDark = document.getElementById('fThemeDark');
+  Object.keys(THEMES).forEach(function (id) {
+    var o = el('option', null, THEMES[id].label);
+    o.value = id;
+    (isDarkTheme(id) ? fThemeDark : fThemeLight).appendChild(o);
+  });
+  function renderThemeAutoPair() {
+    document.getElementById('themeAutoPair').classList.toggle('hidden', themeMode !== 'auto');
+    fThemeLight.value = themeLightId;
+    fThemeDark.value = themeDarkId;
+  }
+  fThemeLight.addEventListener('change', function () { themeLightId = fThemeLight.value; setThemeAuto(); });
+  fThemeDark.addEventListener('change', function () { themeDarkId = fThemeDark.value; setThemeAuto(); });
   function renderSwatches() {
     var box = document.getElementById('swatches');
     if (!box) return;
@@ -2452,6 +2516,9 @@
       var th = savedTheme();
       themeId = th.id;
       themeAccent = th.accent;
+      themeMode = th.mode; // 跟随系统（issue #81）：恢复模式与浅/深主题对
+      themeLightId = th.lightId;
+      themeDarkId = th.darkId;
       renderThemeCards();
       renderSwatches();
       ghStateText();
@@ -2532,7 +2599,7 @@
       aiEngine: fAiEngine.disabled ? '' : fAiEngine.value,
       aiPromptWeekly: promptDraftOf(fPromptWeekly, aiPromptDefaults().weekly), // 提示词模板（issue #78）：与默认一致存 null
       aiPromptAdvice: promptDraftOf(fPromptAdvice, aiPromptDefaults().advice),
-      theme: { id: themeId, accent: themeAccent }, // 外观（issue #27）
+      theme: { id: themeId, accent: themeAccent, mode: themeMode, lightId: themeLightId, darkId: themeDarkId }, // 外观（issue #27）+ 跟随系统（issue #81）
     };
     var typedToken = fToken.value.trim();
     if (typedToken) patch.githubToken = typedToken; // 留空 = 保持已存 token（issue #12）
@@ -2949,10 +3016,13 @@
   renderSkeleton();
   api.getSettings().then(function (cfg) {
     state.settings = cfg;
-    var th = savedTheme(); // 启动时恢复用户主题（整体配色 + 强调色，issue #27）
+    var th = savedTheme(); // 启动时恢复用户主题（整体配色 + 强调色，issue #27；跟随系统模式 issue #81）
     themeId = th.id;
     themeAccent = th.accent;
-    applyTheme(th.id, th.accent);
+    themeMode = th.mode;
+    themeLightId = th.lightId;
+    themeDarkId = th.darkId;
+    applyCurrentTheme();
     applyDensity(cfg.density); // 密度档位（issue #84）
     fReduceMotion.checked = !!cfg.reduceMotion; // 降低动效（issue #82）：开关∪系统偏好
     applyMotion();

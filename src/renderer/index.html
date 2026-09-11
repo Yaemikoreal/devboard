@@ -252,6 +252,12 @@
               <h3>主题</h3>
               <div class="group-desc">整体配色方案，背景、卡片、文字与深色块一并切换；选择即生效</div>
               <div class="theme-cards" id="themeCards"></div>
+              <!-- 跟随系统（issue #81）：选「自动」后出现，分别指定浅色/深色环境下用的主题 -->
+              <div class="theme-auto-pair hidden" id="themeAutoPair">
+                <label>浅色环境 <select id="fThemeLight"></select></label>
+                <label>深色环境 <select id="fThemeDark"></select></label>
+                <span class="hint">随系统明暗自动切换</span>
+              </div>
             </div>
             <div class="set-group" id="grp-accent">
               <h3>强调色</h3>

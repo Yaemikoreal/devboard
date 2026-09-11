@@ -886,6 +886,14 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .tc-preview i{position:absolute;display:block}
 .tc-card{left:6px;top:7px;width:26px;height:20px;border-radius:4px}
 .tc-dot{right:6px;bottom:7px;width:9px;height:9px;border-radius:50%}
+/* 跟随系统（issue #81）：「自动」卡半明半暗预览；浅/深主题对选择行 */
+.tc-preview.tc-split{background:linear-gradient(105deg,#f5f2e8 50%,#1b1915 50%)}
+.tc-preview.tc-split .tc-card{background:#fdfcf8;box-shadow:0 0 0 1px rgba(24,24,24,.12)}
+.tc-preview.tc-split .tc-dot{background:#f5d90a}
+.theme-auto-pair{display:flex;align-items:center;gap:16px;margin:10px 0 6px}
+.theme-auto-pair label{display:flex;align-items:center;gap:7px;font-size:var(--fs-aux);color:var(--ink-2);margin:0}
+.theme-auto-pair select{width:auto;min-width:96px;padding:5px 8px}
+.theme-auto-pair .hint{margin:0}
 
 /* 外观：强调色预设色板 + 自定义调色板（issue #27） */
 .swatches{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
