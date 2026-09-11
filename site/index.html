@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SignalBoard · 本机项目看板</title>
+<meta name="description" content="SignalBoard 把散落在各处的 git 项目的活跃状态、未提交改动与警示标记汇总到一处，托盘常驻、全局热键随时唤出，帮你快速回忆起每个项目做到哪了。">
+<meta property="og:title" content="SignalBoard · 本机项目看板">
+<meta property="og:description" content="散落在各处的 git 项目的活跃状态、未提交改动与警示标记，汇总到一处；全局热键随时唤出。">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://yaemikoreal.github.io/devboard/assets/overview-warm.webp">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<link rel="stylesheet" href="styles.css">
+<script>
+// 首帧前定下主题，避免浅色主题先渲染再跳暗色的闪烁；逻辑与 main.js 的 pickDefaultTheme 一致
+(function () {
+  try {
+    var saved = JSON.parse(localStorage.getItem('sb-site-theme') || 'null');
+    if (saved && saved.id) {
+      document.documentElement.dataset.theme = saved.id;
+      return;
+    }
+  } catch (e) { /* localStorage 不可用时静默回落 */ }
+  if (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) {
+    document.documentElement.dataset.theme = 'dark';
+  }
+})();
+</script>
+</head>
+<body>
+<!-- 背景柔光层：与应用同一手法，四团 fixed 光斑供玻璃表面模糊取样 -->
+<div class="blobs" aria-hidden="true">
+  <div class="blob y"></div>
+  <div class="blob g"></div>
+  <div class="blob p"></div>
+  <div class="blob b"></div>
+  <div class="blob s"></div>
+</div>
+
+<!-- 顶栏：玻璃 sticky，与应用顶栏同一语言 -->
+<nav class="topnav" id="topnav">
+  <div class="wrap nav-in">
+    <a class="brand mono" href="#top">SignalBoard</a>
+    <div class="nav-links">
+      <a href="#features">功能</a>
+      <a href="#ai">AI</a>
+      <a href="#themes">主题</a>
+      <a href="#download">下载</a>
+      <a href="#faq">问答</a>
+    </div>
+    <a class="btn nav-gh" href="https://github.com/Yaemikoreal/devboard" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      GitHub
+    </a>
+  </div>
+  <div class="nav-progress" id="navProgress" aria-hidden="true"></div>
+</nav>
+
+<header class="hero" id="top" data-tint="var(--accent-ring)">
+  <!-- 信号层：雷达弧扫描 + 信号点脉冲，呼应应用空态的雷达弧语言（纯 transform/opacity 动效） -->
+  <div class="hero-signal" aria-hidden="true">
+    <div class="radar">
+      <i class="arc a1"></i><i class="arc a2"></i><i class="arc a3"></i><i class="sweep"></i>
+    </div>
+    <i class="sig-dot d1"></i><i class="sig-dot d2"></i><i class="sig-dot d3"></i>
+  </div>
+  <div class="wrap">
+    <!-- 品牌标识：定稿 logo 点阵（方向 A）+ 艺术字，字母逐字错落进场，信号格脉冲 -->
+    <div class="brandmark" role="img" aria-label="SignalBoard 标识">
+      <svg class="bm-grid" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/>
+        <rect class="sig" x="17" y="1" width="6" height="6" rx="1.5"/>
+        <rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/>
+        <rect x="17" y="9" width="6" height="6" rx="1.5"/>
+        <rect class="sig s2" x="1" y="17" width="6" height="6" rx="1.5"/>
+        <rect x="9" y="17" width="6" height="6" rx="1.5"/><rect x="17" y="17" width="6" height="6" rx="1.5"/>
+      </svg>
+      <span class="bm-word" data-split>SignalBoard</span>
+    </div>
+    <p class="hero-badge h-anim">本机项目看板 · Windows 桌面</p>
+    <h1><span class="h-line">散落在各处的项目，</span><span class="h-line">一处看清<em>近况</em></span></h1>
+    <p class="hero-sub h-anim">
+      本机所有 git 项目的活跃状态、未提交改动与警示标记，自动聚到一处。
+      热键一按即见——每个项目做到哪了，看一眼就知道。
+    </p>
+    <div class="hero-cta h-anim">
+      <a class="btn solid big" href="https://github.com/Yaemikoreal/devboard/releases" target="_blank" rel="noopener">前往 Releases 下载</a>
+      <a class="btn big" href="https://github.com/Yaemikoreal/devboard" target="_blank" rel="noopener">查看源码</a>
+    </div>
+    <p class="hero-note h-anim">免费开源（MIT）· 数据只存本机 · 截图为演示数据</p>
+    <figure class="shot-frame hero-shot h-anim">
+      <img src="assets/overview-warm.webp" alt="SignalBoard 总览页：统计行、全年提交热力图与 AI 周报（暖阳主题，演示数据）"
+           width="1800" height="1020" fetchpriority="high" decoding="async">
+    </figure>
+  </div>
+</header>
+
+<!-- 省心特性带：无限流动 marquee，利益点短句 + 信号格分隔，悬停暂停 -->
+<section class="strip" aria-label="省心特性">
+  <div class="marquee">
+    <div class="mq-belt" id="mqBelt">
+      <div class="mq-track">
+        <span class="mq-item"><kbd>Ctrl+Shift+D</kbd> 一按，近况即刻眼前</span>
+        <span class="mq-item">托盘常驻，不抢任务栏</span>
+        <span class="mq-item">20 分钟静默自扫，看到的永远是新数据</span>
+        <span class="mq-item">一天最多一条通知</span>
+        <span class="mq-item">七套主题，换肤像换心情</span>
+        <span class="mq-item">数据不出本机</span>
+        <span class="mq-item">GitHub 设备码安全连接</span>
+        <span class="mq-item">免费开源 · MIT</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 功能展示 -->
+<main id="features" data-tint="rgba(217,142,50,.10)">
+  <div class="wrap">
+    <h2 class="sec-title reveal">功能</h2>
+    <p class="sec-sub reveal">近况信号全部自动提取——零维护，零填表。</p>
+
+    <!-- 总览 -->
+    <section class="feature">
+      <div class="feature-text reveal">
+        <div class="hm" id="hmDeco" aria-hidden="true"></div>
+        <h3>总览：跨项目的事实全貌</h3>
+        <ul class="points">
+          <li><b>全年提交热力图</b>：所有项目提交按天求和，一年节奏一眼看全</li>
+          <li><b>按月活动流</b>：每月哪些项目在动、动了多少次，成条对比</li>
+          <li><b>「需要关注」首屏主角</b>：深色锚点卡按严重度排序（超期未提交 &gt; 未推送 &gt; 开放 PR），Top 5 直达详情；零警示时给你「都在正轨上」</li>
+          <li><b>AI 周报</b>：每周提交节奏一段人话总结，打开即有，当天缓存复用</li>
+          <li><b>工作台</b>：本机装了的 AI 命令行工具自动现身，一键在项目目录启动</li>
+        </ul>
+      </div>
+      <figure class="shot-frame reveal">
+        <img src="assets/overview-noai.webp" alt="总览页下半：按月活动流、「需要关注」黑卡与工作台 AI 工具入口（演示数据）"
+             width="1800" height="1020" loading="lazy" decoding="async">
+      </figure>
+    </section>
+
+    <!-- 项目页 -->
+    <section class="feature flip">
+      <div class="feature-text reveal">
+        <h3>项目页：行式列表，按温度分带</h3>
+        <!-- 五档分带温度条：产品符号活化，高亮流光沿带循环 -->
+        <div class="bandbar" aria-hidden="true">
+          <i class="seg s-hot"></i><i class="seg s-active"></i><i class="seg s-cool"></i><i class="seg s-stale"></i><i class="seg s-arch"></i>
+          <i class="flow"></i>
+        </div>
+        <div class="band-labels mono" aria-hidden="true">
+          <span>活跃 ≤3天</span><span>近期 4-7天</span><span>渐冷 8-30天</span><span>沉睡 31-90天</span><span>归档 90天+</span>
+        </div>
+        <ul class="points">
+          <li><b>五档活跃分带</b>：活跃 / 近期 / 渐冷 / 沉睡 / 归档，按最后动静自动划分——提交、AI 会话、未保存改动都算「动静」</li>
+          <li><b>行内即见</b>分支、备忘、警示与最近动静，分带色条沿行左缘标示</li>
+          <li><b>拖拽排序与图钉</b>：手动位序持久化，图钉项目永远置顶</li>
+          <li><b>搜索</b>按名称与备忘过滤，自动补全，<kbd>/</kbd> 聚焦、回车直达</li>
+        </ul>
+      </div>
+      <figure class="shot-frame reveal">
+        <img src="assets/board-warm.webp" alt="项目页：行式列表与五档活跃分带筛选、图钉置顶（暖阳主题，演示数据）"
+             width="1800" height="1020" loading="lazy" decoding="async">
+      </figure>
+    </section>
+
+    <!-- 详情面板 -->
+    <section class="feature">
+      <div class="feature-text reveal">
+        <!-- 三类警示图形（半实心圆=未提交超期 / 上箭头=未推送 / 分叉节点=开放 PR），与应用同一图形语言 -->
+        <div class="warn-trio" aria-hidden="true">
+          <span class="wg2 wg2-dirty"></span>
+          <span class="wg2 wg2-ahead"></span>
+          <span class="wg2 wg2-pr"></span>
+        </div>
+        <h3>详情面板：一个项目的全部近况</h3>
+        <ul class="points">
+          <li><b>README 摘要、近期提交、未提交文件</b>，点开即回到上下文</li>
+          <li><b>AI 建议</b>：按项目 git 信号给 2–3 条下一步行动，随项目缓存</li>
+          <li><b>备忘</b>钉在项目最显眼处，防止决策漂移</li>
+          <li><b>快捷打开</b>：文件夹 / 编辑器 / 终端 / AI 工具，一键到位</li>
+          <li><b>警示消音</b>：暂时静音，底层状态变了自动复出</li>
+        </ul>
+      </div>
+      <figure class="shot-frame reveal">
+        <img src="assets/detail-warm.webp" alt="详情面板：快捷打开、近况信号、警示标记与 AI 建议（暖阳主题，演示数据）"
+             width="1800" height="1020" loading="lazy" decoding="async">
+      </figure>
+    </section>
+
+    <!-- AI 能力 -->
+    <section class="feature flip" id="ai">
+      <div class="feature-text reveal">
+        <h3>AI 能力：用你本机已装的 AI 工具</h3>
+        <p class="ai-badge mono" aria-hidden="true"><i class="pulse-dot"></i>engine: claude · cached: today · facts only</p>
+        <ul class="points">
+          <li><b>AI 周报</b>：近 7 天跨项目事实一段总结，加一句「本周建议关注」，打开即有</li>
+          <li><b>AI 建议</b>：按项目 git 信号给下一步行动，随 HEAD 缓存</li>
+          <li><b>自然语言筛选</b>：直接打「最近一周有动静的」，AI 解析成筛选条件</li>
+        </ul>
+        <p class="honest">
+          调用你本机已登录的 Agent CLI（claude / codex / kimi / grok 或自定义命令），
+          只发统计事实与提交文本，不上传代码；可整体关闭，未安装时入口自动隐藏。
+        </p>
+      </div>
+      <figure class="shot-frame reveal">
+        <img src="assets/ai-warm.webp" alt="AI 周报模块：本周总览、分项目要点与生成引擎徽标（暖阳主题，演示数据）"
+             width="1800" height="1020" loading="lazy" decoding="async">
+      </figure>
+    </section>
+  </div>
+</main>
+
+<!-- 主题与个性化 -->
+<section id="themes" data-tint="var(--accent-glow)">
+  <div class="wrap">
+    <h2 class="sec-title reveal">主题与个性化</h2>
+    <p class="sec-sub reveal">
+      五套浅色 + 两套深色，背景到深色块整体换肤；强调色可预设可自定义，热力图与分带随之联动。
+    </p>
+    <p class="theme-try reveal">现在就试试：点一张主题卡或色板，<b>本页</b>跟着换。</p>
+
+    <div class="theme-lab reveal">
+      <div class="theme-cards" id="themeCards" role="group" aria-label="整体主题"></div>
+      <div class="swatches" id="swatches" role="group" aria-label="强调色"></div>
+    </div>
+
+    <div class="theme-grid">
+      <figure class="shot-frame reveal" data-theme-shot="warm">
+        <img src="assets/theme-warm.webp" alt="暖阳主题下的项目页（演示数据）" width="1800" height="1020" loading="lazy" decoding="async">
+        <figcaption>暖阳</figcaption>
+      </figure>
+      <figure class="shot-frame reveal" data-theme-shot="mist">
+        <img src="assets/theme-mist.webp" alt="雾蓝主题下的项目页（演示数据）" width="1800" height="1020" loading="lazy" decoding="async">
+        <figcaption>雾蓝</figcaption>
+      </figure>
+      <figure class="shot-frame reveal" data-theme-shot="meadow">
+        <img src="assets/theme-meadow.webp" alt="青野主题下的项目页（演示数据）" width="1800" height="1020" loading="lazy" decoding="async">
+        <figcaption>青野</figcaption>
+      </figure>
+      <figure class="shot-frame reveal" data-theme-shot="sakura">
+        <img src="assets/theme-sakura.webp" alt="樱粉主题下的项目页（演示数据）" width="1800" height="1020" loading="lazy" decoding="async">
+        <figcaption>樱粉</figcaption>
+      </figure>
+      <figure class="shot-frame reveal" data-theme-shot="iris">
+        <img src="assets/theme-iris.webp" alt="紫藤主题下的项目页（演示数据）" width="1800" height="1020" loading="lazy" decoding="async">
+        <figcaption>紫藤</figcaption>
+      </figure>
+      <figure class="shot-frame reveal" data-theme-shot="dark">
+        <img src="assets/theme-dark.webp" alt="暗夜主题下的项目页（演示数据）" width="1800" height="1020" loading="lazy" decoding="async">
+        <figcaption>暗夜</figcaption>
+      </figure>
+      <figure class="shot-frame reveal" data-theme-shot="abyss">
+        <img src="assets/theme-abyss.webp" alt="夜幕主题下的项目页（演示数据）" width="1800" height="1020" loading="lazy" decoding="async">
+        <figcaption>夜幕</figcaption>
+      </figure>
+      <figure class="shot-frame reveal">
+        <img src="assets/settings-appearance.webp" alt="设置页「外观」：七张主题卡与强调色预设色板（演示数据）" width="1800" height="1020" loading="lazy" decoding="async">
+        <figcaption>设置 · 外观</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- 下载：呼应应用「需要关注」的深色固定位，全站视觉重量最高的区域 -->
+<section id="download" data-tint="transparent">
+  <div class="wrap">
+    <div class="dl-card reveal">
+      <div class="dl-text">
+        <h2>下载与源码</h2>
+        <p>
+          免费开源（MIT），目前面向 Windows：Releases 下载即用，或克隆仓库
+          <code>npm install &amp;&amp; npm start</code> 跑源码。数据只存本机，GitHub token 经系统加密存储。
+        </p>
+      </div>
+      <div class="dl-ops">
+        <a class="btn accent big" href="https://github.com/Yaemikoreal/devboard/releases" target="_blank" rel="noopener">GitHub Releases</a>
+        <a class="btn ghost-light big" href="https://github.com/Yaemikoreal/devboard" target="_blank" rel="noopener">仓库源码</a>
+        <a class="btn ghost-light big" href="https://github.com/Yaemikoreal/devboard/issues" target="_blank" rel="noopener">提 Issue</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 常见问题 -->
+<section id="faq">
+  <div class="wrap">
+    <h2 class="sec-title reveal">常见问题</h2>
+    <div class="faq-grid">
+      <details class="qa reveal">
+        <summary>我的代码会被上传吗？</summary>
+        <p>不会。扫描与存储全部在本机完成；AI 功能只发送统计数字与提交信息文本，不含代码内容，设置里可整体关闭。</p>
+      </details>
+      <details class="qa reveal">
+        <summary>AI 功能需要什么条件？</summary>
+        <p>本机安装并登录任一 Agent CLI（claude / codex / kimi / grok 或自定义命令）即可；没装也不影响其他功能，AI 入口自动隐藏。</p>
+      </details>
+      <details class="qa reveal">
+        <summary>怎么唤出看板？</summary>
+        <p>默认 <kbd>Ctrl+Shift+D</kbd>，可在设置里改成任意组合；点托盘图标也行。</p>
+      </details>
+      <details class="qa reveal">
+        <summary>项目分散在不同目录怎么办？</summary>
+        <p>设置里支持多个扫描根目录、单个补充路径与黑名单，照常聚合。</p>
+      </details>
+      <details class="qa reveal">
+        <summary>收费吗？</summary>
+        <p>完全免费，MIT 开源。觉得好用，去 GitHub 点个 Star 就是最大的支持。</p>
+      </details>
+      <details class="qa reveal">
+        <summary>支持 macOS / Linux 吗？</summary>
+        <p>目前发布 Windows 版；基于 Electron 构建，其他平台可克隆仓库从源码运行。</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-in">
+    <span class="mono">SignalBoard</span>
+    <span class="foot-line">每个项目的近况，一眼即见。</span>
+    <span class="foot-links">
+      <a href="https://github.com/Yaemikoreal/devboard" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/Yaemikoreal/devboard/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/Yaemikoreal/devboard/blob/master/LICENSE" target="_blank" rel="noopener">MIT</a>
+    </span>
+  </div>
+</footer>
+
+<script src="main.js" defer></script>
+</body>
+</html>

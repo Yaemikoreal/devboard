@@ -1,0 +1,33 @@
+# 部署 site/ 到 GitHub Pages（issue #69）
+# 一次性前置：仓库 Settings → Pages → Source 选「GitHub Actions」
+name: Deploy site to Pages
+
+on:
+  push:
+    branches: [master]
+    paths: ['site/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  id-token: write
+
+# 同一分支只保留最新一次部署，排队中的旧部署直接取消
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

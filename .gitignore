@@ -1,3 +1,15 @@
 node_modules/
 dist/
 *.log
+
+# 官网原始截图（site/assets/*.webp 为压缩产物，原始 PNG 不入库）
+site/assets/raw/
+
+# 开发截图（真实数据/临时产物，不入库；官网素材走 site/assets/*.webp，原始 PNG 已忽略）
+shot-*.png
+screenshot.png
+screenshot-mock.png
+site-preview-desktop.png
+
+# 设计参考素材（本地参考；logo 定稿已入库 assets/logo/）
+前端设计参考/
