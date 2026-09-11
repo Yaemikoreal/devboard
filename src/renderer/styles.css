@@ -457,12 +457,16 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .sort-btn .caret{font-size:9px}
 
 /* ---------- 项目页：行列表 + 推出式详情面板 ---------- */
-.split{display:flex;gap:0;align-items:flex-start;transition:gap .3s ease}
-.split.open{gap:16px}
+.split{display:flex;gap:0;align-items:flex-start;position:relative}
+/* 面板推出时列表瞬间落位（一次重排，不随动画逐帧 reflow，issue #83） */
+.split.open .rows{margin-right:416px}
 .rows{
   flex:1;min-width:0;background:var(--card);
   border-radius:var(--r-card);box-shadow:var(--shadow-1);overflow:hidden;
+  container-type:inline-size; /* 窄态次要信息隐藏而非截断（issue #83） */
 }
+@container (max-width:560px){.row .r-branch{display:none}}
+@container (max-width:460px){.row .r-upd{display:none}}
 
 /* 行：识别 + 注意力（issue #16） */
 .row{
@@ -522,17 +526,24 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .row.selected .r-open{transform:rotate(90deg);background:var(--tile);color:var(--tile-ink);border-color:var(--tile)}
 .rows-empty{padding:40px;text-align:center;color:var(--ink-3);font-size:12.5px}
 
-/* 详情面板：右侧推出 400px 固定宽，挤压列表不覆盖（issue #17）；
-   sticky 吸附视口顶部：列表下翻后点击任意项目，面板始终停留在可见区域 */
-.panel{width:0;flex:none;overflow:hidden;transition:width .3s ease;position:sticky;top:24px}
-.split.open .panel{width:400px}
+/* 详情面板（issue #17 挤压不覆盖；issue #83 动画改合成层）：
+   面板绝对定位于 .split 右缘，transform 滑入 + 淡入，零逐帧 layout；
+   列表区 margin 瞬间落位一次重排，窄态次要信息由上方 container query 隐藏而非截断；
+   panel-in 自身 sticky 吸附视口顶部：列表下翻后面板始终停留在可见区域 */
+.panel{
+  position:absolute;right:0;top:0;bottom:0;width:400px;z-index:2;
+  opacity:0;transform:translateX(24px);pointer-events:none;visibility:hidden;
+  transition:opacity .25s ease,transform .3s ease,visibility 0s .3s; /* 关闭态延时隐藏，防止 Tab 进入不可见控件 */
+}
+.split.open .panel{
+  opacity:1;transform:none;pointer-events:auto;visibility:visible;
+  transition:opacity .25s ease,transform .3s ease;
+}
 .panel-in{
   width:400px;max-height:calc(100vh - 136px);overflow-y:auto;overscroll-behavior:contain;
   background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow-1);
-  padding:20px 22px;opacity:0;transform:translateX(12px);
-  transition:opacity .25s ease .05s,transform .25s ease .05s;
+  padding:20px 22px;position:sticky;top:24px;
 }
-.split.open .panel-in{opacity:1;transform:none}
 .p-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:6px}
 .p-head .nm{font-size:20px;font-weight:700;letter-spacing:-.01em;flex:1;min-width:0;word-break:break-all}
 .p-close{
@@ -696,6 +707,9 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .dirty-list .f:first-child{border-top:0}
+/* 「更多事实」折叠组内的子块标题（issue #83） */
+.p-sub{font-size:11.5px;font-weight:700;color:var(--ink-2);letter-spacing:.04em;margin:14px 0 6px}
+.p-sub-block:first-child .p-sub{margin-top:6px}
 
 /* GitHub 区 */
 .gh{display:flex;flex-direction:column;margin-top:4px}

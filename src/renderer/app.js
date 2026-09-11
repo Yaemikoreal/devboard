@@ -1389,26 +1389,6 @@
     renderMonthHeat(heatBox, heatSec.firstChild, p);
     panelIn.appendChild(heatSec);
 
-    // README 首段摘要 + AI 会话痕迹明细（project:detail 懒取）
-    var detail = state.details[p.path];
-    if (detail && detail !== 'loading') {
-      if (detail.readme) {
-        var rSec = sec('README 摘要');
-        rSec.appendChild(el('div', 'readme-s', detail.readme));
-        panelIn.appendChild(rSec);
-      }
-      if (detail.aiSessions && detail.aiSessions.length) {
-        var aSec = sec('AI 会话痕迹');
-        detail.aiSessions.forEach(function (s) {
-          var item = el('div', 'ai-item');
-          item.appendChild(el('span', 'tool', AI_TOOL_LABEL[s.tool] || s.tool));
-          item.appendChild(el('span', 'ago', relTime(s.at)));
-          aSec.appendChild(item);
-        });
-        panelIn.appendChild(aSec);
-      }
-    }
-
     // 近期提交（随分支下拉切换）
     var cSec = sec(current ? '近期提交' : '近期提交 · ' + selBranch(p));
     if (!bd) {
@@ -1447,10 +1427,48 @@
       panelIn.appendChild(dSec);
     }
 
-    // GitHub issues/PR
-    var gSec = sec('GitHub');
-    renderGithub(gSec, p);
-    panelIn.appendChild(gSec);
+    // 更多事实（issue #83）：低频区块（README 摘要 / AI 会话痕迹明细 / GitHub issues/PR）
+    // 默认折叠为一组，进详情一屏内可见 备忘 + 快捷打开 + 近况信号 + 警示
+    var detail = state.details[p.path];
+    var moreParts = [];
+    if (detail && detail !== 'loading' && detail.readme) {
+      var rBlock = el('div', 'p-sub-block');
+      rBlock.appendChild(el('h5', 'p-sub', 'README 摘要'));
+      rBlock.appendChild(el('div', 'readme-s', detail.readme));
+      moreParts.push({ t: 'README 摘要', node: rBlock });
+    }
+    if (detail && detail !== 'loading' && detail.aiSessions && detail.aiSessions.length) {
+      var aBlock = el('div', 'p-sub-block');
+      aBlock.appendChild(el('h5', 'p-sub', 'AI 会话痕迹'));
+      detail.aiSessions.forEach(function (s) {
+        var item = el('div', 'ai-item');
+        item.appendChild(el('span', 'tool', AI_TOOL_LABEL[s.tool] || s.tool));
+        item.appendChild(el('span', 'ago', relTime(s.at)));
+        aBlock.appendChild(item);
+      });
+      moreParts.push({ t: 'AI 会话痕迹', node: aBlock });
+    }
+    var gBlock = el('div', 'p-sub-block');
+    gBlock.appendChild(el('h5', 'p-sub', 'GitHub'));
+    renderGithub(gBlock, p);
+    moreParts.push({ t: 'GitHub', node: gBlock });
+
+    var moreSec = sec('更多事实');
+    var mToggle = el('button', 'dirty-toggle'); // 与未提交文件同款的收起/展开交互
+    mToggle.type = 'button';
+    mToggle.appendChild(el('span', 'caret', '▶'));
+    mToggle.appendChild(document.createTextNode(moreParts.map(function (x) { return x.t; }).join(' · ') + '，点击展开'));
+    var mWrap = el('div', 'dirty-wrap');
+    var mIn = el('div', 'dirty-in');
+    moreParts.forEach(function (x) { mIn.appendChild(x.node); });
+    mWrap.appendChild(mIn);
+    mToggle.addEventListener('click', function () {
+      var open = mWrap.classList.toggle('open');
+      mToggle.classList.toggle('open', open);
+    });
+    moreSec.appendChild(mToggle);
+    moreSec.appendChild(mWrap);
+    panelIn.appendChild(moreSec);
     state.panelPath = p.path;
     panelIn.scrollTop = scrollTop;
   }
