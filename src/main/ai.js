@@ -28,11 +28,12 @@ function engineErrorLine(raw) {
 
 // 各 CLI 的一次性打印模式调用规格。
 // shell: claude 是 npm .cmd shim，Windows 下必须经 shell 启动（Node 对 .cmd 的 CVE 限制）；
+// macOS 的 npm bin 是可执行脚本，直接 spawn（shell:false），PATH 由主进程启动时统一增补（env.js）；
 // 原生 exe（kimi/codex/grok）直接 spawn，参数转义由 libuv 保证，中文与换行安全。
 // stdin: prompt 经 stdin 传入；否则作为最后一个参数传入。
 // streamJson: 输出为 JSON 行，取 role=assistant 的 content 作为正文（kimi 文本模式会混入过程 bullet，故用 stream-json）
 const TOOL_SPECS = {
-  claude: { args: ['-p'], stdin: true, shell: true },
+  claude: { args: ['-p'], stdin: true, shell: process.platform === 'win32' },
   codex: { args: ['exec'], stdin: false, shell: false },
   kimi: { args: ['-p'], stdin: false, shell: false, streamJson: true },
   grok: { args: ['--single'], stdin: false, shell: false },
@@ -69,12 +70,15 @@ function cleanOutput(raw, spec) {
     .slice(0, MAX_OUTPUT);
 }
 
-// 终止子进程：shell:true 时 child 是 cmd.exe 壳，直接 kill 只杀壳、真 AI 进程成孤儿；
-// Windows 下改用 taskkill /T 连带整棵进程树
+// 终止子进程：shell:true 时 child 是 shell 壳（Windows cmd.exe / POSIX sh），直接 kill 只杀壳、
+// 真 AI 进程成孤儿。Windows 下用 taskkill /T 连带整棵进程树；POSIX 下 spawn 时已 detached 成组首，
+// kill 负 PID 对整组发 SIGKILL（对应 taskkill /F 的强杀语义，claude SessionEnd 挂起时 TERM 无效）
 function killChild(child, spec) {
   try {
     if (spec.shell && process.platform === 'win32') {
       spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => {});
+    } else if (spec.shell) {
+      process.kill(-child.pid, 'SIGKILL');
     } else {
       child.kill();
     }
@@ -94,6 +98,8 @@ function runCli(cmd, prompt, opts) {
         shell: !!spec.shell,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        // POSIX shell 派生时 detached 成组首，killChild 才能整组强杀（Windows 走 taskkill /T 不需要）
+        detached: !!spec.shell && process.platform !== 'win32',
         env: Object.assign({}, process.env, { NO_COLOR: '1' }),
       });
     } catch (err) {

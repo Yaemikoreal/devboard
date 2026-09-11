@@ -4,21 +4,30 @@
   "description": "本地桌面端项目概况板",
   "productName": "SignalBoard",
   "main": "src/main/index.js",
+  "author": "Yaemikoreal",
   "scripts": {
     "start": "electron .",
     "test:scan": "node scripts/test-scan.js",
     "test:ai": "node scripts/test-ai.js",
     "shot": "electron scripts/screenshot.js",
-    "logo": "electron scripts/render-logo.js"
+    "logo": "electron scripts/render-logo.js",
+    "logo:mac": "electron scripts/render-mac-icons.js",
+    "dist:mac": "electron-builder --mac"
   },
   "license": "MIT",
   "build": {
     "appId": "com.yaemikoreal.signalboard",
     "win": {
       "icon": "build/icon.ico"
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "target": ["dmg", "zip"]
     }
   },
   "devDependencies": {
-    "electron": "^39.8.10"
+    "electron": "^39.8.10",
+    "electron-builder": "^26.0.12"
   }
 }

@@ -1845,6 +1845,11 @@
   var deviceTimer = null;
   var deviceGen = 0; // 轮询代次号：stopDeviceFlow 递增，作废旧轮询链上在飞的回调
   fHotkey.readOnly = true; // 热键通过按键捕捉录入
+  // macOS 平台分支（issue #87）：body 打标驱动 CSS（隐藏自绘窗控、让位红绿灯）+ 系统 pane 通知授权提示
+  if (api.platform === 'darwin') {
+    document.body.classList.add('darwin');
+    document.getElementById('macNotifyHint').classList.remove('hidden');
+  }
 
   /* ----- 子模块导航（issue #26）：面板常驻 DOM 仅切换显隐，未保存输入不丢 ----- */
   document.getElementById('settingsNav').addEventListener('click', function (e) {
@@ -2409,7 +2414,9 @@
   document.getElementById('checkTerminal').addEventListener('click', function () {
     var res = document.getElementById('checkTerminalRes');
     if (!fTerminal.value.trim()) {
-      res.textContent = '留空：使用 Windows Terminal / cmd 兜底';
+      res.textContent = api.platform === 'darwin'
+        ? '留空：使用 Terminal.app 兜底'
+        : '留空：使用 Windows Terminal / cmd 兜底';
       res.className = 'res ok';
       return;
     }
@@ -2425,6 +2432,7 @@
     if (e.key === 'Backspace' || e.key === 'Delete') { fHotkey.value = ''; scheduleSave(); return; }
     if (['Control', 'Shift', 'Alt', 'Meta'].indexOf(e.key) >= 0) return;
     var parts = [];
+    if (e.metaKey) parts.push('Command'); // macOS Cmd 修饰（issue #87），Electron 加速键写作 Command
     if (e.ctrlKey) parts.push('Ctrl');
     if (e.altKey) parts.push('Alt');
     if (e.shiftKey) parts.push('Shift');

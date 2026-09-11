@@ -3,16 +3,25 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
+// 平台默认值（issue #87）：Windows 保留历史默认；mac 优先 ~/Projects（多数开发机存在、小而准），
+// 不存在再回退主目录（黑名单补 Library 剪枝）。默认根直接取主目录不可行：其下常有巨型树
+// （模型/数据/备份目录），深度 4 的发现遍历以分钟计，首扫如同卡死。
+const IS_MAC = process.platform === 'darwin';
+const MAC_DEFAULT_ROOT = path.join(os.homedir(), 'Projects');
 const DEFAULT_CONFIG = {
-  roots: ['E:\\myproject'],
+  roots: [IS_MAC ? (fs.existsSync(MAC_DEFAULT_ROOT) ? MAC_DEFAULT_ROOT : os.homedir()) : 'E:\\myproject'],
   extraPaths: [],
-  blacklist: ['node_modules', '$RECYCLE.BIN', '.git'],
+  // mac 回退主目录为默认根时：黑名单补 Library 剪掉巨大的 ~/Library 子树
+  blacklist: IS_MAC
+    ? ['node_modules', '$RECYCLE.BIN', '.git', 'Library']
+    : ['node_modules', '$RECYCLE.BIN', '.git'],
   githubToken: '',
   githubUsername: '',
   editorCmd: 'code',
   terminalCmd: '',
-  hotkey: 'Ctrl+Shift+D',
+  hotkey: IS_MAC ? 'Command+Shift+D' : 'Ctrl+Shift+D',
   autoStart: true,
   aiTools: [], // 自定义 AI 工具清单：[{label, cmd}]，与默认 claude/codex/kimi/grok 合并（issue #15）
   aiEnabled: true, // AI 功能总开关：周报/建议/自然语言筛选（issue #29）

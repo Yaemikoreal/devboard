@@ -3,6 +3,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('devboard', {
+  platform: process.platform, // 渲染层平台分支：macOS 隐藏自绘窗控、热键/兜底文案按 mac 语（issue #87）
   getBoard: () => ipcRenderer.invoke('board:get'),
   rescan: () => ipcRenderer.invoke('board:rescan'),
   setMemo: (projectPath, text) => ipcRenderer.invoke('memo:set', projectPath, text),

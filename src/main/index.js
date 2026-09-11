@@ -6,6 +6,7 @@ const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, Notificatio
 const { Store } = require('./store');
 const { registerIpc } = require('./ipc');
 const { migrateUserData } = require('./userdata-migrate');
+const { augmentGuiPath } = require('./env');
 
 let win = null;
 let tray = null;
@@ -47,7 +48,6 @@ function createWindow() {
     height: 900,
     minWidth: 1280,
     minHeight: 800,
-    frame: false,
     show: false,
     backgroundColor: '#f5f2e8',
     icon: path.join(__dirname, '..', '..', 'assets', 'logo', 'icon-256.png'),
@@ -57,6 +57,13 @@ function createWindow() {
       nodeIntegration: false,
     },
   };
+  if (process.platform === 'darwin') {
+    // macOS：保留原生红绿灯（hiddenInset），拖拽区与顶栏自绘照旧；Windows 维持全自绘无边框（issue #87）
+    opts.titleBarStyle = 'hiddenInset';
+    opts.trafficLightPosition = { x: 14, y: 14 }; // 40px 自绘标题栏内垂直居中
+  } else {
+    opts.frame = false;
+  }
   const b = store.getPrefs().windowBounds;
   if (b && b.width >= 1280 && b.height >= 800 && boundsVisible(b)) {
     opts.width = b.width;
@@ -104,7 +111,12 @@ function updateTrayTooltip(attentionCount) {
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'assets', 'logo', 'tray-32.png'));
+  const isMac = process.platform === 'darwin';
+  // macOS 菜单栏用单色 Template Image（系统自动适配深浅色菜单栏），Windows 沿用彩色托盘图标（issue #87）
+  const icon = nativeImage.createFromPath(
+    path.join(__dirname, '..', '..', 'assets', 'logo', isMac ? 'trayTemplate.png' : 'tray-32.png')
+  );
+  if (isMac) icon.setTemplateImage(true); // 文件名以 Template 结尾已自动标记，显式设置防御改名
   tray = new Tray(icon);
   tray.setToolTip('SignalBoard');
   const showPanel = () => {
@@ -130,10 +142,13 @@ function createTray() {
     { label: '退出', click: () => { quitting = true; app.quit(); } },
   ]);
   tray.setContextMenu(menu);
-  // 左键只做 显示/隐藏（show 后由渲染层异步触发重扫，不再同步卡住，issue #9）
-  tray.on('click', toggleWindow);
-  // Windows 右键兜底：显式弹出菜单，避免某些版本右键无响应（issue #9）
-  tray.on('right-click', () => tray.popUpContextMenu(menu));
+  if (!isMac) {
+    // Windows 交互：左键只做 显示/隐藏（show 后由渲染层异步触发重扫，不再同步卡住，issue #9）；
+    // 右键兜底：显式弹出菜单，避免某些版本右键无响应（issue #9）
+    tray.on('click', toggleWindow);
+    tray.on('right-click', () => tray.popUpContextMenu(menu));
+  }
+  // macOS：setContextMenu 后点击即弹菜单（mac 惯例），「显示面板」走菜单项，不抢左键做窗口开关
 }
 
 // 设置即时生效：重注册热键 + 开机自启；失败原因记录供设置页展示
@@ -188,8 +203,12 @@ if (!gotLock) {
     if (win) { win.show(); win.focus(); }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     app.setAppUserModelId('com.yaemikoreal.signalboard'); // 与 build.appId 一致，通知才能正确归因与响应点击
+    await augmentGuiPath(); // darwin：GUI 启动 PATH 增补（issue #87），须在所有子进程产生之前完成
+    if (process.platform === 'darwin' && app.dock) {
+      try { app.dock.setIcon(path.join(__dirname, '..', '..', 'assets', 'logo', 'icon-256.png')); } catch { /* 无 dock 场景忽略 */ }
+    }
     migrateUserDataIfNeeded();
     store = new Store(app.getPath('userData'), require('./token-vault'));
     ({ buildBoard, gitWatcher } = registerIpc({

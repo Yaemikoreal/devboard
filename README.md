@@ -8,10 +8,12 @@
 
 ```bash
 npm install       # 安装依赖（electron，约 100MB）
-npm start         # 启动应用：托盘常驻，Ctrl+Shift+D 唤出/隐藏
+npm start         # 启动应用：托盘常驻，Ctrl+Shift+D（macOS 为 Command+Shift+D）唤出/隐藏
 npm run test:scan # 不起界面，直接跑项目扫描并打印 JSON，用于验证
 npm run shot      # 隐藏窗口渲染真实数据后截图到 screenshot.png
 npm run logo      # 从 assets/logo/draft-a.svg 重新渲染全尺寸图标（PNG/ICO）
+npm run logo:mac  # 渲染 macOS 托盘 Template Image 与 build/icon.icns（issue #87）
+npm run dist:mac  # electron-builder 打 macOS 包（dmg + zip，见「macOS 说明」）
 ```
 
 唤出窗口时主动重扫一次；后台每 20 分钟静默刷新。扫描全异步：扫描期间面板保持可交互，顶栏显示「扫描中…」；本地扫描缓存先展出，后台重扫补丁到达后整板替换渲染并熄灭扫描指示。
@@ -20,7 +22,7 @@ npm run logo      # 从 assets/logo/draft-a.svg 重新渲染全尺寸图标（PN
 
 详情面板自上而下：头部（分带 pill + 项目名）、路径行（含复制路径）、备忘编辑（Enter/失焦保存，Esc 还原）、快捷打开（文件夹/编辑器/终端/复制路径，及本机 AI 工具在项目目录一键启动）、近况信号（分支下拉可切换查看各本地分支的数据，选择持久化）、警示（× 消音，状态变化后自动复出）、AI 建议（按需生成，按 项目+HEAD 缓存）、月份热力图（单月日历视图，可翻页）、README 摘要、AI 会话痕迹、近期提交、未提交文件（默认收起）、GitHub issues/PR。
 
-快捷键：`/` 聚焦搜索（按名称/备忘过滤，带自动补全，`↓/↑` 选择、`Enter` 直达并推出该项目详情；无补全选中项且 AI 可用时，`Enter` 按自然语言筛选项目列表），`Esc` 逐层关闭（浮层 → 详情面板 → 设置）后隐藏到托盘。托盘左键唤出/隐藏、右键菜单（显示面板 / 立即扫描 / 设置 / 退出）。
+快捷键：`/` 聚焦搜索（按名称/备忘过滤，带自动补全，`↓/↑` 选择、`Enter` 直达并推出该项目详情；无补全选中项且 AI 可用时，`Enter` 按自然语言筛选项目列表），`Esc` 逐层关闭（浮层 → 详情面板 → 设置）后隐藏到托盘。托盘交互按平台惯例：Windows 左键唤出/隐藏、右键菜单；macOS 点击托盘即弹菜单（显示面板 / 立即扫描 / 设置 / 退出）。
 
 ## 设置
 
@@ -34,13 +36,13 @@ npm run logo      # 从 assets/logo/draft-a.svg 重新渲染全尺寸图标（PN
 - **AI 工具**：AI 功能总开关（周报摘要/项目建议/自然语言筛选）；默认引擎下拉（候选为本机已探测可用的工具）；自定义工具清单（名称 + 命令 + 图标），与默认 claude/codex/kimi/grok 一并按 PATH 探测
 - **GitHub 连接**：推荐「设备码授权」（OAuth Device Flow，需应用在 `src/main/github.js` 配置 OAuth Client ID）或「从 gh CLI 导入」（本机已登录 gh 时一键导入）；手动粘贴 token 折叠在「高级」里兜底。「测试连接」验证 token 有效且登录名一致。token 经 Electron safeStorage 系统加密后落盘（旧明文自动迁移），配置后拉取 owner 是自己的仓库的开放 issues/PR（10 分钟缓存）；fork 的上游仓库自然跳过。已连接时展示账户状态卡（头像/用户名/连通性），可重新验证或断开
 - **编辑器命令**：快捷打开「编辑器」按钮使用的命令，默认 `code`，支持浏览与校验
-- **终端命令**：快捷打开「终端」按钮使用的命令，在项目目录下执行；留空用 Windows Terminal / cmd 兜底
-- **全局热键**：点击输入框后按下组合键录入，默认 `Ctrl+Shift+D`
-- **开机自启**：默认开
+- **终端命令**：快捷打开「终端」按钮使用的命令，在项目目录下执行；留空自动兜底（Windows 用 wt/cmd，macOS 用 Terminal.app）
+- **全局热键**：点击输入框后按下组合键录入，默认 Windows `Ctrl+Shift+D` / macOS `Command+Shift+D`
+- **开机自启**：默认开（macOS 登录项语义由系统管理，打包安装后生效更可靠）
 
 ## 数据存放
 
-全部在 Electron userData 目录下（Windows: `%APPDATA%/SignalBoard/`；自 devboard 更名后，首次启动会自动把旧目录 `%APPDATA%/devboard/` 的数据文件迁过来）：
+全部在 Electron userData 目录下（Windows: `%APPDATA%/SignalBoard/`；macOS: `~/Library/Application Support/SignalBoard/`；自 devboard 更名后，首次启动会自动把旧目录 `%APPDATA%/devboard/`（或同名旧目录）的数据文件迁过来）：
 
 - `config.json`：上述设置（GitHub token 加密存为 `githubTokenEnc`，不落明文）
 - `memos.json`：各项目备忘（按项目路径索引，多行纯文本）
@@ -59,6 +61,17 @@ npm run logo      # 从 assets/logo/draft-a.svg 重新渲染全尺寸图标（PN
 - 有未提交改动且最后提交超 3 天 →「N 文件未提交超3天」
 - 领先远程未推送 →「N 提交未推送」
 - 有开放 PR →「N 个开放 PR」
+
+## macOS 说明（issue #87）
+
+Windows 与 macOS 双平台可用，平台差异收敛在主进程与少量样式分支，渲染层保持平台无关：
+
+- **窗口**：macOS 保留原生红绿灯（`hiddenInset`），Windows 沿用右侧自绘窗控；顶栏拖拽区两端一致
+- **托盘**：macOS 菜单栏为单色 Template Image（`assets/logo/trayTemplate.png`，系统自动适配深浅色），点击弹菜单；Windows 为彩色图标，左键唤出/隐藏
+- **PATH**：GUI 应用不继承 shell rc 环境，启动时经 login shell 取一次真实 PATH 并合并常见安装位（`src/main/env.js`），claude/gh/code 等本机 CLI 的探测与调用统一受益
+- **通知**：首次通知时 macOS 会请求授权，未授权则静默；可在 系统设置 → 通知 → SignalBoard 开启（设置页「系统」栏有对应提示）
+- **打包**：`npm run dist:mac` 产出 `dist/SignalBoard-*.dmg` 与 zip；产物未签名未公证，首次打开需右键 → 打开绕过 Gatekeeper。分发需自行配置签名证书与 notarization（`mac.identity` / `notarize`）
+- **热键/兜底**：全局热键默认 `Command+Shift+D`；快捷终端与 AI 工具终端经 Terminal.app（osascript）打开
 
 ## 已知取舍
 

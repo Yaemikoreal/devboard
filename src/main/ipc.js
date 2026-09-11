@@ -15,13 +15,23 @@ const { DEFAULT_CONFIG } = require('./store');
 const { createGitWatcher } = require('./watcher');
 
 // 启动子进程并给出真实结果：立即非零退出视为失败，存活超过 800ms 视为成功
-// shell:true 时 Node 把 [cmd].concat(args).join(' ') 交给 cmd.exe 且不逐个加引号，
-// 含空格路径会被拆碎、& | " 等元字符有注入面；这里对含空白/元字符的参数自行加引号并转义内嵌引号，
-// 裸 token（如 start 后的 cmd）保持原样——start 会把首个带引号参数当作窗口标题
-const SHELL_ARG_NEEDS_QUOTE = /[\s"&|<>^%()]/;
-function quoteShellArg(a) {
+// shell:true 时 Node 把 [cmd].concat(args).join(' ') 交给 shell 且不逐个加引号，
+// 含空格路径会被拆碎、元字符有注入面；这里按平台语义对参数自行加引号并转义内嵌元字符，
+// 裸 token（如 Windows start 后的 cmd）保持原样——start 会把首个带引号参数当作窗口标题
+const IS_WIN = process.platform === 'win32';
+const CMD_ARG_NEEDS_QUOTE = /[\s"&|<>^%()]/;
+function quoteCmdArg(a) {
   const s = String(a);
-  return !s || SHELL_ARG_NEEDS_QUOTE.test(s) ? '"' + s.replace(/"/g, '\\"') + '"' : s;
+  return !s || CMD_ARG_NEEDS_QUOTE.test(s) ? '"' + s.replace(/"/g, '\\"') + '"' : s;
+}
+// POSIX 双引号规则：双引号内 $ ` \ " 仍有特殊义，须一并转义；其余元字符包进双引号即失去特殊义
+const POSIX_ARG_NEEDS_QUOTE = /[\s"'\\$`&|<>;(){}*?[\]!#~]/;
+function quotePosixArg(a) {
+  const s = String(a);
+  return !s || POSIX_ARG_NEEDS_QUOTE.test(s) ? '"' + s.replace(/[\\"$`]/g, '\\$&') + '"' : s;
+}
+function quoteShellArg(a) {
+  return IS_WIN ? quoteCmdArg(a) : quotePosixArg(a);
 }
 function spawnResult(cmd, args, opts) {
   return new Promise((resolve) => {
@@ -57,6 +67,7 @@ async function quickOpen({ path: projectPath, kind }, config) {
   if (kind === 'terminal') {
     const custom = (config.terminalCmd || '').trim();
     if (custom) return spawnResult(custom, [], { cwd: projectPath });
+    if (!IS_WIN) return spawnResult('open', ['-a', 'Terminal', projectPath]); // macOS：Terminal.app 打开目录（issue #87）
     const ok = await spawnResult('wt', ['-d', projectPath]);
     if (ok) return true;
     return spawnResult('cmd', ['/c', 'start', 'cmd'], { cwd: projectPath });
@@ -73,19 +84,28 @@ function applySnoozes(projects, snoozes) {
   }
 }
 
-// 命令可用性校验：含路径的查文件存在，否则用 where 查 PATH。
+// 命令可用性校验：含路径的查文件存在（POSIX 另要求可执行位），裸命令查 PATH（Windows 用 where，macOS 用 which）。
 // 杀软扫描下本机进程创建可能需 1-3s，超时放宽到 10s 避免启动负载期误报未安装（issue #29 实测）
 function checkCommand(cmd) {
   // 首 token 先匹配引号段："C:\Program Files\...\Code.exe" --flag 不应被解析成 C:\Program
   const m = String(cmd || '').trim().match(/^"([^"]+)"|^(\S+)/);
   const first = m ? m[1] || m[2] : '';
   if (!first) return Promise.resolve({ ok: false, reason: '命令为空' });
-  if (/[\\/]/.test(first) || /\.(exe|cmd|bat)$/i.test(first)) {
-    const exists = fs.existsSync(first);
-    return Promise.resolve({ ok: exists, reason: exists ? '' : '文件不存在' });
+  if (/[\\/]/.test(first) || (IS_WIN && /\.(exe|cmd|bat)$/i.test(first))) {
+    let ok = fs.existsSync(first);
+    let reason = ok ? '' : '文件不存在';
+    if (ok && !IS_WIN) {
+      try {
+        fs.accessSync(first, fs.constants.X_OK);
+      } catch {
+        ok = false;
+        reason = '文件存在但无执行权限';
+      }
+    }
+    return Promise.resolve({ ok, reason });
   }
   return new Promise((resolve) => {
-    execFile('where', [first], { timeout: 10000 }, (err, stdout) => {
+    execFile(IS_WIN ? 'where' : 'which', [first], { timeout: 10000 }, (err, stdout) => {
       if (err) resolve({ ok: false, reason: 'PATH 中找不到该命令' });
       else resolve({ ok: true, reason: String(stdout).split('\n')[0].trim() });
     });
@@ -389,11 +409,18 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
   // AI 工具清单：默认四项 + config.aiTools 自定义项，逐项 where 探测安装情况（issue #15）
   ipcMain.handle('aitools:list', () => detectAiTools(store.getConfig()));
 
-  // 在所选项目目录开终端执行 AI 工具命令：优先 wt -d，回退 cmd /c start（issue #15）
+  // 在所选项目目录开终端执行 AI 工具命令（issue #15）：
+  // Windows 优先 wt -d、回退 cmd /c start；macOS 经 osascript 让 Terminal.app 在新窗口执行（issue #87）
   ipcMain.handle('aitools:open', async (_e, cmd, projectPath) => {
     const c = String(cmd || '').trim();
     const p = String(projectPath || '');
     if (!c || !p || !fs.existsSync(p)) return false;
+    if (!IS_WIN) {
+      // 命令串交给用户默认 shell：路径用单引号包住（含空格/特殊字符安全）；osascript 参数走 shell:false 不再引号
+      const asStr = (s) => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+      const inner = 'cd ' + "'" + p.replace(/'/g, `'\\''`) + "'" + ' && ' + c;
+      return spawnResult('osascript', ['-e', 'tell application "Terminal" to do script ' + asStr(inner)], { shell: false });
+    }
     const ok = await spawnResult('wt', ['-d', p, 'cmd', '/k', c]);
     if (ok) return true;
     return spawnResult('cmd', ['/c', 'start', 'cmd', '/k', c], { cwd: p });

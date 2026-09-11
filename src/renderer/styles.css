@@ -117,6 +117,10 @@ body{
 .wc.close i::after{transform:rotate(-45deg)}
 .wc.close:hover i::before,.wc.close:hover i::after{background:var(--tile-ink)}
 
+/* macOS（issue #87）：原生红绿灯（hiddenInset）替代自绘窗控，标题文字右移让位灯组（灯组宽约 70px） */
+body.darwin .win-controls{display:none}
+body.darwin .tb-name{padding-left:76px}
+
 /* ---------- 顶栏 ---------- */
 /* 切换器绝对定位于顶栏水平中心，不受左右两侧元素宽度影响（issue #68） */
 .topbar{

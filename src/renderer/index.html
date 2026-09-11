@@ -305,7 +305,7 @@
                 </div>
               </div>
               <div class="field">
-                <label>终端命令（在项目目录下执行；留空用 Windows Terminal / cmd 兜底）</label>
+                <label>终端命令（在项目目录下执行；留空自动兜底：Windows 用 wt/cmd，macOS 用 Terminal.app）</label>
                 <input type="text" id="fTerminal" spellcheck="false" placeholder="留空自动兜底">
                 <div class="inline-check">
                   <button id="checkTerminal" type="button">校验</button>
@@ -314,7 +314,7 @@
               </div>
               <div class="field">
                 <label>全局热键（点击输入框后按下组合键）</label>
-                <input type="text" id="fHotkey" spellcheck="false" placeholder="例如 Ctrl+Shift+D">
+                <input type="text" id="fHotkey" spellcheck="false" placeholder="例如 Ctrl+Shift+D / Command+Shift+D">
                 <div class="hint" id="hotkeyHint">修改保存后即时生效；若被其他程序占用会在此处报错</div>
                 <div class="err" id="hotkeyErr"></div>
               </div>
@@ -322,6 +322,8 @@
                 <input type="checkbox" id="fAutoStart">
                 <label for="fAutoStart">开机自启</label>
               </div>
+              <!-- macOS 通知授权如实提示（issue #87）：未授权时通知静默失败，仅 darwin 显示 -->
+              <div class="hint hidden" id="macNotifyHint">macOS 通知需系统授权：首次通知时按系统弹窗允许；未授权则通知静默，可在 系统设置 → 通知 → SignalBoard 中开启。</div>
             </div>
           </div>
 
