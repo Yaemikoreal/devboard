@@ -73,6 +73,15 @@ function applySnoozes(projects, snoozes) {
   }
 }
 
+// 警示规则（issue #73）：config 已过 getConfig 归一化（天数限 1/3/7、开关补齐 true），这里只整形
+function warningRulesOf(config) {
+  const wt = config.warningTypes || {};
+  return {
+    dirtyDays: config.warningDirtyDays || 3,
+    types: { dirty: wt.dirty !== false, unpushed: wt.unpushed !== false, pr: wt.pr !== false },
+  };
+}
+
 // 命令可用性校验：含路径的查文件存在，否则用 where 查 PATH。
 // 杀软扫描下本机进程创建可能需 1-3s，超时放宽到 10s 避免启动负载期误报未安装（issue #29 实测）
 function checkCommand(cmd) {
@@ -188,7 +197,7 @@ function localDateStr(d) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
-function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
+function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttentionCount }) {
   let refreshInFlight = false;
   let scanInFlight = false;
   let scanPromise = null; // 在飞全量扫描：并发触发复用同一 Promise，避免重复双扫
@@ -211,13 +220,20 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     },
   });
 
-  // 拼装 board：memos + GitHub 缓存挂接 + 警示消音 + 统计（缓存路径与新鲜扫描共用）
+  // 拼装 board：memos + 警示按当前规则重算 + GitHub 缓存挂接 + 警示消音 + 统计（缓存路径与新鲜扫描共用）
   function assembleBoard(projects, config, fromCache) {
     const memos = store.getMemos();
     for (const p of projects) p.memo = memos[p.path] || '';
 
+    // 警示按当前规则重算（issue #73）：缓存/降级条目里的 warnings 是旧规则产物，
+    // 依赖的事实字段（dirtyCount/lastCommitAt/ahead/github.openPRs）都在，重算零 IO，
+    // 设置改动后无需等重扫即反映到需要关注清单与行内警示点；消音签名按新 label 照常匹配
+    const rules = warningRulesOf(config);
+    const now = new Date();
+    for (const p of projects) p.warnings = scanner.localWarnings(p, now, rules);
+
     const stale = github.attachFromCache(projects, config, store);
-    github.applyPrWarnings(projects);
+    github.applyPrWarnings(projects, rules.types.pr);
     applySnoozes(projects, store.getPrefs().snoozes);
 
     // originUrl 仅为内部解析用，不下发渲染层
@@ -230,6 +246,9 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     const attention = out
       .filter((p) => p.warnings.length > 0)
       .map((p) => ({ path: p.path, name: p.name, label: p.warnings.map((w) => w.label).join('，') }));
+
+    // 托盘 tooltip 计数随每次拼板刷新（issue #80）；显隐由 onAttentionCount 实现方按设置裁决
+    if (onAttentionCount) onAttentionCount(attention.length);
 
     return {
       board: {
@@ -265,6 +284,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError }) {
     try {
       projects = await scanner.scan(config.roots, config.blacklist, config.extraPaths, {
         cache,
+        warningRules: warningRulesOf(config), // 警示规则参数化（issue #73）
         onLate: (projectPath, fresh) => {
           const cur = store.getScanCache();
           cur.projects[projectPath] = fresh;

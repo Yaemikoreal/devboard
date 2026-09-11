@@ -1842,6 +1842,13 @@
   var fAiEnabled = document.getElementById('fAiEnabled');
   var fAiEngine = document.getElementById('fAiEngine');
   var scanIntervalSeg = document.getElementById('scanIntervalSeg');
+  var warnDirtyDaysSeg = document.getElementById('warnDirtyDaysSeg');
+  var fWarnDirty = document.getElementById('fWarnDirty');
+  var fWarnUnpushed = document.getElementById('fWarnUnpushed');
+  var fWarnPr = document.getElementById('fWarnPr');
+  var fNotifyEnabled = document.getElementById('fNotifyEnabled');
+  var notifyModeSeg = document.getElementById('notifyModeSeg');
+  var fTrayCount = document.getElementById('fTrayCount');
   var deviceBox = document.getElementById('deviceBox');
   var deviceTimer = null;
   var deviceGen = 0; // 轮询代次号：stopDeviceFlow 递增，作废旧轮询链上在飞的回调
@@ -1864,6 +1871,44 @@
     renderScanInterval(Number(b.getAttribute('data-min')));
     scheduleSave();
   });
+
+  /* ----- 警示规则（issue #73）：超期天数 1/3/7 三档分段 + 三类开关；改动随自动保存落盘并触发重算 ----- */
+  var WARN_DIRTY_DAYS = [1, 3, 7];
+  function renderWarnDirtyDays(days) {
+    Array.prototype.forEach.call(warnDirtyDaysSeg.querySelectorAll('button'), function (b) {
+      b.classList.toggle('active', Number(b.getAttribute('data-days')) === days);
+    });
+  }
+  function warnDirtyDaysValue() {
+    var b = warnDirtyDaysSeg.querySelector('button.active');
+    return b ? Number(b.getAttribute('data-days')) : 3;
+  }
+  warnDirtyDaysSeg.addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    renderWarnDirtyDays(Number(b.getAttribute('data-days')));
+    scheduleSave();
+  });
+
+  /* ----- 通知（issue #80）：警示摘要开关 + 时机分段 + 托盘计数显隐；总开关关闭时时机分段禁用 ----- */
+  var NOTIFY_MODES = ['daily', 'newOnly'];
+  function renderNotifyMode(mode) {
+    Array.prototype.forEach.call(notifyModeSeg.querySelectorAll('button'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-mode') === mode);
+      b.disabled = !fNotifyEnabled.checked;
+    });
+  }
+  function notifyModeValue() {
+    var b = notifyModeSeg.querySelector('button.active');
+    return b ? b.getAttribute('data-mode') : 'daily';
+  }
+  notifyModeSeg.addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    renderNotifyMode(b.getAttribute('data-mode'));
+    scheduleSave();
+  });
+  fNotifyEnabled.addEventListener('change', function () { renderNotifyMode(notifyModeValue()); });
 
   /* ----- 子模块导航（issue #26）：面板常驻 DOM 仅切换显隐，未保存输入不丢 ----- */
   document.getElementById('settingsNav').addEventListener('click', function (e) {
@@ -2233,6 +2278,14 @@
       fHotkey.value = cfg.hotkey || '';
       fAutoStart.checked = !!cfg.autoStart;
       renderScanInterval(SCAN_INTERVALS.indexOf(cfg.scanIntervalMin) >= 0 ? cfg.scanIntervalMin : 20); // issue #70
+      renderWarnDirtyDays(WARN_DIRTY_DAYS.indexOf(cfg.warningDirtyDays) >= 0 ? cfg.warningDirtyDays : 3); // 警示超期天数（issue #73）
+      var wt = cfg.warningTypes || {}; // 三类警示开关（issue #73）
+      fWarnDirty.checked = wt.dirty !== false;
+      fWarnUnpushed.checked = wt.unpushed !== false;
+      fWarnPr.checked = wt.pr !== false;
+      fNotifyEnabled.checked = cfg.notifyEnabled !== false; // 警示摘要通知（issue #80）；先置开关再渲染时机分段（禁用态依赖它）
+      renderNotifyMode(NOTIFY_MODES.indexOf(cfg.notifyMode) >= 0 ? cfg.notifyMode : 'daily');
+      fTrayCount.checked = cfg.trayAttentionCount !== false; // 托盘计数显隐（issue #80）
       fAiEnabled.checked = cfg.aiEnabled !== false; // AI 功能总开关（issue #29）
       loadAiTools().then(function () { renderAiEngineSelect(cfg); });
       var th = savedTheme();
@@ -2306,6 +2359,11 @@
       hotkey: fHotkey.value.trim(),
       autoStart: fAutoStart.checked,
       scanIntervalMin: scanIntervalValue(), // 后台刷新间隔（issue #70）
+      warningDirtyDays: warnDirtyDaysValue(), // 警示规则（issue #73）
+      warningTypes: { dirty: fWarnDirty.checked, unpushed: fWarnUnpushed.checked, pr: fWarnPr.checked },
+      notifyEnabled: fNotifyEnabled.checked, // 通知（issue #80）：主进程读配置即时生效，无需重拉板数据
+      notifyMode: notifyModeValue(),
+      trayAttentionCount: fTrayCount.checked,
       aiEnabled: fAiEnabled.checked, // AI 功能开关（issue #29）
       aiEngine: fAiEngine.disabled ? '' : fAiEngine.value,
       theme: { id: themeId, accent: themeAccent }, // 外观（issue #27）
@@ -2320,6 +2378,12 @@
     // 编辑器/终端命令改动随停顿自动校验（issue #76），结果显示在原校验按钮旁的 res 位
     var editorChanged = patch.editorCmd !== (prev.editorCmd || 'code');
     var terminalChanged = patch.terminalCmd !== (prev.terminalCmd || '');
+    // 警示规则改动需重算警示（issue #73）：天数或三类开关变化后重拉板数据，
+    // 主进程拼板按新规则即时重算（缓存事实字段足够，不等重扫）
+    var prevWt = prev.warningTypes || {};
+    var warnChanged = patch.warningDirtyDays !== (prev.warningDirtyDays || 3) ||
+      JSON.stringify(patch.warningTypes) !==
+        JSON.stringify({ dirty: prevWt.dirty !== false, unpushed: prevWt.unpushed !== false, pr: prevWt.pr !== false });
     // AI 开关/引擎变化需重估能力（issue #29）；自定义工具清单变化同时影响两者
     var aiChanged = patch.aiEnabled !== (prev.aiEnabled !== false) || patch.aiEngine !== (prev.aiEngine || '');
     api.setSettings(patch).then(function (cfg) {
@@ -2349,7 +2413,7 @@
       if (terminalChanged) checkTerminalCmd();
       if (toolsChanged) loadAiTools(); // 自定义工具清单已变，重扫 PATH
       if (aiChanged || toolsChanged) loadAiCaps(); // AI 引擎/开关或可用工具集已变（issue #29）
-      if (pathsChanged || toolsChanged) refresh(false);
+      if (pathsChanged || toolsChanged || warnChanged) refresh(false);
     });
   }
 

@@ -407,14 +407,18 @@ async function dirtyMtime(projectPath, dirtyLines) {
 }
 
 // 警示标记。github 数据在扫描后由 github.js 挂接，PR 警示由调用方补充。
-function localWarnings(p, now) {
+// 规则可调（issue #73）：rules.dirtyDays = 未提交超期天数预设（1/3/7），rules.types = 三类开关
+// （开关键 unpushed 对应本地警示类型 ahead）；调用方不传 rules 时按默认规则，保持脚本与旧调用行为不变
+function localWarnings(p, now, rules) {
+  const dirtyDays = rules && rules.dirtyDays > 0 ? rules.dirtyDays : 3;
+  const types = (rules && rules.types) || {};
   const warnings = [];
-  if (p.dirtyCount > 0 && p.lastCommitAt) {
+  if (types.dirty !== false && p.dirtyCount > 0 && p.lastCommitAt) {
     const days = (now.getTime() - Date.parse(p.lastCommitAt)) / DAY_MS;
-    // 近似：无法得知脏文件起始时间，用最后提交时间近似「滞留超3天」
-    if (days > 3) warnings.push({ type: 'dirty', label: `${p.dirtyCount} 文件未提交超3天` });
+    // 近似：无法得知脏文件起始时间，用最后提交时间近似「滞留超期」
+    if (days > dirtyDays) warnings.push({ type: 'dirty', label: `${p.dirtyCount} 文件未提交超${dirtyDays}天` });
   }
-  if (p.ahead > 0) warnings.push({ type: 'ahead', label: `${p.ahead} 提交未推送` });
+  if (types.unpushed !== false && p.ahead > 0) warnings.push({ type: 'ahead', label: `${p.ahead} 提交未推送` });
   return warnings;
 }
 
@@ -498,7 +502,7 @@ async function scanProject(projectPath, now, opts) {
     .sort()
     .pop() || null;
   p.band = bandOf(p.lastActivityAt, now);
-  p.warnings = localWarnings(p, now);
+  p.warnings = localWarnings(p, now, opts && opts.warningRules); // 警示规则参数化（issue #73）
   return p;
 }
 
@@ -543,7 +547,7 @@ async function scan(roots, blacklist, extraPaths, opts) {
           resolve(fallback);
         }, PROJECT_SCAN_BUDGET_MS);
       });
-      const real = scanProject(resolved, now, { cached });
+      const real = scanProject(resolved, now, { cached, warningRules: opts && opts.warningRules });
       const proj = await Promise.race([real, budget]);
       clearTimeout(timeoutId);
       if (lost && onLate) {

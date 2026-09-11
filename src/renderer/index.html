@@ -195,6 +195,32 @@
                 <span class="res" id="previewRes"></span>
               </div>
             </div>
+
+            <div class="set-group">
+              <h3>警示</h3>
+              <div class="group-desc">警示标记汇入总览页「需要关注」清单与项目行内警示点；整类关闭后即时消失，单条忽略用详情面板的警示消音（issue #73）</div>
+              <div class="field">
+                <label>未提交改动超期天数</label>
+                <div class="seg" id="warnDirtyDaysSeg">
+                  <button type="button" data-days="1">1 天</button>
+                  <button type="button" data-days="3">3 天</button>
+                  <button type="button" data-days="7">7 天</button>
+                </div>
+                <div class="hint">未提交改动滞留超过所选天数的项目记警示标记</div>
+              </div>
+              <div class="field check">
+                <input type="checkbox" id="fWarnDirty">
+                <label for="fWarnDirty">未提交改动超期</label>
+              </div>
+              <div class="field check">
+                <input type="checkbox" id="fWarnUnpushed">
+                <label for="fWarnUnpushed">领先远程未推送</label>
+              </div>
+              <div class="field check">
+                <input type="checkbox" id="fWarnPr">
+                <label for="fWarnPr">有开放 PR</label>
+              </div>
+            </div>
           </div>
 
           <div class="set-pane" id="pane-appearance">
@@ -331,6 +357,27 @@
               <div class="field check">
                 <input type="checkbox" id="fAutoStart">
                 <label for="fAutoStart">开机自启</label>
+              </div>
+            </div>
+
+            <div class="set-group">
+              <h3>通知</h3>
+              <div class="group-desc">每天首次唤出时弹一条警示摘要，是应用唯一的主动打扰；可整体关闭或改为仅有新增时打扰（issue #80）</div>
+              <div class="field check">
+                <input type="checkbox" id="fNotifyEnabled">
+                <label for="fNotifyEnabled">警示摘要通知</label>
+              </div>
+              <div class="field">
+                <label>通知时机</label>
+                <div class="seg" id="notifyModeSeg">
+                  <button type="button" data-mode="daily">每天首次唤出</button>
+                  <button type="button" data-mode="newOnly">仅有新增时</button>
+                </div>
+                <div class="hint">「仅有新增时」：需要关注数较昨日没有变多则不打扰</div>
+              </div>
+              <div class="field check">
+                <input type="checkbox" id="fTrayCount">
+                <label for="fTrayCount">托盘悬停提示显示「N 个项目需要关注」计数</label>
               </div>
             </div>
           </div>

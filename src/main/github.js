@@ -151,11 +151,12 @@ async function refreshCache(remotes, config, store) {
   return changed;
 }
 
-// PR 警示需要在 github 挂接后补充；同一批对象可能重复挂接（最终补丁二次拼装），先清旧值保证幂等
-function applyPrWarnings(projects) {
+// PR 警示需要在 github 挂接后补充；同一批对象可能重复挂接（最终补丁二次拼装），先清旧值保证幂等。
+// enabled=false（issue #73 三类警示开关之一）时只清不加
+function applyPrWarnings(projects, enabled) {
   for (const p of projects) {
     p.warnings = p.warnings.filter((w) => w.type !== 'pr');
-    if (p.github && p.github.openPRs > 0) {
+    if (enabled !== false && p.github && p.github.openPRs > 0) {
       p.warnings.push({ type: 'pr', label: `${p.github.openPRs} 个开放 PR` });
     }
   }

@@ -99,8 +99,13 @@ function toggleWindow() {
   else { win.show(); win.focus(); }
 }
 
+// 托盘 tooltip 计数可按设置显隐（issue #80）；lastAttentionCount 记录最近值，设置切换时即时重绘
+let lastAttentionCount = 0;
 function updateTrayTooltip(attentionCount) {
-  if (tray) tray.setToolTip(`SignalBoard · ${attentionCount} 个项目需要关注`);
+  lastAttentionCount = attentionCount;
+  if (!tray) return;
+  const show = store.getConfig().trayAttentionCount !== false;
+  tray.setToolTip(show ? `SignalBoard · ${attentionCount} 个项目需要关注` : 'SignalBoard');
 }
 
 function createTray() {
@@ -151,7 +156,7 @@ function applyTickTimer(cfg) {
   }, min * 60 * 1000);
 }
 
-// 设置即时生效：重注册热键 + 开机自启 + 后台刷新间隔（issue #70）；失败原因记录供设置页展示
+// 设置即时生效：重注册热键 + 开机自启 + 后台刷新间隔（issue #70）+ 托盘计数显隐（issue #80）；失败原因记录供设置页展示
 function applySettings(cfg) {
   globalShortcut.unregisterAll();
   lastHotkeyError = '';
@@ -165,30 +170,39 @@ function applySettings(cfg) {
   }
   app.setLoginItemSettings({ openAtLogin: !!cfg.autoStart });
   applyTickTimer(cfg);
+  updateTrayTooltip(lastAttentionCount);
 }
 
 // 每天首次启动或唤出窗口且有待关注项目时弹一条摘要（托盘常驻下进程很少重启，靠唤出兜底）
+// 通知设置（issue #80）：notifyEnabled=false 整体关闭；notifyMode=newOnly 时仅当需要关注数
+// 较昨日新增才打扰——每日评估都会把当时计数落盘为次日基线，无论当天是否弹窗
 let notifyInFlight = false;
 async function maybeNotify() {
   if (notifyInFlight) return;
   notifyInFlight = true;
   try {
     const today = new Date().toISOString().slice(0, 10);
-    if (store.getLastNotifyDate() === today) return;
+    if (store.getLastNotifyDate() === today) return; // 每日评估一次，基线随之推进
+    const cfg = store.getConfig();
     const board = await buildBoard();
-    updateTrayTooltip(board.stats.attentionCount);
-    if (board.stats.attentionCount > 0 && Notification.isSupported()) {
-      const names = board.attention.slice(0, 3).map((a) => a.name).join('、');
-      const n = new Notification({
-        title: 'SignalBoard',
-        body: `${board.stats.attentionCount} 个项目需要关注：${names}${board.attention.length > 3 ? ' 等' : ''}`,
-      });
-      n.on('click', () => {
-        if (win) { win.show(); win.focus(); } else createWindow();
-      });
-      n.show();
-    }
+    const count = board.stats.attentionCount;
+    updateTrayTooltip(count);
+    const baseline = store.getAttentionBaseline();
+    store.setAttentionBaseline(count);
     store.setLastNotifyDate(today);
+    if (cfg.notifyEnabled === false) return;
+    if (count <= 0 || !Notification.isSupported()) return;
+    // 「仅新增」时机：计数较昨日基线没有变多则不打扰（无基线的首日等同有新增）
+    if (cfg.notifyMode === 'newOnly' && baseline !== null && count <= baseline) return;
+    const names = board.attention.slice(0, 3).map((a) => a.name).join('、');
+    const n = new Notification({
+      title: 'SignalBoard',
+      body: `${count} 个项目需要关注：${names}${board.attention.length > 3 ? ' 等' : ''}`,
+    });
+    n.on('click', () => {
+      if (win) { win.show(); win.focus(); } else createWindow();
+    });
+    n.show();
   } catch (err) {
     console.error('[devboard] 启动通知失败:', err.message);
   } finally {
@@ -213,6 +227,7 @@ if (!gotLock) {
       getWindow: () => win,
       applySettings,
       getHotkeyError: () => lastHotkeyError,
+      onAttentionCount: updateTrayTooltip, // 拼板后刷新托盘计数（显隐由 tooltip 函数按设置裁决，issue #80）
     }));
 
     applySettings(store.getConfig()); // 含后台刷新定时器首次建立（applyTickTimer）

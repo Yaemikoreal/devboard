@@ -15,6 +15,11 @@ const DEFAULT_CONFIG = {
   hotkey: 'Ctrl+Shift+D',
   autoStart: true,
   scanIntervalMin: 20, // 后台静默刷新间隔（分钟）：预设 5/10/20/60 四档（issue #70），唤出窗口时总会重扫一次
+  warningDirtyDays: 3, // 警示规则：未提交改动滞留超 N 天记警示标记，预设 1/3/7 三档（issue #73）
+  warningTypes: { dirty: true, unpushed: true, pr: true }, // 三类警示独立开关（issue #73）
+  notifyEnabled: true, // 警示摘要通知总开关（issue #80）
+  notifyMode: 'daily', // 通知时机：daily=每天首次唤出 / newOnly=仅当需要关注数较昨日新增（issue #80）
+  trayAttentionCount: true, // 托盘 tooltip 显示「N 个项目需要关注」计数（issue #80）
   aiTools: [], // 自定义 AI 工具清单：[{label, cmd}]，与默认 claude/codex/kimi/grok 合并（issue #15）
   aiEnabled: true, // AI 功能总开关：周报/建议/自然语言筛选（issue #29）
   aiEngine: '', // 默认 AI 引擎的工具 id；空 = 自动取第一个已探测可用的（issue #29）
@@ -103,6 +108,16 @@ class Store {
     if (!Array.isArray(cfg.blacklist)) cfg.blacklist = DEFAULT_CONFIG.blacklist.slice();
     if (!Array.isArray(cfg.extraPaths)) cfg.extraPaths = [];
     if (!Array.isArray(cfg.aiTools)) cfg.aiTools = [];
+    // 警示规则（issue #73）：天数限预设档；开关与默认深合并（旧配置缺字段时补齐 true）
+    if ([1, 3, 7].indexOf(cfg.warningDirtyDays) < 0) cfg.warningDirtyDays = 3;
+    const wt = (raw.warningTypes && typeof raw.warningTypes === 'object') ? raw.warningTypes : {};
+    cfg.warningTypes = {
+      dirty: wt.dirty !== false,
+      unpushed: wt.unpushed !== false,
+      pr: wt.pr !== false,
+    };
+    // 通知（issue #80）：时机限已知值
+    if (['daily', 'newOnly'].indexOf(cfg.notifyMode) < 0) cfg.notifyMode = 'daily';
     return cfg;
   }
 
@@ -181,6 +196,18 @@ class Store {
   setLastNotifyDate(dateStr) {
     const meta = this.readJson('meta.json', {});
     meta.lastNotifyDate = dateStr;
+    this.writeJson('meta.json', meta);
+  }
+
+  // 「仅新增」通知时机（issue #80）：每日评估时把当时的需要关注数落盘，作为次日的新增对比基线
+  getAttentionBaseline() {
+    const v = this.readJson('meta.json', {}).attentionBaseline;
+    return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  }
+
+  setAttentionBaseline(n) {
+    const meta = this.readJson('meta.json', {});
+    meta.attentionBaseline = n;
     this.writeJson('meta.json', meta);
   }
 }
