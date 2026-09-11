@@ -23,6 +23,8 @@ const DEFAULT_CONFIG = {
   aiTools: [], // 自定义 AI 工具清单：[{label, cmd}]，与默认 claude/codex/kimi/grok 合并（issue #15）
   aiEnabled: true, // AI 功能总开关：周报/建议/自然语言筛选（issue #29）
   aiEngine: '', // 默认 AI 引擎的工具 id；空 = 自动取第一个已探测可用的（issue #29）
+  aiPromptWeekly: null, // AI 周报提示词模板（issue #78）：null = 代码内置默认模板；{{事实}} 为事实块插入点
+  aiPromptAdvice: null, // AI 建议提示词模板（issue #78）：同上
   theme: { id: 'warm', accent: '#f5d90a' }, // 外观：整体主题 + 强调色（issue #27）
 };
 
@@ -118,6 +120,9 @@ class Store {
     };
     // 通知（issue #80）：时机限已知值
     if (['daily', 'newOnly'].indexOf(cfg.notifyMode) < 0) cfg.notifyMode = 'daily';
+    // 提示词模板（issue #78）：null = 内置默认；非字符串/空白脏数据回落 null
+    if (typeof cfg.aiPromptWeekly !== 'string' || !cfg.aiPromptWeekly.trim()) cfg.aiPromptWeekly = null;
+    if (typeof cfg.aiPromptAdvice !== 'string' || !cfg.aiPromptAdvice.trim()) cfg.aiPromptAdvice = null;
     return cfg;
   }
 

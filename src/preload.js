@@ -34,6 +34,13 @@ contextBridge.exposeInMainWorld('devboard', {
   // AI 功能：能力探测 + 统一调用（issue #29）
   aiCaps: () => ipcRenderer.invoke('ai:caps'),
   aiAsk: (payload) => ipcRenderer.invoke('ai:ask', payload),
+  // 提示词模板预览（issue #78）：用真实数据组装完整 prompt 展示
+  aiPromptPreview: (payload) => ipcRenderer.invoke('ai:promptPreview', payload),
+  // 设置页「数据」组（issue #79）：打开数据目录 + 导出/导入 + 重置
+  openDataDir: () => ipcRenderer.invoke('data:openDir'),
+  exportData: () => ipcRenderer.invoke('data:export'),
+  importData: () => ipcRenderer.invoke('data:import'),
+  resetData: (scope) => ipcRenderer.invoke('data:reset', scope),
   // 详情面板深区数据（issue #17）
   projectDetail: (projectPath) => ipcRenderer.invoke('project:detail', projectPath),
   winMin: () => ipcRenderer.invoke('win:min'),

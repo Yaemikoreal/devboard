@@ -273,6 +273,31 @@
               <div id="aiToolsList"></div>
               <button class="add-row" id="addAiTool" type="button">+ 添加工具</button>
             </div>
+            <div class="set-group">
+              <!-- 提示词模板自定义（issue #78）：编辑单位 = 模板 + {{事实}} 插入点；事实块组装留在代码里 -->
+              <details class="adv" id="promptAdv">
+                <summary>高级：自定义提示词</summary>
+                <div class="group-desc">模板中 {{事实}} 处会注入实时 git 事实；可改角色/语气/语言/输出结构。保留「本周总览：/本周建议关注：/近况概览：」行首词可维持结果的高亮排版。自然语言筛选的提示词不开放自定义（其输出需严格 JSON 结构）</div>
+                <div class="field">
+                  <label>AI 周报提示词</label>
+                  <textarea class="prompt-tpl" id="fPromptWeekly" spellcheck="false" maxlength="8000"></textarea>
+                  <div class="inline-check">
+                    <button id="promptWeeklyReset" type="button">恢复默认</button>
+                    <button id="promptWeeklyPreview" type="button">预览实际发送内容</button>
+                  </div>
+                  <pre class="prompt-preview hidden" id="promptWeeklyPreviewBox"></pre>
+                </div>
+                <div class="field">
+                  <label>AI 建议提示词</label>
+                  <textarea class="prompt-tpl" id="fPromptAdvice" spellcheck="false" maxlength="8000"></textarea>
+                  <div class="inline-check">
+                    <button id="promptAdviceReset" type="button">恢复默认</button>
+                    <button id="promptAdvicePreview" type="button">预览实际发送内容</button>
+                  </div>
+                  <pre class="prompt-preview hidden" id="promptAdvicePreviewBox"></pre>
+                </div>
+              </details>
+            </div>
           </div>
 
           <div class="set-pane" id="pane-github">
@@ -379,6 +404,27 @@
                 <input type="checkbox" id="fTrayCount">
                 <label for="fTrayCount">托盘悬停提示显示「N 个项目需要关注」计数</label>
               </div>
+            </div>
+
+            <div class="set-group">
+              <h3>数据</h3>
+              <!-- 数据组（issue #79）：备忘/位序/消音/偏好都在本机数据目录；导出导入是换机/重装的最低成本替身（v1 不做多设备同步） -->
+              <div class="group-desc">备忘、位序、消音与全部偏好保存在本机数据目录；可导出为单个 JSON 文件，换机或重装后导入还原（GitHub token 不随导出迁移）</div>
+              <div class="inline-check">
+                <button id="openDataDir" type="button">打开数据目录</button>
+                <button id="exportDataBtn" type="button">导出数据…</button>
+                <button id="importDataBtn" type="button">导入数据…</button>
+                <span class="res" id="dataIoRes"></span>
+              </div>
+              <details class="adv" id="resetAdv">
+                <summary>高级：重置</summary>
+                <div class="group-desc">「清空偏好」：位序、图钉、消音、分支选择等回到初始；「清空全部数据」：连同备忘与全部设置一并清空，重启后回到首次启动的引导态</div>
+                <div class="inline-check">
+                  <button id="resetPrefsBtn" class="danger" type="button">清空偏好</button>
+                  <button id="resetAllBtn" class="danger" type="button">清空全部数据</button>
+                  <span class="res" id="resetRes"></span>
+                </div>
+              </details>
             </div>
           </div>
 

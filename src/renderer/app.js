@@ -1849,6 +1849,8 @@
   var fNotifyEnabled = document.getElementById('fNotifyEnabled');
   var notifyModeSeg = document.getElementById('notifyModeSeg');
   var fTrayCount = document.getElementById('fTrayCount');
+  var fPromptWeekly = document.getElementById('fPromptWeekly'); // 提示词模板自定义（issue #78）
+  var fPromptAdvice = document.getElementById('fPromptAdvice');
   var deviceBox = document.getElementById('deviceBox');
   var deviceTimer = null;
   var deviceGen = 0; // 轮询代次号：stopDeviceFlow 递增，作废旧轮询链上在飞的回调
@@ -1909,6 +1911,22 @@
     scheduleSave();
   });
   fNotifyEnabled.addEventListener('change', function () { renderNotifyMode(notifyModeValue()); });
+
+  /* ----- 提示词模板自定义（issue #78）：编辑单位 = 模板 + {{事实}} 插入点 ----- */
+  // 默认模板由主进程随 settings:get 下发（aiPromptDefaults）；文本域预填当前生效模板（自定义值或默认）
+  function aiPromptDefaults() {
+    return (state.settings && state.settings.aiPromptDefaults) || { weekly: '', advice: '' };
+  }
+  // 落盘值：内容与内置默认一致（或空白）时存 null——未自定义不落盘，未来默认模板优化仍惠及未改过的用户
+  function promptDraftOf(textarea, defTpl) {
+    var v = textarea.value.replace(/\r\n/g, '\n').trim();
+    return v && v !== String(defTpl || '').trim() ? v : null;
+  }
+  function fillPromptTemplates(cfg) {
+    var pd = aiPromptDefaults();
+    fPromptWeekly.value = cfg.aiPromptWeekly || pd.weekly || '';
+    fPromptAdvice.value = cfg.aiPromptAdvice || pd.advice || '';
+  }
 
   /* ----- 子模块导航（issue #26）：面板常驻 DOM 仅切换显隐，未保存输入不丢 ----- */
   document.getElementById('settingsNav').addEventListener('click', function (e) {
@@ -2287,6 +2305,7 @@
       renderNotifyMode(NOTIFY_MODES.indexOf(cfg.notifyMode) >= 0 ? cfg.notifyMode : 'daily');
       fTrayCount.checked = cfg.trayAttentionCount !== false; // 托盘计数显隐（issue #80）
       fAiEnabled.checked = cfg.aiEnabled !== false; // AI 功能总开关（issue #29）
+      fillPromptTemplates(cfg); // 提示词模板（issue #78）：预填自定义值或内置默认
       loadAiTools().then(function () { renderAiEngineSelect(cfg); });
       var th = savedTheme();
       themeId = th.id;
@@ -2320,6 +2339,7 @@
     appEl.classList.remove('show-settings');
     stopDeviceFlow();
     flushSave(); // 关闭前把停顿中的未落盘改动立即保存（自动保存，issue #27 反馈）
+    renderAiWeeklyEntry(); // 提示词模板改动后回到总览即按新模板重生成（issue #78）；无改动时走缓存重展，无副作用
   }
 
   /* ----- 自动保存：更改即生效，无保存按钮；输入停顿 700ms 静默落盘，按改动域触发副作用 ----- */
@@ -2366,6 +2386,8 @@
       trayAttentionCount: fTrayCount.checked,
       aiEnabled: fAiEnabled.checked, // AI 功能开关（issue #29）
       aiEngine: fAiEngine.disabled ? '' : fAiEngine.value,
+      aiPromptWeekly: promptDraftOf(fPromptWeekly, aiPromptDefaults().weekly), // 提示词模板（issue #78）：与默认一致存 null
+      aiPromptAdvice: promptDraftOf(fPromptAdvice, aiPromptDefaults().advice),
       theme: { id: themeId, accent: themeAccent }, // 外观（issue #27）
     };
     var typedToken = fToken.value.trim();
@@ -2386,6 +2408,10 @@
         JSON.stringify({ dirty: prevWt.dirty !== false, unpushed: prevWt.unpushed !== false, pr: prevWt.pr !== false });
     // AI 开关/引擎变化需重估能力（issue #29）；自定义工具清单变化同时影响两者
     var aiChanged = patch.aiEnabled !== (prev.aiEnabled !== false) || patch.aiEngine !== (prev.aiEngine || '');
+    // 提示词模板改动（issue #78）：缓存键已含模板哈希，旧结果不会掩盖修改；
+    // 周报自动生成标记复位，回到总览即按新模板自动重生成一次
+    var promptChanged = patch.aiPromptWeekly !== (prev.aiPromptWeekly || null) ||
+      patch.aiPromptAdvice !== (prev.aiPromptAdvice || null);
     api.setSettings(patch).then(function (cfg) {
       state.settings = cfg;
       ghStateText();
@@ -2413,6 +2439,12 @@
       if (terminalChanged) checkTerminalCmd();
       if (toolsChanged) loadAiTools(); // 自定义工具清单已变，重扫 PATH
       if (aiChanged || toolsChanged) loadAiCaps(); // AI 引擎/开关或可用工具集已变（issue #29）
+      // 模板已改（issue #78）：复位周报自动生成标记；缓存键含模板哈希，旧结果已不会展出。
+      // 设置页开着时不主动重生成（避免编辑途中反复起 AI 生成）；已关闭（hideSettings 触发 flushSave 的回调）则立即重估
+      if (promptChanged) {
+        weeklyAutoDay = '';
+        if (!appEl.classList.contains('show-settings')) renderAiWeeklyEntry();
+      }
       if (pathsChanged || toolsChanged || warnChanged) refresh(false);
     });
   }
@@ -2524,6 +2556,116 @@
   });
   // 终端「重新校验」按钮（issue #76）：停顿后已自动校验，按钮降级为手动重试
   document.getElementById('checkTerminal').addEventListener('click', checkTerminalCmd);
+
+  // 提示词模板（issue #78）：恢复默认 / 预览实际发送内容（预览带上当前草稿，不等自动保存落盘）
+  function bindPromptTpl(kind, textarea, resetBtnId, previewBtnId, previewBoxId) {
+    document.getElementById(resetBtnId).addEventListener('click', function () {
+      textarea.value = aiPromptDefaults()[kind] || '';
+      scheduleSave();
+    });
+    var box = document.getElementById(previewBoxId);
+    document.getElementById(previewBtnId).addEventListener('click', function () {
+      box.classList.remove('hidden');
+      box.textContent = '正在用当前真实数据组装…';
+      var draft = promptDraftOf(textarea, aiPromptDefaults()[kind]);
+      api.aiPromptPreview({ kind: kind, template: draft }).then(function (r) {
+        box.textContent = r && r.ok
+          ? (r.sample ? '（以项目「' + r.sample + '」为例）\n' : '') + r.prompt
+          : '预览失败：' + ((r && r.reason) || '未知错误');
+      }).catch(function () { box.textContent = '预览失败：通信错误'; });
+    });
+  }
+  bindPromptTpl('weekly', fPromptWeekly, 'promptWeeklyReset', 'promptWeeklyPreview', 'promptWeeklyPreviewBox');
+  bindPromptTpl('advice', fPromptAdvice, 'promptAdviceReset', 'promptAdvicePreview', 'promptAdvicePreviewBox');
+
+  /* ----- 数据组（issue #79）：打开数据目录 / 导出 / 导入 / 重置（二次确认沿用「再点一次确认」模式） ----- */
+  document.getElementById('openDataDir').addEventListener('click', function () { api.openDataDir(); });
+
+  document.getElementById('exportDataBtn').addEventListener('click', function () {
+    var res = document.getElementById('dataIoRes');
+    res.textContent = '导出中…';
+    res.className = 'res';
+    api.exportData().then(function (r) {
+      if (r && r.ok) { res.textContent = '已导出：' + r.path; res.classList.add('ok'); }
+      else if (r && r.reason === 'canceled') { res.textContent = ''; }
+      else { res.textContent = (r && r.reason) || '导出失败'; res.classList.add('bad'); }
+    }).catch(function () { res.textContent = '导出失败'; res.classList.add('bad'); });
+  });
+
+  // 导入后重新拉取并重填：导入覆盖了 config/prefs/memos，设置字段与板数据都需按新值重展
+  function applyImportedData() {
+    showSettings();
+    api.getPrefs().then(function (p) {
+      state.prefs = p;
+      state.branchSel = (p && p.branchSel) || {};
+      state.sortMode = (p && p.sortMode) || 'manual';
+      document.getElementById('sortLabel').textContent = '排序：' + SORT_LABEL[state.sortMode];
+      renderSortDrop();
+    });
+    loadAiCaps();
+    refresh(false);
+  }
+
+  document.getElementById('importDataBtn').addEventListener('click', function () {
+    var res = document.getElementById('dataIoRes');
+    res.textContent = '导入中…';
+    res.className = 'res';
+    api.importData().then(function (r) {
+      if (!r || !r.ok) {
+        if (r && r.reason === 'canceled') { res.textContent = ''; return; }
+        res.textContent = (r && r.reason) || '导入失败';
+        res.classList.add('bad');
+        return;
+      }
+      res.textContent = '已导入，正在刷新…';
+      res.classList.add('ok');
+      applyImportedData();
+    }).catch(function () { res.textContent = '导入失败'; res.classList.add('bad'); });
+  });
+
+  // 「再点一次确认」模式（沿用断开连接，issue #45）：首次点击武装 2 秒，二次点击才执行
+  function armConfirm(btn, label, fn) {
+    if (!btn.dataset.confirm) {
+      btn.dataset.confirm = '1';
+      btn.textContent = '再点一次确认';
+      setTimeout(function () {
+        delete btn.dataset.confirm;
+        btn.textContent = label;
+      }, 2000);
+      return;
+    }
+    delete btn.dataset.confirm;
+    btn.textContent = label;
+    fn();
+  }
+
+  document.getElementById('resetPrefsBtn').addEventListener('click', function () {
+    armConfirm(document.getElementById('resetPrefsBtn'), '清空偏好', function () {
+      api.resetData('prefs').then(function (r) {
+        var res = document.getElementById('resetRes');
+        if (!r || !r.ok) { res.textContent = (r && r.reason) || '重置失败'; res.className = 'res bad'; return; }
+        res.textContent = '已清空偏好';
+        res.className = 'res ok';
+        api.getPrefs().then(function (p) {
+          state.prefs = p;
+          state.branchSel = (p && p.branchSel) || {};
+          state.sortMode = (p && p.sortMode) || 'manual';
+          document.getElementById('sortLabel').textContent = '排序：' + SORT_LABEL[state.sortMode];
+          renderSortDrop();
+          refresh(false);
+        });
+      });
+    });
+  });
+
+  document.getElementById('resetAllBtn').addEventListener('click', function () {
+    armConfirm(document.getElementById('resetAllBtn'), '清空全部数据', function () {
+      var res = document.getElementById('resetRes');
+      res.textContent = '已清空，正在重启…';
+      res.className = 'res ok';
+      api.resetData('all'); // 主进程清空全部数据文件后 relaunch，重启回首启引导态
+    });
+  });
 
   // 热键录入器：聚焦后按组合键录入；Backspace/Delete 清空；Esc 取消；Tab 放行让焦点正常移走
   fHotkey.addEventListener('keydown', function (e) {

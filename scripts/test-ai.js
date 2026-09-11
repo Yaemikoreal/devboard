@@ -36,6 +36,19 @@ async function main() {
   const filterP = ai.buildFilterPrompt('上周动过的 python 项目');
   assert.ok(filterP.includes('hot') && filterP.includes('上周动过的 python 项目'), '筛选 prompt 应含枚举与原文');
 
+  // --- 提示词模板自定义（issue #78）---
+  const customWeekly = ai.buildWeeklyPrompt(PROJECTS, NOW, '自定义角色与语气\n{{事实}}\n自定义输出结构');
+  assert.ok(customWeekly.includes('自定义角色与语气') && customWeekly.includes('自定义输出结构'), '自定义周报模板应生效');
+  assert.ok(customWeekly.includes('- alpha'), '自定义模板应在 {{事实}} 处注入事实块');
+  assert.ok(!customWeekly.includes('本周总览：'), '自定义模板不含默认结构词');
+  const noSlot = ai.buildAdvicePrompt(PROJECTS[0], NOW, '没有插入点的模板');
+  assert.ok(noSlot.includes('没有插入点的模板') && noSlot.includes('18 个文件'), '缺失插入点时事实块应附加末尾');
+  const blankTpl = ai.buildWeeklyPrompt(PROJECTS, NOW, '   ');
+  assert.ok(blankTpl.includes('本周总览：') && blankTpl.includes('- alpha'), '空白模板应回落内置默认');
+  assert.ok(ai.DEFAULT_WEEKLY_TEMPLATE.includes(ai.FACTS_SLOT) && ai.DEFAULT_ADVICE_TEMPLATE.includes(ai.FACTS_SLOT), '默认模板应含 {{事实}} 插入点');
+  // 默认路径（不传模板）与显式默认模板产物一致：缓存键按模板内容哈希，两者同源
+  assert.strictEqual(ai.buildWeeklyPrompt(PROJECTS, NOW), ai.buildWeeklyPrompt(PROJECTS, NOW, ai.DEFAULT_WEEKLY_TEMPLATE), '缺省模板应与显式默认模板一致');
+
   // --- parseFilter ---
   assert.deepStrictEqual(
     ai.parseFilter('{"band":"hot","keyword":"python","activeWithinDays":7}'),

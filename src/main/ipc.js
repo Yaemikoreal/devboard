@@ -1,17 +1,19 @@
 // IPC 注册：board:get / board:rescan / memo:set / quickopen / settings:* / prefs:* / snooze:set
 // 设置页辅助：dialog:pick / util:checkCommand / github:test / scan:preview / win:*
 // 分支详情按需懒取：branch:commits（issue #4）；GitHub 鉴权：github:authCaps / deviceStart / devicePoll / importGh（issue #12）
-// AI 功能：ai:caps / ai:ask（issue #29）
+// AI 功能：ai:caps / ai:ask（issue #29）；ai:promptPreview 提示词预览（issue #78）
+// 设置页「数据」组：data:openDir / data:export / data:import / data:reset（issue #79）
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
-const { ipcMain, shell, dialog } = require('electron');
+const crypto = require('crypto');
+const { ipcMain, shell, dialog, app } = require('electron');
 const { spawn, execFile } = require('child_process');
 const scanner = require('./scanner');
 const github = require('./github');
 const ai = require('./ai');
-const { DEFAULT_CONFIG } = require('./store');
+const { DEFAULT_CONFIG, DEFAULT_PREFS } = require('./store');
 const { createGitWatcher } = require('./watcher');
 
 // 启动子进程并给出真实结果：立即非零退出视为失败，存活超过 800ms 视为成功
@@ -195,6 +197,13 @@ async function findToolInfo(cfg, engineId) {
 
 function localDateStr(d) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+// 提示词模板内容哈希（issue #78）：AI 周报/建议的缓存键纳入模板哈希，
+// 模板被自定义或恢复默认后旧缓存自动失效，不会被旧结果掩盖修改；
+// 键基于实际生效的模板（默认模板亦如此：未来内置模板优化时旧缓存自然重建）
+function promptTplKey(template) {
+  return crypto.createHash('sha1').update(String(template)).digest('hex').slice(0, 10);
 }
 
 function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttentionCount }) {
@@ -453,8 +462,9 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
     let cacheWrite = null;
     if (kind === 'weekly') {
       const today = localDateStr(now);
+      const tplKey = promptTplKey(cfg.aiPromptWeekly || ai.DEFAULT_WEEKLY_TEMPLATE); // 模板哈希入缓存键（issue #78）
       const hit = cache.weekly;
-      if (hit && hit.date === today && hit.text) {
+      if (hit && hit.date === today && hit.text && hit.tpl === tplKey) {
         const eng = await findToolInfo(cfg, hit.engine);
         return { ok: true, kind, text: hit.text, engine: eng, cached: true, at: hit.at || null };
       }
@@ -463,10 +473,10 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
       if (!projects.some((p) => p.commits7d > 0)) {
         return { ok: false, reason: '近 7 天没有提交活动，暂无可摘要的内容' };
       }
-      prompt = ai.buildWeeklyPrompt(projects, now);
+      prompt = ai.buildWeeklyPrompt(projects, now, cfg.aiPromptWeekly);
       cacheWrite = (text, engineId) => {
         const cur = store.getAiCache();
-        cur.weekly = { date: today, engine: engineId, text, at: now.toISOString() };
+        cur.weekly = { date: today, engine: engineId, text, at: now.toISOString(), tpl: tplKey };
         cur.lastGoodEngine = engineId;
         store.setAiCache(cur);
       };
@@ -474,16 +484,17 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
       const p = store.getScanCache().projects[String((payload && payload.path) || '')];
       if (!p) return { ok: false, reason: '项目不在扫描缓存中' };
       const head = p.headSha || 'nohead';
+      const tplKey = promptTplKey(cfg.aiPromptAdvice || ai.DEFAULT_ADVICE_TEMPLATE); // 模板哈希入缓存键（issue #78）
       const hit = cache.advice[p.path];
-      if (hit && hit.head === head && hit.text) {
+      if (hit && hit.head === head && hit.text && hit.tpl === tplKey) {
         const eng = await findToolInfo(cfg, hit.engine);
         return { ok: true, kind, text: hit.text, engine: eng, cached: true, at: hit.at || null };
       }
       if (payload.cachedOnly) return { ok: false, kind, reason: 'no-cache' };
-      prompt = ai.buildAdvicePrompt(p, now);
+      prompt = ai.buildAdvicePrompt(p, now, cfg.aiPromptAdvice);
       cacheWrite = (text, engineId) => {
         const cur = store.getAiCache();
-        cur.advice[p.path] = { head, engine: engineId, text, at: now.toISOString() };
+        cur.advice[p.path] = { head, engine: engineId, text, at: now.toISOString(), tpl: tplKey };
         cur.lastGoodEngine = engineId;
         store.setAiCache(cur);
       };
@@ -534,6 +545,34 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
     return job;
   });
 
+  // 提示词模板预览（issue #78）：用真实数据组装完整 prompt 展示给设置页，眼见为实地编辑；
+  // 只组装不调用引擎。渲染层可传当前草稿模板（template 字段），未传则用已落盘配置；
+  // 自然语言筛选 prompt 不开放（parseFilter 严格 JSON 契约）
+  ipcMain.handle('ai:promptPreview', (_e, payload) => {
+    const kind = String((payload && payload.kind) || '');
+    const cfg = store.getConfig();
+    const now = new Date();
+    const projects = Object.values(store.getScanCache().projects);
+    // 草稿优先：payload 显式带 template 字段时（含 null = 恢复默认）用草稿，否则用已存配置
+    const hasDraft = payload && Object.prototype.hasOwnProperty.call(payload, 'template');
+    const draft = hasDraft
+      ? ((typeof payload.template === 'string' && payload.template.trim()) ? payload.template.slice(0, 10000) : null)
+      : undefined;
+    if (kind === 'weekly') {
+      if (!projects.some((p) => p.commits7d > 0)) {
+        return { ok: false, reason: '近 7 天没有提交活动，暂无事实可组装（先完成一次扫描）' };
+      }
+      return { ok: true, prompt: ai.buildWeeklyPrompt(projects, now, draft === undefined ? cfg.aiPromptWeekly : draft) };
+    }
+    if (kind === 'advice') {
+      if (!projects.length) return { ok: false, reason: '扫描缓存为空，请先完成一次扫描' };
+      // 无指定项目时取近 7 天最活跃的项目作示例
+      const sample = projects.slice().sort((a, b) => (b.commits7d || 0) - (a.commits7d || 0))[0];
+      return { ok: true, sample: sample.name, prompt: ai.buildAdvicePrompt(sample, now, draft === undefined ? cfg.aiPromptAdvice : draft) };
+    }
+    return { ok: false, reason: '未知的预览类型' };
+  });
+
   // 详情面板深区数据：README 首段摘要 + AI 会话痕迹明细（issue #17）
   ipcMain.handle('project:detail', (_e, projectPath) => {
     const p = String(projectPath || '');
@@ -542,21 +581,26 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
   });
 
   // token 不下发渲染层：只给「是否已配置」，磁盘与 IPC 全程无明文（issue #12）；
-  // tokenEncrypted 标记系统加密能力，false 时 token 以明文落盘，设置页给出提示（issue #65）
-  ipcMain.handle('settings:get', () => {
-    const cfg = store.getConfig();
+  // tokenEncrypted 标记系统加密能力，false 时 token 以明文落盘，设置页给出提示（issue #65）；
+  // aiPromptDefaults 附带内置提示词默认模板，供设置页预填/「恢复默认」（issue #78，非配置字段不落盘）
+  function settingsView(cfg) {
     return Object.assign({}, cfg, {
       githubToken: '',
       hasGithubToken: !!cfg.githubToken,
       tokenEncrypted: store.cryptoAvailable(),
+      aiPromptDefaults: { weekly: ai.DEFAULT_WEEKLY_TEMPLATE, advice: ai.DEFAULT_ADVICE_TEMPLATE },
     });
-  });
+  }
+
+  ipcMain.handle('settings:get', () => settingsView(store.getConfig()));
 
   // settings:set 白名单：仅 DEFAULT_CONFIG 已知字段可落盘，renderer 传入的未知 key 直接忽略；
   // 数组字段拒绝非数组值（roots 另拒空数组，与 getConfig 有效性口径一致）——非法值保持原值，
   // 避免经 setConfig 回写时被 getConfig 重置为默认 roots 而误清用户配置
   const CONFIG_KEYS = new Set(Object.keys(DEFAULT_CONFIG));
   const CONFIG_ARRAY_KEYS = new Set(['roots', 'extraPaths', 'blacklist', 'aiTools']);
+  // 提示词模板字段（issue #78）：null/空白 = 恢复内置默认；字符串限长截断
+  const CONFIG_PROMPT_KEYS = new Set(['aiPromptWeekly', 'aiPromptAdvice']);
   ipcMain.handle('settings:set', (_e, patch) => {
     const raw = Object.assign({}, patch || {});
     const p = {};
@@ -566,16 +610,17 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
         if (!Array.isArray(raw[k])) continue;
         if (k === 'roots' && raw[k].length === 0) continue;
       }
+      if (CONFIG_PROMPT_KEYS.has(k)) {
+        const v = raw[k];
+        p[k] = (typeof v === 'string' && v.trim()) ? v.slice(0, 10000) : null;
+        continue;
+      }
       p[k] = raw[k];
     }
     if (!p.githubToken) delete p.githubToken; // 空值 = 不改动已存 token（清空走 github:importGh 失败态外的显式入口）
     const cfg = store.setConfig(p);
     applySettings(cfg); // 热键重注册 + 开机自启即时生效
-    return Object.assign({}, cfg, {
-      githubToken: '',
-      hasGithubToken: !!cfg.githubToken,
-      tokenEncrypted: store.cryptoAvailable(),
-    });
+    return settingsView(cfg);
   });
 
   // 保存设置后由渲染层查询热键注册结果（空串 = 成功）
@@ -680,6 +725,99 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
   ipcMain.handle('shell:openExternal', (_e, url) => {
     if (typeof url === 'string' && /^https?:\/\//.test(url)) return shell.openExternal(url);
     return false;
+  });
+
+  /* ----- 设置页「数据」组（issue #79）：打开数据目录 + 导出/导入 + 重置 ----- */
+  ipcMain.handle('data:openDir', () => shell.openPath(app.getPath('userData')));
+
+  // 导出：memos + prefs + config 打包单 JSON；config 剔除 githubToken/githubTokenEnc（token 不随导出迁移）；
+  // 各类缓存（scan/AI/GitHub/meta）可再生，不进包
+  ipcMain.handle('data:export', async () => {
+    const r = await dialog.showSaveDialog(getWindow(), {
+      title: '导出数据',
+      defaultPath: 'signalboard-backup-' + localDateStr(new Date()) + '.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (r.canceled || !r.filePath) return { ok: false, reason: 'canceled' };
+    const cfgOut = Object.assign({}, store.getConfig());
+    delete cfgOut.githubToken;
+    delete cfgOut.githubTokenEnc;
+    const payload = {
+      app: 'SignalBoard',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      memos: store.getMemos(),
+      prefs: store.getPrefs(),
+      config: cfgOut,
+    };
+    try {
+      fs.writeFileSync(r.filePath, JSON.stringify(payload, null, 2), 'utf8');
+      return { ok: true, path: r.filePath };
+    } catch (err) {
+      return { ok: false, reason: '写入失败：' + err.message };
+    }
+  });
+
+  // 导入：结构校验后写回 memos/prefs/config；导入的 config 不接收 token 字段（token 不迁移），
+  // 经 setConfig 与现有配置合并——本机已配置的 token 导入后保留；写回后由渲染层触发全量刷新
+  ipcMain.handle('data:import', async () => {
+    const r = await dialog.showOpenDialog(getWindow(), {
+      title: '导入数据',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      properties: ['openFile'],
+    });
+    if (r.canceled || !r.filePaths[0]) return { ok: false, reason: 'canceled' };
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
+    } catch {
+      return { ok: false, reason: '文件不是有效的 JSON' };
+    }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return { ok: false, reason: '文件结构不符（应为 SignalBoard 导出的备份文件）' };
+    }
+    const memos = data.memos;
+    const prefs = data.prefs;
+    const config = data.config;
+    const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+    if (!isObj(memos) && !isObj(prefs) && !isObj(config)) {
+      return { ok: false, reason: '文件中找不到可导入的数据（需要 memos/prefs/config 字段）' };
+    }
+    if (isObj(memos)) {
+      // 备忘：path -> 纯文本，过滤非字符串脏值
+      const clean = {};
+      for (const k of Object.keys(memos)) {
+        if (typeof memos[k] === 'string') clean[k] = memos[k];
+      }
+      store.writeJson('memos.json', clean);
+    }
+    if (isObj(prefs)) store.writeJson('prefs.json', prefs); // 读取时 getPrefs 归一化兜底
+    if (isObj(config)) {
+      const patch = Object.assign({}, config);
+      delete patch.githubToken; // 防御：即使导出文件被手工塞入 token 也不接收
+      delete patch.githubTokenEnc;
+      applySettings(store.setConfig(patch)); // 热键/自启/刷新间隔等即时生效
+    }
+    return { ok: true };
+  });
+
+  // 重置（issue #79）：prefs = 位序/图钉/消音/分支选择等偏好回默认；all = 清空全部本地数据并重启，
+  // 重启后 onboarded 标记缺失回到首启引导态
+  ipcMain.handle('data:reset', (_e, scope) => {
+    if (scope === 'prefs') {
+      store.writeJson('prefs.json', Object.assign({}, DEFAULT_PREFS));
+      return { ok: true };
+    }
+    if (scope === 'all') {
+      const files = ['memos.json', 'prefs.json', 'config.json', 'ai-cache.json', 'scan-cache.json', 'github-cache.json', 'meta.json'];
+      for (const f of files) {
+        try { fs.unlinkSync(path.join(store.baseDir, f)); } catch { /* 不存在则跳过 */ }
+      }
+      app.relaunch();
+      app.quit(); // before-quit 置 quitting 标记，窗口正常关闭后重启
+      return { ok: true };
+    }
+    return { ok: false, reason: '未知的重置范围' };
   });
 
   ipcMain.handle('win:min', () => { const w = getWindow(); if (w) w.minimize(); });
