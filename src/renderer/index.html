@@ -163,7 +163,7 @@
 
           <div class="set-pane active" id="pane-general">
             <div class="set-group">
-              <h3>扫描</h3>
+              <h3>扫描<span class="scan-stat" id="scanStat"></span></h3>
               <div class="welcome-note hidden" id="welcomeNote">欢迎使用 SignalBoard：先在下方添加扫描根目录，用「扫描预览」确认能发现项目；更改即时生效、自动保存，随后自动开始扫描并展出项目。</div>
               <div class="group-desc">递归发现根目录中含 .git 的项目（深度上限 4，跳过黑名单与 . 开头目录）</div>
               <div class="field">
@@ -179,6 +179,16 @@
               <div class="field">
                 <label>黑名单目录（一行一个）</label>
                 <textarea id="fBlacklist" spellcheck="false"></textarea>
+              </div>
+              <div class="field">
+                <label>后台刷新间隔</label>
+                <div class="seg" id="scanIntervalSeg">
+                  <button type="button" data-min="5">5 分钟</button>
+                  <button type="button" data-min="10">10 分钟</button>
+                  <button type="button" data-min="20">20 分钟</button>
+                  <button type="button" data-min="60">60 分钟</button>
+                </div>
+                <div class="hint">唤出窗口时总会重扫一次，间隔只影响后台静默刷新</div>
               </div>
               <div class="inline-check">
                 <button id="previewBtn" type="button">扫描预览</button>
@@ -300,7 +310,7 @@
                   <button class="browse" id="browseEditor" type="button">浏览…</button>
                 </div>
                 <div class="inline-check">
-                  <button id="checkEditor" type="button">校验</button>
+                  <button id="checkEditor" type="button">重新校验</button>
                   <span class="res" id="checkEditorRes"></span>
                 </div>
               </div>
@@ -308,7 +318,7 @@
                 <label>终端命令（在项目目录下执行；留空用 Windows Terminal / cmd 兜底）</label>
                 <input type="text" id="fTerminal" spellcheck="false" placeholder="留空自动兜底">
                 <div class="inline-check">
-                  <button id="checkTerminal" type="button">校验</button>
+                  <button id="checkTerminal" type="button">重新校验</button>
                   <span class="res" id="checkTerminalRes"></span>
                 </div>
               </div>
@@ -327,9 +337,12 @@
 
         </div>
 
-        <!-- 自动保存：更改即生效，这里只留一条瞬时状态提示（无返回/保存按钮） -->
-        <div class="settings-hint" id="settingsHint">更改即时生效，自动保存</div>
+        <!-- 自动保存：更改即生效；成功静默，仅需用户行动的结果在此亮错（issue #71） -->
+        <div class="settings-hint" id="settingsHint"></div>
       </div>
+
+      <!-- 可见关闭按钮（issue #72）：等效 Esc / 顶栏齿轮，含未落盘改动的落盘 -->
+      <button class="p-close settings-close" id="settingsClose" type="button" title="关闭设置 (Esc)">✕</button>
     </div>
   </section>
 

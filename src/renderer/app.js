@@ -1841,10 +1841,29 @@
   var fAutoStart = document.getElementById('fAutoStart');
   var fAiEnabled = document.getElementById('fAiEnabled');
   var fAiEngine = document.getElementById('fAiEngine');
+  var scanIntervalSeg = document.getElementById('scanIntervalSeg');
   var deviceBox = document.getElementById('deviceBox');
   var deviceTimer = null;
   var deviceGen = 0; // 轮询代次号：stopDeviceFlow 递增，作废旧轮询链上在飞的回调
   fHotkey.readOnly = true; // 热键通过按键捕捉录入
+
+  /* ----- 后台刷新间隔（issue #70）：预设 5/10/20/60 四档分段选择，改动随自动保存落盘、主进程即时重设定时器 ----- */
+  var SCAN_INTERVALS = [5, 10, 20, 60];
+  function renderScanInterval(min) {
+    Array.prototype.forEach.call(scanIntervalSeg.querySelectorAll('button'), function (b) {
+      b.classList.toggle('active', Number(b.getAttribute('data-min')) === min);
+    });
+  }
+  function scanIntervalValue() {
+    var b = scanIntervalSeg.querySelector('button.active');
+    return b ? Number(b.getAttribute('data-min')) : 20;
+  }
+  scanIntervalSeg.addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    renderScanInterval(Number(b.getAttribute('data-min')));
+    scheduleSave();
+  });
 
   /* ----- 子模块导航（issue #26）：面板常驻 DOM 仅切换显隐，未保存输入不丢 ----- */
   document.getElementById('settingsNav').addEventListener('click', function (e) {
@@ -2056,6 +2075,24 @@
     });
   }
 
+  // 扫描发现数常驻（issue #75）：「扫描」分组标题旁小字，随自动保存的预览回调与手动预览更新
+  function updateScanStat(r) {
+    var bad = r.invalidRoots.length + r.invalidExtra.length;
+    document.getElementById('scanStat').textContent =
+      '当前配置可发现 ' + r.count + ' 个项目' + (bad ? ' · ' + bad + ' 条路径无效' : '');
+  }
+
+  // 终端命令校验（issue #76：手动「重新校验」按钮与停顿后自动校验共用）；留空 = Windows Terminal / cmd 兜底
+  function checkTerminalCmd() {
+    var res = document.getElementById('checkTerminalRes');
+    if (!fTerminal.value.trim()) {
+      res.textContent = '留空：使用 Windows Terminal / cmd 兜底';
+      res.className = 'res ok';
+      return;
+    }
+    runCheck(fTerminal.value, res);
+  }
+
   /* ----- GitHub 鉴权（issue #12） ----- */
   function ghStateText() {
     var e = document.getElementById('ghConnState');
@@ -2195,6 +2232,7 @@
       fTerminal.value = cfg.terminalCmd || '';
       fHotkey.value = cfg.hotkey || '';
       fAutoStart.checked = !!cfg.autoStart;
+      renderScanInterval(SCAN_INTERVALS.indexOf(cfg.scanIntervalMin) >= 0 ? cfg.scanIntervalMin : 20); // issue #70
       fAiEnabled.checked = cfg.aiEnabled !== false; // AI 功能总开关（issue #29）
       loadAiTools().then(function () { renderAiEngineSelect(cfg); });
       var th = savedTheme();
@@ -2204,13 +2242,18 @@
       renderSwatches();
       ghStateText();
       renderGhAccount();
-      document.getElementById('settingsHint').textContent = '更改即时生效，自动保存';
+      // 自动保存默认静默（issue #71）：hint 平时留空，仅出错时亮起；「更改即时生效、自动保存」由首启欢迎提示承担
+      clearTimeout(hintTimer);
+      var hintEl = document.getElementById('settingsHint');
+      hintEl.textContent = '';
+      hintEl.classList.remove('err');
       document.getElementById('hotkeyErr').textContent = '';
       ['previewRes', 'testGhRes', 'checkEditorRes', 'checkTerminalRes', 'ghAuthRes'].forEach(function (id) {
         var e = document.getElementById(id);
         e.textContent = '';
         e.className = 'res';
       });
+      api.scanPreview({}).then(updateScanStat); // 扫描发现数常驻（issue #75）：进设置即按当前已存配置统计一次
       stopDeviceFlow();
       // 鉴权入口能力：设备码需应用配置 Client ID，gh 导入需本机 gh CLI
       api.githubAuthCaps().then(function (caps) {
@@ -2227,6 +2270,7 @@
   }
 
   /* ----- 自动保存：更改即生效，无保存按钮；输入停顿 700ms 静默落盘，按改动域触发副作用 ----- */
+  /* 成功静默、出错出声（issue #71）：仅热键冲突 / 路径无效等需用户行动的结果才让 hint 亮 err 态 */
   var saveTimer = null;
   var hintTimer = null;
   function showHint(text, isErr) {
@@ -2235,7 +2279,7 @@
     h.classList.toggle('err', !!isErr);
     clearTimeout(hintTimer);
     hintTimer = setTimeout(function () {
-      h.textContent = '更改即时生效，自动保存';
+      h.textContent = '';
       h.classList.remove('err');
     }, 3000);
   }
@@ -2261,6 +2305,7 @@
       terminalCmd: fTerminal.value.trim(),
       hotkey: fHotkey.value.trim(),
       autoStart: fAutoStart.checked,
+      scanIntervalMin: scanIntervalValue(), // 后台刷新间隔（issue #70）
       aiEnabled: fAiEnabled.checked, // AI 功能开关（issue #29）
       aiEngine: fAiEngine.disabled ? '' : fAiEngine.value,
       theme: { id: themeId, accent: themeAccent }, // 外观（issue #27）
@@ -2272,6 +2317,9 @@
       JSON.stringify([prev.roots || [], prev.extraPaths || [], prev.blacklist || []]);
     var toolsChanged = JSON.stringify(patch.aiTools) !== JSON.stringify(prev.aiTools || []);
     var hotkeyChanged = patch.hotkey !== (prev.hotkey || '');
+    // 编辑器/终端命令改动随停顿自动校验（issue #76），结果显示在原校验按钮旁的 res 位
+    var editorChanged = patch.editorCmd !== (prev.editorCmd || 'code');
+    var terminalChanged = patch.terminalCmd !== (prev.terminalCmd || '');
     // AI 开关/引擎变化需重估能力（issue #29）；自定义工具清单变化同时影响两者
     var aiChanged = patch.aiEnabled !== (prev.aiEnabled !== false) || patch.aiEngine !== (prev.aiEngine || '');
     api.setSettings(patch).then(function (cfg) {
@@ -2283,21 +2331,22 @@
       if (pathsChanged) jobs.push(api.scanPreview({}));
       return Promise.all(jobs);
     }).then(function (rs) {
-      var msg = '已自动保存';
-      var bad = false;
+      // 成功路径不改写 hint（保持低调默认态，issue #71）；字段旁反馈（hotkeyErr、路径标红、校验结果）维持原位
       if (hotkeyChanged) {
         var hkErr = rs.shift();
         document.getElementById('hotkeyErr').textContent = hkErr || '';
-        if (hkErr) { msg = '已保存，但' + hkErr; bad = true; }
+        if (hkErr) showHint('已保存，但' + hkErr, true);
       }
       if (pathsChanged) {
         var pv = rs.shift();
         markRows(rootsList, pv.invalidRoots);
         markRows(extraList, pv.invalidExtra);
+        updateScanStat(pv); // 扫描发现数常驻（issue #75）
         var badN = pv.invalidRoots.length + pv.invalidExtra.length;
-        if (badN) { msg = '已保存 · ' + badN + ' 条路径无效'; bad = true; }
+        if (badN) showHint('已保存 · ' + badN + ' 条路径无效', true);
       }
-      showHint(msg, bad);
+      if (editorChanged) runCheck(patch.editorCmd, document.getElementById('checkEditorRes'));
+      if (terminalChanged) checkTerminalCmd();
       if (toolsChanged) loadAiTools(); // 自定义工具清单已变，重扫 PATH
       if (aiChanged || toolsChanged) loadAiCaps(); // AI 引擎/开关或可用工具集已变（issue #29）
       if (pathsChanged || toolsChanged) refresh(false);
@@ -2324,6 +2373,8 @@
   document.getElementById('settingsBtn').addEventListener('click', function () {
     if (appEl.classList.contains('show-settings')) hideSettings(); else showSettings();
   });
+  // 设置页右上角 ×（issue #72）：等效 Esc / 齿轮，hideSettings 内含 flushSave 落盘停顿中的改动
+  document.getElementById('settingsClose').addEventListener('click', hideSettings);
   document.getElementById('addRoot').addEventListener('click', function () { pathRow(rootsList, ''); });
   document.getElementById('addExtra').addEventListener('click', function () { pathRow(extraList, ''); });
   document.getElementById('addAiTool').addEventListener('click', function () { aiToolRow('', ''); });
@@ -2348,6 +2399,7 @@
       res.classList.add(bad ? 'bad' : 'ok');
       markRows(rootsList, r.invalidRoots);
       markRows(extraList, r.invalidExtra);
+      updateScanStat(r); // 常驻小字与手动预览结果保持一致（issue #75）
     });
   });
   document.getElementById('testGhBtn').addEventListener('click', function () {
@@ -2406,15 +2458,8 @@
   document.getElementById('checkEditor').addEventListener('click', function () {
     runCheck(fEditor.value || 'code', document.getElementById('checkEditorRes'));
   });
-  document.getElementById('checkTerminal').addEventListener('click', function () {
-    var res = document.getElementById('checkTerminalRes');
-    if (!fTerminal.value.trim()) {
-      res.textContent = '留空：使用 Windows Terminal / cmd 兜底';
-      res.className = 'res ok';
-      return;
-    }
-    runCheck(fTerminal.value, res);
-  });
+  // 终端「重新校验」按钮（issue #76）：停顿后已自动校验，按钮降级为手动重试
+  document.getElementById('checkTerminal').addEventListener('click', checkTerminalCmd);
 
   // 热键录入器：聚焦后按组合键录入；Backspace/Delete 清空；Esc 取消；Tab 放行让焦点正常移走
   fHotkey.addEventListener('keydown', function (e) {

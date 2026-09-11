@@ -14,6 +14,7 @@ const DEFAULT_CONFIG = {
   terminalCmd: '',
   hotkey: 'Ctrl+Shift+D',
   autoStart: true,
+  scanIntervalMin: 20, // 后台静默刷新间隔（分钟）：预设 5/10/20/60 四档（issue #70），唤出窗口时总会重扫一次
   aiTools: [], // 自定义 AI 工具清单：[{label, cmd}]，与默认 claude/codex/kimi/grok 合并（issue #15）
   aiEnabled: true, // AI 功能总开关：周报/建议/自然语言筛选（issue #29）
   aiEngine: '', // 默认 AI 引擎的工具 id；空 = 自动取第一个已探测可用的（issue #29）

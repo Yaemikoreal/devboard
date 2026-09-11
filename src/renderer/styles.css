@@ -710,8 +710,10 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .settings-card{
   max-width:920px;height:100%;margin:0 auto;background:var(--card);
   border-radius:var(--r-card);box-shadow:var(--shadow-1);
-  display:flex;overflow:hidden;
+  display:flex;overflow:hidden;position:relative;
 }
+/* 设置页右上角可见关闭按钮（issue #72）：沿用详情面板 p-close 圆形按钮语言 */
+.settings-close{position:absolute;top:14px;right:14px;z-index:5}
 
 /* 玻璃覆层：各卡片表面统一半透 + 背景模糊 + 内高光描边（.rows .skel 的更高优先级规则不受影响） */
 .ov-card,.rows,.panel-in,.settings-card,.skel{
@@ -810,7 +812,19 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--ink-3);
   margin-bottom:4px;
 }
+/* 扫描发现数常驻小字（issue #75）：挂在「扫描」分组标题旁，随自动保存的扫描预览更新 */
+.set-group > h3 .scan-stat{font-weight:400;letter-spacing:.02em;margin-left:8px}
 .set-group > .group-desc{font-size:11.5px;color:var(--ink-3);margin-bottom:10px}
+
+/* 分段选择器（issue #70 后台刷新间隔）：预设档位，不用裸数字输入 */
+.seg{display:inline-flex;gap:3px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--bg);padding:3px}
+.seg button{
+  border:0;background:transparent;border-radius:var(--r-pill);cursor:pointer;
+  padding:5px 14px;font:inherit;font-size:12px;color:var(--ink-2);
+  transition:background-color .15s ease,color .15s ease;
+}
+.seg button:hover{color:var(--ink)}
+.seg button.active{background:var(--tile);color:var(--tile-ink);font-weight:600}
 .welcome-note{
   font-size:12.5px;line-height:1.7;color:var(--ink-2);
   background:var(--bg);border:1px solid var(--line);

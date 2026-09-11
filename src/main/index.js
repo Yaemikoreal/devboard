@@ -136,7 +136,22 @@ function createTray() {
   tray.on('right-click', () => tray.popUpContextMenu(menu));
 }
 
-// 设置即时生效：重注册热键 + 开机自启；失败原因记录供设置页展示
+// 后台静默刷新定时器（issue #70）：间隔取 config.scanIntervalMin 预设档位（5/10/20/60），
+// 非法值回落 20 分钟；唤出窗口时总会主动重扫一次，该间隔只影响后台静默刷新。
+// 值未变时保持原定时器不动，避免每次设置落盘都重置计时相位
+const TICK_INTERVALS = [5, 10, 20, 60];
+let tickIntervalMin = 0;
+function applyTickTimer(cfg) {
+  const min = TICK_INTERVALS.indexOf(cfg.scanIntervalMin) >= 0 ? cfg.scanIntervalMin : 20;
+  if (tickTimer && min === tickIntervalMin) return;
+  tickIntervalMin = min;
+  if (tickTimer) clearInterval(tickTimer);
+  tickTimer = setInterval(() => {
+    if (win) win.webContents.send('board:tick');
+  }, min * 60 * 1000);
+}
+
+// 设置即时生效：重注册热键 + 开机自启 + 后台刷新间隔（issue #70）；失败原因记录供设置页展示
 function applySettings(cfg) {
   globalShortcut.unregisterAll();
   lastHotkeyError = '';
@@ -149,6 +164,7 @@ function applySettings(cfg) {
     }
   }
   app.setLoginItemSettings({ openAtLogin: !!cfg.autoStart });
+  applyTickTimer(cfg);
 }
 
 // 每天首次启动或唤出窗口且有待关注项目时弹一条摘要（托盘常驻下进程很少重启，靠唤出兜底）
@@ -199,15 +215,10 @@ if (!gotLock) {
       getHotkeyError: () => lastHotkeyError,
     }));
 
-    applySettings(store.getConfig());
+    applySettings(store.getConfig()); // 含后台刷新定时器首次建立（applyTickTimer）
     createWindow();
     createTray();
     maybeNotify();
-
-    // 每 20 分钟静默刷新一次（唤出窗口时另有主动重扫）
-    tickTimer = setInterval(() => {
-      if (win) win.webContents.send('board:tick');
-    }, 20 * 60 * 1000);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
