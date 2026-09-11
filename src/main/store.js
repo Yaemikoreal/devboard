@@ -28,6 +28,7 @@ const DEFAULT_CONFIG = {
   theme: { id: 'warm', accent: '#f5d90a' }, // 外观：整体主题 + 强调色（issue #27）
   density: 'standard', // 密度档位：standard / compact（issue #84）
   reduceMotion: false, // 降低动效：停动画并关闭玻璃模糊（issue #82）
+  landingView: 'overview', // 唤出着陆视图：overview / projects / last（issue #86）
 };
 
 const DEFAULT_PREFS = {
@@ -128,6 +129,8 @@ class Store {
     // 密度档位（issue #84）：限已知值
     if (['standard', 'compact'].indexOf(cfg.density) < 0) cfg.density = 'standard';
     cfg.reduceMotion = !!cfg.reduceMotion; // 降低动效（issue #82）：布尔归一
+    // 唤出着陆视图（issue #86）：限已知值
+    if (['overview', 'projects', 'last'].indexOf(cfg.landingView) < 0) cfg.landingView = 'overview';
     return cfg;
   }
 

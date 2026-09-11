@@ -80,6 +80,7 @@ function createWindow() {
   win.on('show', () => {
     setTimeout(() => {
       if (win) win.webContents.send('board:tick');
+      if (win) win.webContents.send('win:shown'); // 唤出着陆视图（issue #86）：渲染层按偏好切视图
     }, 120);
     maybeNotify();
   });

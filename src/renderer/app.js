@@ -832,7 +832,7 @@
     }
   }
 
-  // 「生成中」进行态：已等待秒数每秒刷新；行被重绘移除后定时器自清
+  // 「生成中」进行态（issue #86）：骨架行 +「正在总结…」措辞；已等待秒数每秒刷新；行被重绘移除后定时器自清
   function paintAiRunning(box, btn, job) {
     box.classList.remove('hidden');
     box.innerHTML = '';
@@ -840,11 +840,14 @@
     // 定时器只在「曾挂载后被移除」时自清（issue #40 实测 bug）
     var line = el('div', 'ai-err', '');
     var makeText = function () {
-      return 'AI 生成中…（本机 ' + state.aiCaps.engine.label + '，已等待 ' +
+      return '正在总结…（本机 ' + state.aiCaps.engine.label + '，已等待 ' +
         Math.max(0, Math.round((Date.now() - job.startAt) / 1000)) + ' 秒；可切换到别处，完成后回来查看）';
     };
     line.textContent = makeText();
     box.appendChild(line);
+    var sk = el('div', 'ai-sk'); // 骨架行：等候期间给「内容正在成形」的预期
+    for (var i = 0; i < 3; i++) sk.appendChild(el('i', null, ''));
+    box.appendChild(sk);
     var timer = setInterval(function () {
       if (!line.isConnected) { clearInterval(timer); return; }
       line.textContent = makeText();
@@ -1097,6 +1100,18 @@
     return row;
   }
 
+  // 行列表键盘流（issue #86）：j/k 或 ↑/↓ 在行间移动焦点；Enter/Space 开详情由行自身 keydown 承担
+  rowsEl.addEventListener('keydown', function (e) {
+    var row = e.target && e.target.closest ? e.target.closest('.row') : null;
+    if (!row || e.target !== row) return;
+    var down = e.key === 'ArrowDown' || e.key === 'j';
+    var up = e.key === 'ArrowUp' || e.key === 'k';
+    if (!down && !up) return;
+    var next = row[down ? 'nextElementSibling' : 'previousElementSibling'];
+    while (next && !next.classList.contains('row')) next = next[down ? 'nextElementSibling' : 'previousElementSibling'];
+    if (next) { e.preventDefault(); next.focus(); }
+  });
+
   // 拖拽结束后按当前 DOM 顺序持久化 cardOrder（仅手动位序可达）
   function persistRowOrder() {
     var order = Array.prototype.map.call(rowsEl.querySelectorAll('.row'), function (r) {
@@ -1112,16 +1127,33 @@
     if (!state.board) return;
     var list = sortedProjects();
     if (!list.length) {
-      if (state.board.projects.length) rowsEl.appendChild(el('div', 'rows-empty', '该分带下没有项目'));
-      else rowsEl.appendChild(emptyGuide());
+      if (state.board.projects.length) {
+        // 分带空态（issue #86）：虚线圈小手绘替代一行灰字
+        var re = el('div', 'rows-empty');
+        re.innerHTML = '<svg class="re-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="7" stroke-dasharray="2.5 4"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg>';
+        re.appendChild(document.createTextNode('该分带下没有项目'));
+        rowsEl.appendChild(re);
+      } else rowsEl.appendChild(emptyGuide());
       return;
     }
     list.forEach(function (p) { rowsEl.appendChild(projectRow(p)); });
   }
 
-  // 空项目引导卡：一句话简介 + 三步指引 + 打开设置主按钮
+  // 空项目引导卡：手绘雷达图形 + 一句话简介 + 三步指引 + 打开设置主按钮
   function emptyGuide() {
     var box = el('div', 'board-empty');
+    // 手绘图形（issue #86）：从圆心散出的三层雷达弧 + 基线，呼应 SignalBoard 的信号语言；虚线与圆角保持手绘感
+    var art = el('div', 'be-art');
+    art.innerHTML = '<svg viewBox="0 0 132 76" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">'
+      + '<path d="M14 62h104" stroke-dasharray="1 6" opacity=".6"/>'
+      + '<path d="M32 48a14 14 0 0 1 14 14"/>'
+      + '<path d="M32 34a28 28 0 0 1 28 28" stroke-dasharray="3 5"/>'
+      + '<path d="M32 20a42 42 0 0 1 42 42" stroke-dasharray="2 7" opacity=".7"/>'
+      + '<circle cx="32" cy="62" r="2.6" fill="currentColor" stroke="none"/>'
+      + '<circle cx="96" cy="30" r="1.8" fill="currentColor" stroke="none" opacity=".55"/>'
+      + '<circle cx="110" cy="46" r="1.8" fill="currentColor" stroke="none" opacity=".4"/>'
+      + '</svg>';
+    box.appendChild(art);
     box.appendChild(el('div', 't', '还没有发现任何项目'));
     box.appendChild(el('div', 'be-desc', 'SignalBoard 自动聚合各项目的近况信号：提交、未提交改动、AI 会话痕迹、GitHub issues/PR，帮你一眼回忆起每个项目做到哪了。'));
     var steps = el('ol', 'be-steps');
@@ -1474,6 +1506,11 @@
   }
 
   /* ---------- 视图切换与跳转 ---------- */
+  // 标题栏状态字（issue #86）：随视图/设置切换，替代与 logo 重复的应用名
+  function syncTbName() {
+    document.getElementById('tbName').textContent =
+      appEl.classList.contains('show-settings') ? '设置' : (state.view === 'projects' ? '项目' : '总览');
+  }
   function switchView(view) {
     state.view = view;
     document.querySelectorAll('#nav button').forEach(function (b) {
@@ -1482,7 +1519,11 @@
     viewOverview.classList.toggle('hidden', view !== 'overview');
     viewProjects.classList.toggle('hidden', view !== 'projects');
     hideSettings();
+    syncTbName();
     syncScrolled(); // 切换视图后按当前视图滚动位置重算过渡带状态（issue #28）
+    // 「上次停留」着陆偏好（issue #86）：离开即记，唤出时按 landingView=last 恢复
+    state.prefs = Object.assign({}, state.prefs, { lastView: view });
+    api.setPrefs({ lastView: view });
   }
 
   // 关注清单 / 活动流 / 搜索 → 跳项目页并推出该项目详情
@@ -2043,6 +2084,33 @@
   if (motionMq.addEventListener) motionMq.addEventListener('change', applyMotion);
   else if (motionMq.addListener) motionMq.addListener(applyMotion); // 旧内核兜底
 
+  /* ----- 唤出着陆视图（issue #86）：总览/项目/上次停留；启动与 win:shown 时应用，设置页开着不动 ----- */
+  var LANDINGS = ['overview', 'projects', 'last'];
+  var landingViewSeg = document.getElementById('landingViewSeg');
+  function landingValue() {
+    var b = landingViewSeg.querySelector('button.active');
+    return b ? b.getAttribute('data-landing') : 'overview';
+  }
+  function renderLanding(v) {
+    Array.prototype.forEach.call(landingViewSeg.querySelectorAll('button'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-landing') === v);
+    });
+  }
+  function applyLanding() {
+    var lv = (state.settings && state.settings.landingView) || 'overview';
+    if (LANDINGS.indexOf(lv) < 0) lv = 'overview';
+    var view = lv === 'last' ? ((state.prefs && state.prefs.lastView) || 'overview') : lv;
+    if (appEl.classList.contains('show-settings')) return;
+    if (view !== state.view) switchView(view);
+  }
+  landingViewSeg.addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    renderLanding(b.getAttribute('data-landing'));
+    scheduleSave();
+  });
+  api.onWinShown(function () { applyLanding(); });
+
   /* ----- 提示词模板自定义（issue #78）：编辑单位 = 模板 + {{事实}} 插入点 ----- */
   // 默认模板由主进程随 settings:get 下发（aiPromptDefaults）；文本域预填当前生效模板（自定义值或默认）
   function aiPromptDefaults() {
@@ -2478,6 +2546,7 @@
 
   function showSettings() {
     appEl.classList.add('show-settings');
+    syncTbName(); // 标题栏状态字（issue #86）
     var activeNav = document.querySelector('.sn-item.active');
     syncNavSubs(activeNav ? activeNav.dataset.pane : 'general');
     document.getElementById('welcomeNote').classList.toggle('hidden', !firstRun);
@@ -2510,6 +2579,7 @@
       applyDensity(cfg.density);
       fReduceMotion.checked = !!cfg.reduceMotion; // 降低动效（issue #82）：先置开关再按「开关∪系统偏好」落 body 态
       applyMotion();
+      renderLanding(LANDINGS.indexOf(cfg.landingView) >= 0 ? cfg.landingView : 'overview'); // 唤出着陆视图（issue #86）
       fAiEnabled.checked = cfg.aiEnabled !== false; // AI 功能总开关（issue #29）
       fillPromptTemplates(cfg); // 提示词模板（issue #78）：预填自定义值或内置默认
       loadAiTools().then(function () { renderAiEngineSelect(cfg); });
@@ -2546,6 +2616,7 @@
 
   function hideSettings() {
     appEl.classList.remove('show-settings');
+    syncTbName(); // 标题栏状态字（issue #86）
     stopDeviceFlow();
     flushSave(); // 关闭前把停顿中的未落盘改动立即保存（自动保存，issue #27 反馈）
     renderAiWeeklyEntry(); // 提示词模板改动后回到总览即按新模板重生成（issue #78）；无改动时走缓存重展，无副作用
@@ -2595,6 +2666,7 @@
       trayAttentionCount: fTrayCount.checked,
       density: densityValue(), // 密度档位（issue #84）：渲染层即时生效，此处随自动保存落盘
       reduceMotion: fReduceMotion.checked, // 降低动效（issue #82）：同上，渲染层即时生效
+      landingView: landingValue(), // 唤出着陆视图（issue #86）
       aiEnabled: fAiEnabled.checked, // AI 功能开关（issue #29）
       aiEngine: fAiEngine.disabled ? '' : fAiEngine.value,
       aiPromptWeekly: promptDraftOf(fPromptWeekly, aiPromptDefaults().weekly), // 提示词模板（issue #78）：与默认一致存 null
@@ -3026,6 +3098,8 @@
     applyDensity(cfg.density); // 密度档位（issue #84）
     fReduceMotion.checked = !!cfg.reduceMotion; // 降低动效（issue #82）：开关∪系统偏好
     applyMotion();
+    renderLanding(LANDINGS.indexOf(cfg.landingView) >= 0 ? cfg.landingView : 'overview'); // 着陆视图 seg（issue #86）
+    if (state.prefs) applyLanding(); // 着陆视图需 settings+prefs 都就绪（issue #86）
   });
   api.getPrefs().then(function (p) {
     state.prefs = p;
@@ -3033,6 +3107,7 @@
     state.sortMode = (p && p.sortMode) || 'manual';
     document.getElementById('sortLabel').textContent = '排序：' + SORT_LABEL[state.sortMode];
     renderSortDrop();
+    if (state.settings) applyLanding(); // 着陆视图需 settings+prefs 都就绪（issue #86）
     if (!p || !p.onboarded) { // 首次启动：自动打开一次设置，引导配置扫描根目录
       firstRun = true;
       state.prefs = Object.assign({}, state.prefs, { onboarded: true });

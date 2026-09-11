@@ -802,6 +802,20 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   background:var(--accent);color:var(--on-accent);font-size:var(--fs-aux);font-weight:700;
   display:inline-flex;align-items:center;justify-content:center;
 }
+/* 空态手绘图形（issue #86）：雷达弧呼应信号语言，虚线保持手绘感 */
+.be-art{color:var(--ink-3);opacity:.75}
+.be-art svg{width:132px;height:76px;display:block}
+.rows-empty .re-ic{width:18px;height:18px;vertical-align:-4px;margin-right:8px}
+/* AI 进行态骨架行（issue #86）：三条渐短 shimmer 条，复用全局 shimmer 关键帧 */
+.ai-sk{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.ai-sk i{display:block;height:10px;border-radius:5px;background:var(--well);position:relative;overflow:hidden}
+.ai-sk i:nth-child(2){width:82%}
+.ai-sk i:nth-child(3){width:64%}
+.ai-sk i::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.4) 50%,transparent 70%);
+  animation:shimmer 1.2s infinite;
+}
 
 /* ---------- 设置视图：左导航 + 右面板（issue #26） ---------- */
 .settings-view{
