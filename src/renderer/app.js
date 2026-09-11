@@ -1929,7 +1929,19 @@
   }
 
   /* ----- 子模块导航（issue #26）：面板常驻 DOM 仅切换显隐，未保存输入不丢 ----- */
+  /* 组级锚点：sn-subs 跟随当前 pane 显隐，子项点击滚动直达分组 */
+  function syncNavSubs(pane) {
+    Array.prototype.forEach.call(document.querySelectorAll('.sn-subs'), function (s) {
+      s.classList.toggle('show', s.dataset.pane === pane);
+    });
+  }
   document.getElementById('settingsNav').addEventListener('click', function (e) {
+    var sub = e.target.closest('.sn-subs button');
+    if (sub) {
+      var target = document.getElementById(sub.dataset.target);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
     var btn = e.target.closest('.sn-item');
     if (!btn) return;
     Array.prototype.forEach.call(document.querySelectorAll('.sn-item'), function (b) {
@@ -1938,6 +1950,7 @@
     Array.prototype.forEach.call(document.querySelectorAll('.set-pane'), function (p) {
       p.classList.toggle('active', p.id === 'pane-' + btn.dataset.pane);
     });
+    syncNavSubs(btn.dataset.pane);
   });
 
   /* ----- 外观：整体主题 + 强调色（issue #27），更改即生效并自动保存 ----- */
@@ -2278,6 +2291,8 @@
 
   function showSettings() {
     appEl.classList.add('show-settings');
+    var activeNav = document.querySelector('.sn-item.active');
+    syncNavSubs(activeNav ? activeNav.dataset.pane : 'general');
     document.getElementById('welcomeNote').classList.toggle('hidden', !firstRun);
     firstRun = false;
     api.getSettings().then(function (cfg) {
@@ -2469,8 +2484,6 @@
   document.getElementById('settingsBtn').addEventListener('click', function () {
     if (appEl.classList.contains('show-settings')) hideSettings(); else showSettings();
   });
-  // 设置页右上角 ×（issue #72）：等效 Esc / 齿轮，hideSettings 内含 flushSave 落盘停顿中的改动
-  document.getElementById('settingsClose').addEventListener('click', hideSettings);
   document.getElementById('addRoot').addEventListener('click', function () { pathRow(rootsList, ''); });
   document.getElementById('addExtra').addEventListener('click', function () { pathRow(extraList, ''); });
   document.getElementById('addAiTool').addEventListener('click', function () { aiToolRow('', ''); });

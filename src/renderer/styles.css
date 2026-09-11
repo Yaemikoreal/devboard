@@ -714,8 +714,6 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   border-radius:var(--r-card);box-shadow:var(--shadow-1);
   display:flex;overflow:hidden;position:relative;
 }
-/* 设置页右上角可见关闭按钮（issue #72）：沿用详情面板 p-close 圆形按钮语言 */
-.settings-close{position:absolute;top:14px;right:14px;z-index:5}
 
 /* 玻璃覆层：各卡片表面统一半透 + 背景模糊 + 内高光描边（.rows .skel 的更高优先级规则不受影响） */
 .ov-card,.rows,.panel-in,.settings-card,.skel{
@@ -741,6 +739,15 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .sn-item svg{width:15px;height:15px;flex:none}
 .sn-item:hover{background:var(--well);color:var(--ink)}
 .sn-item.active{background:var(--tile);color:var(--tile-ink);font-weight:600}
+/* 组级锚点子导航：仅当前 pane 可见，点击滚动直达分组 */
+.sn-subs{display:none;flex-direction:column;gap:1px;padding:2px 0 6px 36px}
+.sn-subs.show{display:flex}
+.sn-subs button{
+  border:0;background:transparent;cursor:pointer;text-align:left;
+  font:inherit;font-size:11.5px;color:var(--ink-3);padding:3px 10px;
+  border-radius:var(--r-pill);transition:color .15s ease,background-color .15s ease;
+}
+.sn-subs button:hover{color:var(--ink);background:var(--well)}
 .settings-main{flex:1;min-width:0;display:flex;flex-direction:column}
 .settings-body{flex:1;min-height:0;overflow-y:auto;padding:22px 26px}
 .set-pane{display:none;max-width:620px}
@@ -757,6 +764,7 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   .settings-nav h2{display:none}
   .sn-item{justify-content:center;padding:8px 0}
   .sn-item span{display:none}
+  .sn-subs{display:none !important}
 }
 
 /* 外观：整体主题卡片（issue #27 整体主题化） */
@@ -809,13 +817,22 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   color:var(--ink);font:12px ui-monospace,Consolas,monospace;padding:5px 9px;outline:none;
 }
 .color-hex-row input:focus{border-color:var(--ink-3)}
-.set-group{margin-bottom:20px}
-.set-group > h3{
-  font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--ink-3);
-  margin-bottom:4px;
+/* 设置分组卡片化：一块卡片 = 一件事，组与组之间拉开层级，便于扫读定位 */
+.set-group{
+  margin-bottom:16px;padding:16px 18px;
+  background:var(--glass-well);border:1px solid var(--line);border-radius:14px;
 }
-/* 扫描发现数常驻小字（issue #75）：挂在「扫描」分组标题旁，随自动保存的扫描预览更新 */
-.set-group > h3 .scan-stat{font-weight:400;letter-spacing:.02em;margin-left:8px}
+.set-group > h3{
+  font-size:13px;font-weight:700;letter-spacing:.03em;color:var(--ink);
+  margin-bottom:4px;display:flex;align-items:center;
+}
+/* 扫描发现数常驻徽标（issue #75）：挂在「扫描」分组标题旁，随自动保存的扫描预览更新 */
+.set-group > h3 .scan-stat{
+  font-weight:400;font-size:10.5px;letter-spacing:.02em;color:var(--ink-2);
+  margin-left:10px;padding:2px 9px;border-radius:var(--r-pill);
+  background:var(--well);border:1px solid var(--line);
+}
+.set-group > h3 .scan-stat:empty{display:none}
 .set-group > .group-desc{font-size:11.5px;color:var(--ink-3);margin-bottom:10px}
 
 /* 分段选择器（issue #70 后台刷新间隔）：预设档位，不用裸数字输入 */
