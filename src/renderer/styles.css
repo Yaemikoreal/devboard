@@ -6,7 +6,7 @@
   --well:#ece9dd;
   --ink:#181818;
   --ink-2:#4d463c;
-  --ink-3:#857d6b;
+  --ink-3:#6e685a; /* AA 标定（issue #85）：原 #857d6b 对比度 3.36 不达标 */
   --line:rgba(24,24,24,.09);
   --accent:#f5d90a;
   /* 强调色派生阶梯：热力图 l1/l3、文本高亮、光晕、聚焦环（issue #27，由 JS 按 accent 动态生成） */
@@ -19,7 +19,7 @@
   --on-accent:var(--ink);
   --tile:#322e27;
   --tile-ink:#fdfcf8;
-  --tile-ink2:#a89f8e;
+  --tile-ink2:#b0a798; /* AA 标定（issue #85）：原 #a89f8e 对比度 4.14 不达标 */
   --close-red:#e81123;
   --shadow-1:0 1px 2px rgba(24,24,24,.04),0 14px 34px rgba(24,24,24,.05);
   --shadow-2:0 2px 6px rgba(24,24,24,.06),0 22px 48px rgba(24,24,24,.09);
@@ -513,6 +513,9 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .row[data-band=cooling]{--band-c:var(--band-cool)}
 .row[data-band=stale]{--band-c:var(--band-stale)}
 .row[data-band=archive]{--band-c:var(--band-arch)}
+/* 色弱友好（issue #85）：色彩之外给形状次级通道——渐冷=虚线条、归档=细条（筛选 chips 本有文字标签） */
+.row[data-band=stale]::before{background:repeating-linear-gradient(180deg,var(--band-stale) 0 4px,transparent 4px 8px)}
+.row[data-band=archive]::before{width:2px}
 .row.selected{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .row.selected::before{width:6px}
 .row.dragging{opacity:.45}

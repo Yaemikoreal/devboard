@@ -1710,8 +1710,8 @@
       label: '暖阳', accentDefault: '#f5d90a',
       vars: {
         '--bg': '#f5f2e8', '--card': '#fdfcf8', '--well': '#ece9dd',
-        '--ink': '#181818', '--ink-2': '#4d463c', '--ink-3': '#857d6b',
-        '--line': 'rgba(24,24,24,.09)', '--tile': '#322e27', '--tile-ink': '#fdfcf8', '--tile-ink2': '#a89f8e',
+        '--ink': '#181818', '--ink-2': '#4d463c', '--ink-3': '#6e685a', /* ink-3 AA 标定（issue #85） */
+        '--line': 'rgba(24,24,24,.09)', '--tile': '#322e27', '--tile-ink': '#fdfcf8', '--tile-ink2': '#b0a798', /* tile-ink2 AA 标定（issue #85） */
         '--shadow-1': '0 1px 2px rgba(24,24,24,.04),0 14px 34px rgba(24,24,24,.05)',
         '--shadow-2': '0 2px 6px rgba(24,24,24,.06),0 22px 48px rgba(24,24,24,.09)',
         '--btn-line': 'rgba(24,24,24,.16)', '--btn-fail-bg': '#e8b4b0',
@@ -1733,8 +1733,8 @@
       label: '雾蓝', accentDefault: '#3b82f6',
       vars: {
         '--bg': '#edf0f4', '--card': '#fbfcfd', '--well': '#e2e7ed',
-        '--ink': '#181c22', '--ink-2': '#47505b', '--ink-3': '#828b96',
-        '--line': 'rgba(24,28,34,.09)', '--tile': '#2b313a', '--tile-ink': '#fbfcfd', '--tile-ink2': '#98a1ac',
+        '--ink': '#181c22', '--ink-2': '#47505b', '--ink-3': '#606771', /* ink-3 AA 标定（issue #85） */
+        '--line': 'rgba(24,28,34,.09)', '--tile': '#2b313a', '--tile-ink': '#fbfcfd', '--tile-ink2': '#aab1bb', /* tile-ink2 AA 标定（issue #85） */
         '--shadow-1': '0 1px 2px rgba(24,28,34,.04),0 14px 34px rgba(24,28,34,.05)',
         '--shadow-2': '0 2px 6px rgba(24,28,34,.06),0 22px 48px rgba(24,28,34,.09)',
         '--btn-line': 'rgba(24,28,34,.16)', '--btn-fail-bg': '#e8b4b0',
@@ -1755,8 +1755,8 @@
       label: '青野', accentDefault: '#10b981',
       vars: {
         '--bg': '#eef3ec', '--card': '#fcfdfb', '--well': '#e1e9df',
-        '--ink': '#17201a', '--ink-2': '#45544a', '--ink-3': '#7f8d82',
-        '--line': 'rgba(23,32,26,.09)', '--tile': '#28332b', '--tile-ink': '#fcfdfb', '--tile-ink2': '#9aaa9d',
+        '--ink': '#17201a', '--ink-2': '#45544a', '--ink-3': '#5e6a61', /* ink-3 AA 标定（issue #85） */
+        '--line': 'rgba(23,32,26,.09)', '--tile': '#28332b', '--tile-ink': '#fcfdfb', '--tile-ink2': '#a6b4a8', /* tile-ink2 AA 标定（issue #85） */
         '--shadow-1': '0 1px 2px rgba(23,32,26,.04),0 14px 34px rgba(23,32,26,.05)',
         '--shadow-2': '0 2px 6px rgba(23,32,26,.06),0 22px 48px rgba(23,32,26,.09)',
         '--btn-line': 'rgba(23,32,26,.16)', '--btn-fail-bg': '#e8b4b0',
@@ -1777,8 +1777,8 @@
       label: '樱粉', accentDefault: '#ec4899',
       vars: {
         '--bg': '#f6eff0', '--card': '#fdfbf9', '--well': '#eee2e3',
-        '--ink': '#211a1c', '--ink-2': '#53474b', '--ink-3': '#8d7d81',
-        '--line': 'rgba(33,26,28,.09)', '--tile': '#382d31', '--tile-ink': '#fdfbf9', '--tile-ink2': '#b1a1a5',
+        '--ink': '#211a1c', '--ink-2': '#53474b', '--ink-3': '#706266', /* ink-3 AA 标定（issue #85） */
+        '--line': 'rgba(33,26,28,.09)', '--tile': '#382d31', '--tile-ink': '#fdfbf9', '--tile-ink2': '#baacaf', /* tile-ink2 AA 标定（issue #85） */
         '--shadow-1': '0 1px 2px rgba(33,26,28,.04),0 14px 34px rgba(33,26,28,.05)',
         '--shadow-2': '0 2px 6px rgba(33,26,28,.06),0 22px 48px rgba(33,26,28,.09)',
         '--btn-line': 'rgba(33,26,28,.16)', '--btn-fail-bg': '#e8b4b0',
@@ -1799,8 +1799,8 @@
       label: '紫藤', accentDefault: '#8b5cf6',
       vars: {
         '--bg': '#f1f0f6', '--card': '#fbfbfd', '--well': '#e4e3ee',
-        '--ink': '#1e1b26', '--ink-2': '#4a4656', '--ink-3': '#847f92',
-        '--line': 'rgba(30,27,38,.09)', '--tile': '#302c3d', '--tile-ink': '#fbfbfd', '--tile-ink2': '#a29cae',
+        '--ink': '#1e1b26', '--ink-2': '#4a4656', '--ink-3': '#676374', /* ink-3 AA 标定（issue #85） */
+        '--line': 'rgba(30,27,38,.09)', '--tile': '#302c3d', '--tile-ink': '#fbfbfd', '--tile-ink2': '#b0abbb', /* tile-ink2 AA 标定（issue #85） */
         '--shadow-1': '0 1px 2px rgba(30,27,38,.04),0 14px 34px rgba(30,27,38,.05)',
         '--shadow-2': '0 2px 6px rgba(30,27,38,.06),0 22px 48px rgba(30,27,38,.09)',
         '--btn-line': 'rgba(30,27,38,.16)', '--btn-fail-bg': '#e8b4b0',
@@ -1821,8 +1821,8 @@
       label: '暗夜', accentDefault: '#f5d90a', dimBlob: true,
       vars: {
         '--bg': '#1b1915', '--card': '#26231d', '--well': '#353126',
-        '--ink': '#f0ece1', '--ink-2': '#c8c2b2', '--ink-3': '#8a8474',
-        '--line': 'rgba(240,236,225,.10)', '--tile': '#ece7d8', '--tile-ink': '#1b1915', '--tile-ink2': '#6e695b',
+        '--ink': '#f0ece1', '--ink-2': '#c8c2b2', '--ink-3': '#9e998a', /* ink-3 AA 标定（issue #85） */
+        '--line': 'rgba(240,236,225,.10)', '--tile': '#ece7d8', '--tile-ink': '#1b1915', '--tile-ink2': '#5b574b', /* tile-ink2 AA 标定（issue #85） */
         '--shadow-1': '0 1px 2px rgba(0,0,0,.30),0 14px 34px rgba(0,0,0,.35)',
         '--shadow-2': '0 2px 6px rgba(0,0,0,.35),0 22px 48px rgba(0,0,0,.45)',
         '--btn-line': 'rgba(240,236,225,.18)', '--btn-fail-bg': '#7a3d3a',
@@ -1846,8 +1846,8 @@
       label: '夜幕', accentDefault: '#60a5fa', dimBlob: true,
       vars: {
         '--bg': '#151a21', '--card': '#1e242e', '--well': '#2c333f',
-        '--ink': '#e9edf3', '--ink-2': '#c2c9d4', '--ink-3': '#7f8894',
-        '--line': 'rgba(233,237,243,.10)', '--tile': '#e4e9f0', '--tile-ink': '#151a21', '--tile-ink2': '#5c6570',
+        '--ink': '#e9edf3', '--ink-2': '#c2c9d4', '--ink-3': '#949ca7', /* ink-3 AA 标定（issue #85） */
+        '--line': 'rgba(233,237,243,.10)', '--tile': '#e4e9f0', '--tile-ink': '#151a21', '--tile-ink2': '#515963', /* tile-ink2 AA 标定（issue #85） */
         '--shadow-1': '0 1px 2px rgba(0,0,0,.30),0 14px 34px rgba(0,0,0,.35)',
         '--shadow-2': '0 2px 6px rgba(0,0,0,.35),0 22px 48px rgba(0,0,0,.45)',
         '--btn-line': 'rgba(233,237,243,.18)', '--btn-fail-bg': '#7a3d3a',
