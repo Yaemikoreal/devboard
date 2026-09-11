@@ -123,9 +123,11 @@ body{
   flex:none;display:flex;align-items:center;gap:20px;
   padding:10px 24px 0;position:relative;
 }
+/* Logo 胶囊（issue #30 方案A）：字号 13→16、描边 1.5→2，视觉锚点化；
+   总高 42px 仍低于导航 pill（43.5px），顶栏高度不变，中线由 align-items:center 对齐 */
 .logo{
-  border:1.5px solid var(--ink);border-radius:var(--r-pill);
-  padding:7px 18px;font-size:13px;font-weight:700;letter-spacing:.05em;
+  border:2px solid var(--ink);border-radius:var(--r-pill);
+  padding:7px 18px;font-size:16px;font-weight:700;letter-spacing:.05em;
 }
 /* 顶层导航：总览 | 项目（issue #14）；选中态深色块随主题 --tile 切换 */
 .nav{
