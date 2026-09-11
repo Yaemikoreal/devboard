@@ -103,6 +103,8 @@ function runCli(cmd, prompt, opts) {
     let out = '';
     let errText = '';
     let done = false;
+    // 输出缓冲上限（issue #96）：失控/死循环输出的 CLI 不再无限累积撑爆主进程内存
+    const STREAM_CAP = 1024 * 1024;
     const finish = (ok, reason) => {
       if (done) return;
       done = true;
@@ -120,16 +122,47 @@ function runCli(cmd, prompt, opts) {
     }, timeout);
     child.on('error', (err) => finish(false, '启动失败：' + err.message));
     // 流式检测引擎报错（stdout 与 stderr 都查：claude 的 unrecognized_model 走 stderr）：
-    // 命中即终止，快速失败交给上层回退下一引擎（issue #41）
+    // 命中即终止，快速失败交给上层回退下一引擎（issue #41）。
+    // 增量匹配（issue #96）：只对新到的完整行跑正则，避免每 chunk 扫全量缓冲的 O(n²)；
+    // 末尾不足一行的残段留给下一 chunk 或 close 时的全量检查
+    let outScanned = 0;
+    let errScanned = 0;
     const checkStream = () => {
-      const errLine = engineErrorLine(out) || engineErrorLine(errText);
+      let errLine = null;
+      const oe = out.lastIndexOf('\n');
+      if (oe > outScanned) {
+        errLine = engineErrorLine(out.slice(outScanned, oe));
+        outScanned = oe + 1;
+      }
+      if (!errLine) {
+        const ee = errText.lastIndexOf('\n');
+        if (ee > errScanned) {
+          errLine = engineErrorLine(errText.slice(errScanned, ee));
+          errScanned = ee + 1;
+        }
+      }
       if (errLine) {
         killChild(child, spec);
         finish(false, '引擎报错：' + errLine);
       }
     };
-    child.stdout.on('data', (d) => { out += d.toString('utf8'); checkStream(); });
-    child.stderr.on('data', (d) => { errText += d.toString('utf8'); checkStream(); });
+    const onChunk = (isErr, d) => {
+      if (done) return;
+      if (isErr) errText += d.toString('utf8');
+      else out += d.toString('utf8');
+      if (out.length > STREAM_CAP || errText.length > STREAM_CAP) {
+        // 超限即终止，按已有输出裁决（与超时同策略，issue #96）
+        killChild(child, spec);
+        const errLine = engineErrorLine(out) || engineErrorLine(errText);
+        if (errLine) { finish(false, '引擎报错：' + errLine); return; }
+        if (cleanOutput(out, spec)) { finish(true); return; }
+        finish(false, '输出超限（>1MB），已终止');
+        return;
+      }
+      checkStream();
+    };
+    child.stdout.on('data', (d) => onChunk(false, d));
+    child.stderr.on('data', (d) => onChunk(true, d));
     child.on('close', (code) => {
       const text = cleanOutput(out, spec);
       const errLine = engineErrorLine(text || out) || engineErrorLine(errText);

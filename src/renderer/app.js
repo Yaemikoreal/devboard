@@ -157,7 +157,7 @@
     if (i >= 0) list.splice(i, 1);
     else list.push(path);
     state.prefs = Object.assign({}, state.prefs, { pinned: list });
-    api.setPrefs({ pinned: list });
+    savePrefs({ pinned: list });
     renderRows();
   }
 
@@ -230,13 +230,16 @@
     api.branchCommits(p.path, name).then(function (d) {
       state.branchDetail[p.path + ' ' + name] = d || { lastCommitAt: null, commits: [] };
       renderAll();
+    }).catch(function (err) {
+      delete state.branchDetail[p.path + ' ' + name]; // 不缓存失败态，下次选中可重试
+      failTo('分支数据加载')(err);
     });
   }
 
   function selectBranch(p, name) {
     if (name === p.branch) delete state.branchSel[p.path];
     else state.branchSel[p.path] = name;
-    api.setPrefs({ branchSel: state.branchSel });
+    savePrefs({ branchSel: state.branchSel });
     ensureBranchDetail(p, name);
     renderAll();
   }
@@ -1118,7 +1121,7 @@
       return r.dataset.path;
     });
     state.prefs = Object.assign({}, state.prefs, { cardOrder: order });
-    api.setPrefs({ cardOrder: order });
+    savePrefs({ cardOrder: order });
     renderRows();
   }
 
@@ -1335,7 +1338,7 @@
     });
     ta.addEventListener('blur', function () {
       p.memo = ta.value.replace(/\s+$/, '');
-      api.setMemo(p.path, p.memo);
+      saveMemo(p.path, p.memo);
       renderRows();
     });
     panelIn.appendChild(ta);
@@ -1356,7 +1359,7 @@
         e.stopPropagation();
         api.quickOpen(p.path, pair[1]).then(function (ok) {
           flashBtn(b, ok ? '已打开' : '打开失败', ok);
-        });
+        }).catch(function () { flashBtn(b, '打开失败', false); });
       });
       quick.appendChild(b);
     });
@@ -1523,7 +1526,7 @@
     syncScrolled(); // 切换视图后按当前视图滚动位置重算过渡带状态（issue #28）
     // 「上次停留」着陆偏好（issue #86）：离开即记，唤出时按 landingView=last 恢复
     state.prefs = Object.assign({}, state.prefs, { lastView: view });
-    api.setPrefs({ lastView: view });
+    savePrefs({ lastView: view });
   }
 
   // 关注清单 / 活动流 / 搜索 → 跳项目页并推出该项目详情
@@ -1615,7 +1618,7 @@
       item.addEventListener('click', function (e) {
         e.stopPropagation();
         state.sortMode = m;
-        api.setPrefs({ sortMode: m });
+        savePrefs({ sortMode: m });
         document.getElementById('sortLabel').textContent = '排序：' + SORT_LABEL[m];
         closeDrops();
         renderRows();
@@ -1691,6 +1694,42 @@
     });
   }
 
+  /* ---------- IPC 失败兜底（issue #97）：invoke reject 不再静默 ---------- */
+  function ipcErrText(err) {
+    return String((err && err.message) || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  }
+
+  var toastTimer = null;
+  function toast(msg) {
+    var t = document.getElementById('toast');
+    if (!t) {
+      t = el('div', 'toast');
+      t.id = 'toast';
+      t.setAttribute('role', 'alert');
+      document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 4500);
+  }
+
+  // 返回一个 .catch 处理器：toast 出「<label>：<原因>」
+  function failTo(label) {
+    return function (err) {
+      console.error('[devboard]', label, err);
+      toast(label + '：' + ipcErrText(err));
+    };
+  }
+
+  // 乐观 UI 的静默写（图钉/位序/分支选择/排序等着偏好即改即存）：写失败至少 toast 可见（issue #97）
+  function savePrefs(patch) {
+    api.setPrefs(patch).catch(failTo('保存偏好'));
+  }
+  function saveMemo(projectPath, text) {
+    api.setMemo(projectPath, text).catch(failTo('保存备忘'));
+  }
+
   function load(force) {
     if (state.loading) return state.loadPromise; // 唤出重扫与定时 tick 去重，调用方挂在同一次在飞加载上
     state.loading = true;
@@ -1717,15 +1756,37 @@
     return p;
   }
 
-  // 后台重扫补丁（issue #22）：整板替换渲染；若期间用户又在手动刷新则丢弃
-  api.onBoardPatch(function (board) {
+  // 后台重扫补丁（issue #22）：整板替换渲染；若期间用户又在手动刷新则丢弃。
+  // 增量形态（issue #94）：watcher 推 {project, stats, attention}，只就地替换该项目与全局聚合
+  api.onBoardPatch(function (patch) {
     if (state.loading) return;
     state.awaitPatch = false;
-    invalidateDetailCaches(board);
-    state.board = board;
+    if (patch && patch.project) {
+      if (!state.board) return; // 增量早于首板到达：丢弃，首板随即覆盖
+      invalidateDetailCaches({ projects: [patch.project] });
+      var arr = state.board.projects;
+      var i;
+      for (i = 0; i < arr.length; i++) {
+        if (arr[i].path === patch.project.path) { arr[i] = patch.project; break; }
+      }
+      if (i >= arr.length) arr.push(patch.project); // 新出现的项目（补充路径首开等）
+      state.board.stats = patch.stats;
+      state.board.attention = patch.attention;
+      state.board.scannedAt = patch.scannedAt;
+      state.board.fromCache = false;
+    } else if (patch && patch.projects) {
+      invalidateDetailCaches(patch);
+      state.board = patch;
+    }
     renderAll();
     setScanning(false);
     console.log('[devboard] patched'); // 供 scripts/screenshot.js 等待（DEVBOARD_WAIT_PATCH=1）
+  });
+
+  // 后台重扫失败（issue #98）：补丁不会来了，熄灭扫描指示，保留旧板展示
+  api.onBoardScanfail(function () {
+    state.awaitPatch = false;
+    if (!state.loading) setScanning(false);
   });
 
   function refresh(manual) {
@@ -2403,6 +2464,9 @@
     api.checkCommand(cmd).then(function (r) {
       resEl.textContent = r.ok ? ('可用' + (r.reason ? ' · ' + r.reason : '')) : r.reason;
       resEl.classList.add(r.ok ? 'ok' : 'bad');
+    }).catch(function (err) {
+      resEl.textContent = '校验失败：' + ipcErrText(err);
+      resEl.classList.add('bad');
     });
   }
 
@@ -2604,7 +2668,7 @@
         e.textContent = '';
         e.className = 'res';
       });
-      api.scanPreview({}).then(updateScanStat); // 扫描发现数常驻（issue #75）：进设置即按当前已存配置统计一次
+      api.scanPreview({}).then(updateScanStat).catch(function () {}); // 扫描发现数常驻（issue #75）：进设置即按当前已存配置统计一次；失败静默（环境性统计，下次开设置重试）
       stopDeviceFlow();
       // 鉴权入口能力：设备码需应用配置 Client ID，gh 导入需本机 gh CLI
       api.githubAuthCaps().then(function (caps) {
@@ -2729,6 +2793,9 @@
         if (!appEl.classList.contains('show-settings')) renderAiWeeklyEntry();
       }
       if (pathsChanged || toolsChanged || warnChanged) refresh(false);
+    }).catch(function (err) {
+      // 写盘失败（ENOSPC/EPERM 等）：明确告知「未保存」，不再静默丢保存（issue #97）
+      showHint('保存失败：' + ipcErrText(err), true);
     });
   }
 
@@ -2777,6 +2844,9 @@
       markRows(rootsList, r.invalidRoots);
       markRows(extraList, r.invalidExtra);
       updateScanStat(r); // 常驻小字与手动预览结果保持一致（issue #75）
+    }).catch(function (err) {
+      res.textContent = '预览失败：' + ipcErrText(err);
+      res.classList.add('bad');
     });
   });
   document.getElementById('testGhBtn').addEventListener('click', function () {
@@ -2786,6 +2856,9 @@
     api.testGithub(fToken.value, fUsername.value).then(function (r) {
       res.textContent = r.ok ? ('连接成功 · 登录名 ' + r.login) : r.reason;
       res.classList.add(r.ok ? 'ok' : 'bad');
+    }).catch(function (err) {
+      res.textContent = '测试失败：' + ipcErrText(err);
+      res.classList.add('bad');
     });
   });
   document.getElementById('ghDeviceBtn').addEventListener('click', startDeviceFlow);
@@ -2807,7 +2880,7 @@
       } else {
         ghAuthResult(false, r.reason || '导入失败');
       }
-    });
+    }).catch(function (err) { ghAuthResult(false, '导入失败：' + ipcErrText(err)); });
   });
   // 账户状态卡操作（issue #45）：重新验证 / 断开连接
   document.getElementById('ghRecheckBtn').addEventListener('click', renderGhAccount);
@@ -2830,7 +2903,7 @@
       document.getElementById('ghAccount').classList.add('hidden');
       ghStateText();
       ghAuthResult(true, '已断开 GitHub 连接');
-    });
+    }).catch(function (err) { ghAuthResult(false, '断开失败：' + ipcErrText(err)); });
   });
   document.getElementById('checkEditor').addEventListener('click', function () {
     runCheck(fEditor.value || 'code', document.getElementById('checkEditorRes'));
@@ -3111,7 +3184,7 @@
     if (!p || !p.onboarded) { // 首次启动：自动打开一次设置，引导配置扫描根目录
       firstRun = true;
       state.prefs = Object.assign({}, state.prefs, { onboarded: true });
-      api.setPrefs({ onboarded: true });
+      savePrefs({ onboarded: true });
       showSettings();
     }
     if (state.board) renderAll();

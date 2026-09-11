@@ -832,9 +832,16 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 }
 
 /* 玻璃覆层：各卡片表面统一半透 + 背景模糊 + 内高光描边（.rows .skel 的更高优先级规则不受影响） */
-.ov-card,.rows,.panel-in,.settings-card,.skel{
+.ov-card,.settings-card,.skel{
   background:var(--glass-card);
   -webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4);
+  border:1px solid var(--glass-line);
+  box-shadow:var(--glass-shadow);
+}
+/* 滚动大容器不吃背景模糊（issue #99）：行列表/详情面板随主区或自身滚动，18px 模糊逐帧重采样
+   是长列表掉帧主因；改实底卡片（与「降低动效」退化后的观感一致），玻璃感保留给顶栏小件与总览卡片 */
+.rows,.panel-in{
+  background:var(--card);
   border:1px solid var(--glass-line);
   box-shadow:var(--glass-shadow);
 }
@@ -1259,3 +1266,10 @@ body[data-density=compact] .stream-month{margin-bottom:12px}
 body[data-density=compact] .line-item{padding:5px 0}
 body[data-density=compact] .filterbar{padding:2px 0 9px}
 body[data-density=compact] .settings-body{padding:16px 18px}
+
+/* 全局错误 toast（issue #97）：IPC 写失败等漏网异常的用户可见兜底 */
+.toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,8px);z-index:99;
+  max-width:70vw;padding:9px 16px;border-radius:10px;font-size:var(--fs-aux);
+  background:var(--ink,#322b23);color:var(--bg,#f5f2e8);box-shadow:0 8px 24px rgba(0,0,0,.18);
+  opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease}
+.toast.show{opacity:1;transform:translate(-50%,0)}

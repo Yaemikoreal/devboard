@@ -51,5 +51,7 @@ contextBridge.exposeInMainWorld('devboard', {
   onWinShown: (cb) => ipcRenderer.on('win:shown', cb),
   // 后台重扫完成后的整板补丁（issue #22）
   onBoardPatch: (cb) => ipcRenderer.on('board:patch', (_e, board) => cb(board)),
+  // 后台重扫失败信号（issue #98）：渲染层收到后熄灭「扫描中…」指示
+  onBoardScanfail: (cb) => ipcRenderer.on('board:scanfail', () => cb()),
   onShowSettings: (cb) => ipcRenderer.on('nav:settings', cb),
 });

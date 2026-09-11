@@ -207,12 +207,25 @@ function promptTplKey(template) {
 }
 
 function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttentionCount }) {
+  // IPC handler 统一兜底（issue #97）：handler 抛错（写盘 ENOSPC/EPERM 等）时给渲染层干净的中文消息，
+  // 由渲染层 ipcErrText 剥掉 Electron 的「Error invoking remote method」包装后展示
+  const rawHandle = ipcMain.handle.bind(ipcMain);
+  ipcMain.handle = (channel, fn) => rawHandle(channel, async function () {
+    try {
+      return await fn.apply(null, arguments);
+    } catch (err) {
+      throw new Error('操作失败：' + ((err && err.message) || err));
+    }
+  });
+
   let refreshInFlight = false;
   let scanInFlight = false;
   let scanPromise = null; // 在飞全量扫描：并发触发复用同一 Promise，避免重复双扫
   let scanGeneration = 0; // 扫描代次号：新扫描落地后，旧扫描迟到的最终补丁直接丢弃
 
   // .git 文件监听：项目有提交/暂存变化时自动增量重扫该项目并推补丁（issue #25）
+  // 补丁载荷为单项目增量（issue #94）：拼板在内存里完成只为拿全局聚合与该项目装饰结果，
+  // 下发仅 {project, stats, attention}，整板（含每项目 365 格热力数组）不再过 IPC
   const gitWatcher = createGitWatcher({
     scanProject: scanner.scanProject,
     getCached: (p) => store.getScanCache().projects[p] || null,
@@ -224,8 +237,17 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
       if (scanInFlight) return; // 全量扫描在飞，最终补丁由它统一发
       const config = store.getConfig();
       const { board } = assembleBoard(Object.values(cur.projects), config, false);
+      const decorated = board.projects.find((p) => p.path === projectPath);
+      if (!decorated) return;
       const win = getWindow && getWindow();
-      if (win && !win.isDestroyed()) win.webContents.send('board:patch', board);
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('board:patch', {
+          project: decorated,
+          stats: board.stats,
+          attention: board.attention,
+          scannedAt: board.scannedAt,
+        });
+      }
     },
   });
 
@@ -348,7 +370,12 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
           });
         }
       })
-      .catch((err) => console.error('[devboard] 后台重扫失败', err))
+      .catch((err) => {
+        console.error('[devboard] 后台重扫失败', err);
+        // 告知渲染层扫描失败，熄灭「扫描中…」指示（issue #98）：否则 awaitPatch 永远等不到补丁
+        const win = getWindow && getWindow();
+        if (win && !win.isDestroyed()) win.webContents.send('board:scanfail');
+      })
       .finally(() => { scanInFlight = false; });
   }
 

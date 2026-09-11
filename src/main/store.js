@@ -46,6 +46,7 @@ class Store {
   constructor(baseDir, vault) {
     this.baseDir = baseDir;
     this.vault = vault || null;
+    this._mem = new Map(); // 内存副本（issue #93）：读一次后内存服务，消除拼板热路径的反复读盘+parse
     fs.mkdirSync(baseDir, { recursive: true });
   }
 
@@ -54,17 +55,21 @@ class Store {
   }
 
   readJson(name, fallback) {
+    if (this._mem.has(name)) return this._mem.get(name);
+    let data = fallback;
     try {
-      return JSON.parse(fs.readFileSync(this._file(name), 'utf8'));
-    } catch {
-      return fallback;
-    }
+      data = JSON.parse(fs.readFileSync(this._file(name), 'utf8'));
+    } catch { /* 文件缺失/损坏时用 fallback，并缓存之，后续写入即覆盖 */ }
+    this._mem.set(name, data);
+    return data;
   }
 
-  writeJson(name, data) {
+  // compact：缓存类大文件（scan/github/ai-cache）去 indent 美化（issue #93），体积缩小数倍
+  writeJson(name, data, compact) {
+    this._mem.set(name, data);
     const file = this._file(name);
     const tmp = file + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+    fs.writeFileSync(tmp, compact ? JSON.stringify(data) : JSON.stringify(data, null, 2), 'utf8');
     fs.renameSync(tmp, file);
   }
 
@@ -177,7 +182,7 @@ class Store {
   }
 
   setGithubCache(cache) {
-    this.writeJson('github-cache.json', cache);
+    this.writeJson('github-cache.json', cache, true);
   }
 
   // 本地扫描磁盘缓存（issue #22）：projects[path] = { ...project, headSha }（issue #23 分档用）
@@ -188,7 +193,7 @@ class Store {
   }
 
   setScanCache(cache) {
-    this.writeJson('scan-cache.json', cache);
+    this.writeJson('scan-cache.json', cache, true);
   }
 
   // AI 结果缓存（issue #29）：weekly 按当天日期复用；advice 按 项目+HEAD+引擎 复用
@@ -199,7 +204,7 @@ class Store {
   }
 
   setAiCache(cache) {
-    this.writeJson('ai-cache.json', cache);
+    this.writeJson('ai-cache.json', cache, true);
   }
 
   getLastNotifyDate() {

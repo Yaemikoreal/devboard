@@ -2,7 +2,7 @@
 'use strict';
 
 const path = require('path');
-const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, Notification, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, Notification, screen, dialog } = require('electron');
 const { Store } = require('./store');
 const { registerIpc } = require('./ipc');
 const { migrateUserData } = require('./userdata-migrate');
@@ -215,10 +215,20 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
+  // 全局兜底（issue #95）：托盘常驻进程不设崩溃重启，漏网异常只记日志不退出，
+  // 避免单点 reject 直接带走整个常驻进程
+  process.on('uncaughtException', (err) => {
+    console.error('[devboard] uncaughtException:', err);
+  });
+  process.on('unhandledRejection', (err) => {
+    console.error('[devboard] unhandledRejection:', err);
+  });
+
   app.on('second-instance', () => {
     if (win) { win.show(); win.focus(); }
   });
 
+  // 启动链断裂（目录被锁/权限拒绝等）时显式报错退出，不再无声挂起（issue #95）
   app.whenReady().then(() => {
     app.setAppUserModelId('com.yaemikoreal.signalboard'); // 与 build.appId 一致，通知才能正确归因与响应点击
     migrateUserDataIfNeeded();
@@ -239,6 +249,10 @@ if (!gotLock) {
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
+  }).catch((err) => {
+    console.error('[devboard] 启动失败:', err);
+    dialog.showErrorBox('SignalBoard 启动失败', String((err && err.message) || err));
+    app.quit();
   });
 
   app.on('will-quit', () => {
