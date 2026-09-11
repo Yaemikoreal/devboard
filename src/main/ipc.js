@@ -252,9 +252,19 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
       return q;
     });
 
+    // 需要关注清单携带警示类型（issue #77 类型图标）并按严重度排序（issue #74）：
+    // 未提交超期 > 未推送 > 开放 PR，同级按项目名稳定排序
+    const WARN_SEVERITY = { dirty: 0, ahead: 1, pr: 2 };
+    const severityOf = (types) => Math.min.apply(null, types.map((t) => (t in WARN_SEVERITY ? WARN_SEVERITY[t] : 9)));
     const attention = out
       .filter((p) => p.warnings.length > 0)
-      .map((p) => ({ path: p.path, name: p.name, label: p.warnings.map((w) => w.label).join('，') }));
+      .map((p) => ({
+        path: p.path,
+        name: p.name,
+        label: p.warnings.map((w) => w.label).join('，'),
+        types: p.warnings.map((w) => w.type),
+      }))
+      .sort((a, b) => severityOf(a.types) - severityOf(b.types) || a.name.localeCompare(b.name));
 
     // 托盘 tooltip 计数随每次拼板刷新（issue #80）；显隐由 onAttentionCount 实现方按设置裁决
     if (onAttentionCount) onAttentionCount(attention.length);

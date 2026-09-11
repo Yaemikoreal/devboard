@@ -120,9 +120,18 @@ function mockBoard() {
     p.lastActivityAt = [p.lastCommitAt, p.aiSessionAt].filter(Boolean).sort().pop() || null;
   });
 
+  // 与 src/main/ipc.js assembleBoard 同规则：携带警示类型（issue #77）并按严重度排序（issue #74）
+  const WARN_SEVERITY = { dirty: 0, ahead: 1, pr: 2 };
+  const severityOf = (types) => Math.min.apply(null, types.map((t) => (t in WARN_SEVERITY ? WARN_SEVERITY[t] : 9)));
   const attention = projects
     .filter((p) => p.warnings.length > 0)
-    .map((p) => ({ path: p.path, name: p.name, label: p.warnings.map((w) => w.label).join('，') }));
+    .map((p) => ({
+      path: p.path,
+      name: p.name,
+      label: p.warnings.map((w) => w.label).join('，'),
+      types: p.warnings.map((w) => w.type),
+    }))
+    .sort((a, b) => severityOf(a.types) - severityOf(b.types) || a.name.localeCompare(b.name));
 
   return {
     scannedAt: new Date().toISOString(),

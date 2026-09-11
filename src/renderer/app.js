@@ -9,6 +9,20 @@
   var SORT_MODES = ['manual', 'activity', 'name'];
   var SORT_LABEL = { manual: '手动', activity: '最近活跃', name: '名称' };
   var AI_TOOL_LABEL = { kimi: 'Kimi Code', claude: 'Claude Code', codex: 'Codex', grok: 'Grok' };
+  // 警示类型（issue #77）：严重度排序（与主进程一致）+ 类型图形 class；未知类型回退 dirty 图形
+  var WARN_SEVERITY = { dirty: 0, ahead: 1, pr: 2 };
+  var WARN_GLYPH = { dirty: 'wg-dirty', ahead: 'wg-ahead', pr: 'wg-pr' };
+  function warnGlyphClass(type) { return WARN_GLYPH[type] || WARN_GLYPH.dirty; }
+  function warnTypesOf(list) {
+    var seen = {};
+    return (list || []).map(function (w) { return typeof w === 'string' ? w : w.type; }).filter(function (t) {
+      if (seen[t]) return false;
+      seen[t] = 1;
+      return true;
+    }).sort(function (a, b) {
+      return (a in WARN_SEVERITY ? WARN_SEVERITY[a] : 9) - (b in WARN_SEVERITY ? WARN_SEVERITY[b] : 9);
+    });
+  }
   var DAY_MS = 86400000;
 
   var state = {
@@ -468,7 +482,11 @@
       : '一切正常，暂无警示';
     board.attention.forEach(function (a) {
       var item = el('div', 'attn-item');
-      item.appendChild(el('span', 'ic'));
+      // 类型图形（issue #77）：最严重一类的图形 + 警示色，不读文字即可区分
+      var types = warnTypesOf(a.types);
+      var ic = el('span', 'ic');
+      ic.appendChild(el('i', 'wg ' + warnGlyphClass(types[0])));
+      item.appendChild(ic);
       var nm = el('span', 'nm mono', a.name);
       nm.title = a.name;
       item.appendChild(nm);
@@ -980,8 +998,11 @@
 
     var right = el('div', 'r-right');
     if (p.warnings && p.warnings.length) {
-      var w = el('span', 'r-warn', String(p.warnings.length));
-      w.insertBefore(el('i'), w.firstChild);
+      // 行内警示（issue #77）：每类一个小图形，替代单一警示点 + 计数
+      var w = el('span', 'r-warn');
+      warnTypesOf(p.warnings).forEach(function (t) {
+        w.appendChild(el('i', 'wg ' + warnGlyphClass(t)));
+      });
       w.title = p.warnings.map(function (x) { return x.label; }).join('，');
       right.appendChild(w);
     }
@@ -1131,6 +1152,7 @@
     var box = el('div', 'warns');
     p.warnings.forEach(function (w) {
       var s = el('span', 'warn', w.label);
+      s.insertBefore(el('i', 'wg ' + warnGlyphClass(w.type)), s.firstChild); // 类型图形（issue #77）
       var x = el('button', 'x', '×');
       x.title = '消音此警示（状态变化后自动复出）';
       x.addEventListener('click', function (e) {
@@ -1637,6 +1659,8 @@
         '--shadow-2': '0 2px 6px rgba(24,24,24,.06),0 22px 48px rgba(24,24,24,.09)',
         '--btn-line': 'rgba(24,24,24,.16)', '--btn-fail-bg': '#e8b4b0',
         '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#b3ac9a', '--band-arch': '#d8d3c2',
+        /* 警示语义色（issue #77）：卡片底深橙 / 深色关注卡上亮琥珀 / pill 底色与文字 */
+        '--warn': '#c4650a', '--warn-tile': '#f0ab4b', '--warn-pill': '#a85407', '--on-warn': '#fff8f0',
         /* 透玻璃背景板：奶油底 + 柔光配色（--blob-1 由 applyTheme 跟随强调色派生） */
         '--bg-art': '#f2eee2',
         '--blob-2': 'rgba(158,196,167,.55)', '--blob-3': 'rgba(223,205,189,.85)', '--blob-4': 'rgba(179,199,216,.4)',
@@ -1658,6 +1682,7 @@
         '--shadow-2': '0 2px 6px rgba(24,28,34,.06),0 22px 48px rgba(24,28,34,.09)',
         '--btn-line': 'rgba(24,28,34,.16)', '--btn-fail-bg': '#e8b4b0',
         '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#a8b0b8', '--band-arch': '#d3d8de',
+        '--warn': '#c4650a', '--warn-tile': '#f0ab4b', '--warn-pill': '#a85407', '--on-warn': '#fff8f0',
         /* 透玻璃背景板：冷灰蓝底，青/桃光团收敛、冷蓝加重 */
         '--bg-art': '#e9edf3',
         '--blob-2': 'rgba(158,196,167,.45)', '--blob-3': 'rgba(219,208,196,.7)', '--blob-4': 'rgba(179,199,216,.55)',
@@ -1679,6 +1704,7 @@
         '--shadow-2': '0 2px 6px rgba(23,32,26,.06),0 22px 48px rgba(23,32,26,.09)',
         '--btn-line': 'rgba(23,32,26,.16)', '--btn-fail-bg': '#e8b4b0',
         '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#a9b1a4', '--band-arch': '#d5dcd0',
+        '--warn': '#c4650a', '--warn-tile': '#f0ab4b', '--warn-pill': '#a85407', '--on-warn': '#fff8f0',
         /* 透玻璃背景板：青绿底，青光团加重、冷蓝收敛 */
         '--bg-art': '#e9efe5',
         '--blob-2': 'rgba(158,196,167,.6)', '--blob-3': 'rgba(223,205,189,.7)', '--blob-4': 'rgba(179,199,216,.35)',
@@ -1700,6 +1726,7 @@
         '--shadow-2': '0 2px 6px rgba(33,26,28,.06),0 22px 48px rgba(33,26,28,.09)',
         '--btn-line': 'rgba(33,26,28,.16)', '--btn-fail-bg': '#e8b4b0',
         '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#b3a9a4', '--band-arch': '#ddd2d0',
+        '--warn': '#c4650a', '--warn-tile': '#f0ab4b', '--warn-pill': '#a85407', '--on-warn': '#fff8f0',
         /* 透玻璃背景板：玫瑰灰底，桃光团转粉、青光收敛 */
         '--bg-art': '#f3e9ea',
         '--blob-2': 'rgba(158,196,167,.4)', '--blob-3': 'rgba(238,203,200,.8)', '--blob-4': 'rgba(179,199,216,.4)',
@@ -1721,6 +1748,7 @@
         '--shadow-2': '0 2px 6px rgba(30,27,38,.06),0 22px 48px rgba(30,27,38,.09)',
         '--btn-line': 'rgba(30,27,38,.16)', '--btn-fail-bg': '#e8b4b0',
         '--band-active': '#d98e32', '--band-cool': '#7d94a8', '--band-stale': '#aca7b5', '--band-arch': '#d8d6e0',
+        '--warn': '#c4650a', '--warn-tile': '#f0ab4b', '--warn-pill': '#a85407', '--on-warn': '#fff8f0',
         /* 透玻璃背景板：薰衣草灰底，顶部光团转紫 */
         '--bg-art': '#eceaf2',
         '--blob-2': 'rgba(158,196,167,.4)', '--blob-3': 'rgba(223,205,189,.6)', '--blob-4': 'rgba(190,183,220,.5)',
@@ -1742,6 +1770,8 @@
         '--shadow-2': '0 2px 6px rgba(0,0,0,.35),0 22px 48px rgba(0,0,0,.45)',
         '--btn-line': 'rgba(240,236,225,.18)', '--btn-fail-bg': '#7a3d3a',
         '--band-active': '#d98e32', '--band-cool': '#6b8296', '--band-stale': '#6f695b', '--band-arch': '#4a463e',
+        /* 警示语义色（issue #77）：深底卡片上亮琥珀；关注卡反浅，卡上图形用回深橙 */
+        '--warn': '#f0a53c', '--warn-tile': '#b25a08', '--warn-pill': '#f0a53c', '--on-warn': '#23180a',
         /* 透玻璃背景板：深棕黑底 + 低明度光团；卡片用深色玻璃，关注卡（浅色 tile）用浅色玻璃 */
         '--bg-art': '#16140f',
         '--blob-2': 'rgba(158,196,167,.25)', '--blob-3': 'rgba(223,205,189,.18)', '--blob-4': 'rgba(179,199,216,.22)',
@@ -1751,7 +1781,7 @@
         '--glass-tile-shadow': '0 24px 56px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.35)',
         '--glass-well': 'rgba(38,35,29,.5)',
         '--cell-empty': 'rgba(240,236,225,.08)', '--fade-rgb': '22,20,15',
-        '--tile-line': 'rgba(24,24,24,.1)', '--tile-ic': 'rgba(24,24,24,.3)',
+        '--tile-line': 'rgba(24,24,24,.1)',
         '--on-accent': '#1b1915',
       },
     },
@@ -1765,6 +1795,7 @@
         '--shadow-2': '0 2px 6px rgba(0,0,0,.35),0 22px 48px rgba(0,0,0,.45)',
         '--btn-line': 'rgba(233,237,243,.18)', '--btn-fail-bg': '#7a3d3a',
         '--band-active': '#d98e32', '--band-cool': '#6b8296', '--band-stale': '#5b6470', '--band-arch': '#414a56',
+        '--warn': '#f2ab4a', '--warn-tile': '#b25a08', '--warn-pill': '#f2ab4a', '--on-warn': '#231a0b',
         /* 透玻璃背景板：藏青黑底 + 低明度光团，冷蓝加重；关注卡（浅色 tile）用浅色玻璃 */
         '--bg-art': '#10141a',
         '--blob-2': 'rgba(158,196,167,.2)', '--blob-3': 'rgba(223,205,189,.12)', '--blob-4': 'rgba(120,160,220,.25)',
@@ -1774,7 +1805,7 @@
         '--glass-tile-shadow': '0 24px 56px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.35)',
         '--glass-well': 'rgba(30,36,46,.5)',
         '--cell-empty': 'rgba(233,237,243,.08)', '--fade-rgb': '16,20,26',
-        '--tile-line': 'rgba(24,24,24,.1)', '--tile-ic': 'rgba(24,24,24,.3)',
+        '--tile-line': 'rgba(24,24,24,.1)',
         '--on-accent': '#151a21',
       },
     },
@@ -1820,6 +1851,8 @@
     st.setProperty('--accent-hl', rgbaOf(accent, 0.55));
     st.setProperty('--accent-glow', rgbaOf(accent, 0.45));
     st.setProperty('--accent-ring', rgbaOf(accent, 0.25));
+    // 警示色派生（issue #77）：晕环跟随主题 --warn
+    st.setProperty('--warn-ring', rgbaOf(t.vars['--warn'] || '#c4650a', 0.25));
     // 右上光团跟随强调色；深色主题降低明度避免糊成一片
     st.setProperty('--blob-1', rgbaOf(accent, t.dimBlob ? 0.45 : 0.55));
   }

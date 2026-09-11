@@ -34,6 +34,15 @@
   --btn-hover-ink:var(--ink);
   --btn-fail-bg:#e8b4b0;
 
+  /* 警示语义色（issue #77）：独立于 accent，琥珀/橙系；accent 回归品牌与图钉。
+     --warn = 卡片底上的点/图形；--warn-tile = 深色关注卡（深色主题为浅色卡）上的点/图形；
+     --warn-pill/--on-warn = 警示 pill 底色/文字；--warn-ring 由 JS 按 --warn 派生 */
+  --warn:#c4650a;
+  --warn-tile:#f0ab4b;
+  --warn-pill:#a85407;
+  --on-warn:#fff8f0;
+  --warn-ring:rgba(196,101,10,.25);
+
   /* 分带识别色：行左缘色条，同一明度纪律（issue #16） */
   --band-hot:var(--accent);
   --band-active:#d98e32;
@@ -56,8 +65,7 @@
   --glass-well:rgba(253,252,248,.5);
   --cell-empty:rgba(24,24,24,.06); /* 热力图空格透出背景柔光 */
   --fade-rgb:242,238,226;          /* 顶栏过渡带的基底（与 --bg-art 同色） */
-  --tile-line:rgba(253,252,248,.12); /* 深色关注卡内的分隔线与图标圈（浅色 tile 主题在 app.js 覆写） */
-  --tile-ic:rgba(253,252,248,.35);
+  --tile-line:rgba(253,252,248,.12); /* 深色关注卡内的分隔线（浅色 tile 主题在 app.js 覆写） */
 }
 
 *{margin:0;padding:0;box-sizing:border-box}
@@ -286,6 +294,31 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 }
 .show-more:hover{border-color:var(--ink-3);color:var(--ink)}
 
+/* 警示图形符号（issue #77）：三类警示各自的纯 CSS 极简图形，颜色跟随所处表面
+   未提交超期 = 半实心圆；未推送 = 向上箭头；开放 PR = 分叉节点 */
+.wg{width:10px;height:10px;flex:none;display:block;color:var(--warn);position:relative}
+.wg-dirty::after{
+  content:"";position:absolute;inset:0;border-radius:50%;
+  border:1.3px solid currentColor;
+  background:linear-gradient(90deg,currentColor 52%,transparent 52%);
+}
+.wg-ahead::after{
+  content:"";position:absolute;left:2.2px;top:2.6px;width:5px;height:5px;
+  border-left:1.5px solid currentColor;border-top:1.5px solid currentColor;
+  transform:rotate(45deg);
+}
+.wg-pr{
+  background-image:
+    radial-gradient(circle at 28% 20%,currentColor 1.4px,transparent 1.5px),
+    radial-gradient(circle at 72% 20%,currentColor 1.4px,transparent 1.5px),
+    radial-gradient(circle at 50% 82%,currentColor 1.4px,transparent 1.5px);
+}
+.wg-pr::before,.wg-pr::after{
+  content:"";position:absolute;top:2.5px;width:1.2px;height:5.5px;background:currentColor;
+}
+.wg-pr::before{left:3px;transform:rotate(30deg);transform-origin:top center}
+.wg-pr::after{right:3px;transform:rotate(-30deg);transform-origin:top center}
+
 /* 需要关注：右栏固定位黑卡，视觉权重最高（issue #15，铃铛已退役） */
 .attn-card{
   background:var(--glass-tile);color:var(--tile-ink);
@@ -303,13 +336,15 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 }
 .attn-item .ic{
   width:18px;height:18px;flex:none;border-radius:50%;
-  border:1px solid var(--tile-ic);
+  border:1px solid color-mix(in srgb,var(--warn-tile) 55%,transparent);
   display:flex;align-items:center;justify-content:center;
 }
-.attn-item .ic::after{content:"";width:5px;height:5px;border-radius:50%;background:var(--tile-ink)}
+.attn-item .ic .wg{color:var(--warn-tile)}
 .attn-item .nm{font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .attn-item .ds{flex:1;font-size:11px;color:var(--tile-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.attn-item .mk{width:8px;height:8px;flex:none;border-radius:50%;background:var(--accent)}
+.attn-item .mk{width:8px;height:8px;flex:none;border-radius:50%;background:var(--warn-tile)}
+.attn-item:hover .ic{box-shadow:0 0 0 3px var(--warn-ring)}
+.attn-item:hover .nm{text-decoration:underline}
 
 /* 工作台：AI 工具快捷启动（issue #15，logo 徽章属 #21，本轮文字按钮） */
 .tools-card{position:relative}
@@ -432,11 +467,8 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 }
 .row .r-sub.empty{color:var(--ink-3)}
 .row .r-right{display:flex;align-items:center;gap:14px;flex:none}
-.r-warn{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-2)}
-.r-warn i{
-  width:8px;height:8px;border-radius:50%;background:var(--accent);
-  box-shadow:0 0 0 2px var(--accent-ring);
-}
+.r-warn{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--warn)}
+.r-warn .wg{width:9px;height:9px}
 .r-upd{font-size:11.5px;color:var(--ink-3);white-space:nowrap;min-width:76px;text-align:right}
 .r-pin{
   border:0;background:transparent;cursor:pointer;
@@ -593,21 +625,22 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 }
 .mheat .cell.l2 .d,.mheat .cell.l3 .d{color:var(--on-accent)}
 
-/* 警示 pill（详情面板内全文案 + 消音 ×，issue #17） */
+/* 警示 pill（详情面板内全文案 + 类型图形 + 消音 ×，issue #17/#77） */
 .warns{display:flex;flex-wrap:wrap;gap:8px}
 .warn{
   display:inline-flex;align-items:center;gap:7px;
-  background:var(--accent);color:var(--on-accent);
+  background:var(--warn-pill);color:var(--on-warn);
   border-radius:var(--r-pill);padding:4px 12px;
   font-size:11.5px;font-weight:600;
 }
+.warn .wg{width:9px;height:9px;color:var(--on-warn)}
 .warn .x{
   width:14px;height:14px;border:0;border-radius:50%;
-  background:rgba(24,24,24,.15);color:var(--on-accent);cursor:pointer;
+  background:rgba(24,24,24,.18);color:var(--on-warn);cursor:pointer;
   font-size:10px;line-height:1;display:inline-flex;align-items:center;justify-content:center;
   padding:0;font-family:inherit;
 }
-.warn .x:hover{background:var(--ink);color:var(--accent)}
+.warn .x:hover{background:rgba(24,24,24,.34)}
 
 /* 未提交文件：默认收起，点击摘要行展开为列表（issue #3） */
 .dirty-toggle{
