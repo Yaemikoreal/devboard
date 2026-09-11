@@ -9,7 +9,10 @@ const { Store } = require('../src/main/store');
 const { registerIpc } = require('../src/main/ipc');
 
 const MOCK = process.env.DEVBOARD_MOCK === '1';
-const OUT = path.join(__dirname, '..', MOCK ? 'screenshot-mock.png' : 'screenshot.png');
+// DEVBOARD_SHOT_OUT：自定义输出路径（官网素材批量出图用）；缺省维持仓库根目录固定名
+const OUT = process.env.DEVBOARD_SHOT_OUT
+  ? path.resolve(process.env.DEVBOARD_SHOT_OUT)
+  : path.join(__dirname, '..', MOCK ? 'screenshot-mock.png' : 'screenshot.png');
 let win = null;
 let captured = false;
 
@@ -39,12 +42,15 @@ app.whenReady().then(() => {
       roots: ['E:\\myproject'], extraPaths: [], blacklist: ['node_modules'],
       githubToken: '', hasGithubToken: true, githubUsername: 'me', editorCmd: 'code', terminalCmd: '',
       hotkey: 'Ctrl+Shift+D', autoStart: true, aiTools: [], aiEnabled: true, aiEngine: 'kimi',
+      // DEVBOARD_MOCK_THEME=warm|mist|meadow|dark：指定整体主题出图（缺省暖阳，强调色取主题默认）
+      theme: { id: process.env.DEVBOARD_MOCK_THEME || 'warm' },
     }));
     ipcMain.handle('settings:set', () => ({}));
     ipcMain.handle('settings:hotkeyError', () => '');
     ipcMain.handle('prefs:get', () => ({
       pinned: ['E:\\myproject\\wyy2qqmusic'], cardOrder: [], sortMode: 'manual',
       snoozes: {}, branchSel: {}, windowBounds: null,
+      onboarded: true, // 避免首启自动打开设置页挡住主视图（设置页截图走 DEVBOARD_SHOT_SETTINGS=1）
     }));
     ipcMain.handle('prefs:set', () => ({}));
     ipcMain.handle('snooze:set', () => true);

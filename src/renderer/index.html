@@ -156,6 +156,7 @@
         <div class="sn-subs" data-pane="appearance">
           <button type="button" data-target="grp-theme">主题</button>
           <button type="button" data-target="grp-accent">强调色</button>
+          <button type="button" data-target="grp-density">密度</button>
         </div>
         <button class="sn-item" data-pane="aitools" type="button">
           <svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M7.5 2 8.9 6.1 13 7.5 8.9 8.9 7.5 13 6.1 8.9 2 7.5l4.1-1.4z"/></svg>
@@ -271,6 +272,17 @@
               </div>
               <div class="inline-check">
                 <button id="themeReset" type="button">恢复默认</button>
+              </div>
+            </div>
+            <!-- 密度档位（issue #84）：行高/卡片内边距/热力图格距整套缩放 -->
+            <div class="set-group" id="grp-density">
+              <h3>密度</h3>
+              <div class="group-desc">行高、卡片内边距与热力图格距整套缩放；紧凑档下列表一屏行数明显更多</div>
+              <div class="field">
+                <div class="seg" id="densitySeg">
+                  <button type="button" data-density="standard">标准</button>
+                  <button type="button" data-density="compact">紧凑</button>
+                </div>
               </div>
             </div>
           </div>

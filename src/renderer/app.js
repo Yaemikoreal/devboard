@@ -2002,6 +2002,29 @@
   });
   fNotifyEnabled.addEventListener('change', function () { renderNotifyMode(notifyModeValue()); });
 
+  /* ----- 密度档位（issue #84）：标准/紧凑两档分段，改动即生效并随自动保存落盘 ----- */
+  var DENSITIES = ['standard', 'compact'];
+  var densitySeg = document.getElementById('densitySeg');
+  function applyDensity(d) {
+    document.body.dataset.density = DENSITIES.indexOf(d) >= 0 ? d : 'standard';
+  }
+  function renderDensity(d) {
+    Array.prototype.forEach.call(densitySeg.querySelectorAll('button'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-density') === d);
+    });
+  }
+  function densityValue() {
+    var b = densitySeg.querySelector('button.active');
+    return b ? b.getAttribute('data-density') : 'standard';
+  }
+  densitySeg.addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    renderDensity(b.getAttribute('data-density'));
+    applyDensity(b.getAttribute('data-density'));
+    scheduleSave();
+  });
+
   /* ----- 提示词模板自定义（issue #78）：编辑单位 = 模板 + {{事实}} 插入点 ----- */
   // 默认模板由主进程随 settings:get 下发（aiPromptDefaults）；文本域预填当前生效模板（自定义值或默认）
   function aiPromptDefaults() {
@@ -2409,6 +2432,8 @@
       fNotifyEnabled.checked = cfg.notifyEnabled !== false; // 警示摘要通知（issue #80）；先置开关再渲染时机分段（禁用态依赖它）
       renderNotifyMode(NOTIFY_MODES.indexOf(cfg.notifyMode) >= 0 ? cfg.notifyMode : 'daily');
       fTrayCount.checked = cfg.trayAttentionCount !== false; // 托盘计数显隐（issue #80）
+      renderDensity(cfg.density === 'compact' ? 'compact' : 'standard'); // 密度档位（issue #84）
+      applyDensity(cfg.density);
       fAiEnabled.checked = cfg.aiEnabled !== false; // AI 功能总开关（issue #29）
       fillPromptTemplates(cfg); // 提示词模板（issue #78）：预填自定义值或内置默认
       loadAiTools().then(function () { renderAiEngineSelect(cfg); });
@@ -2489,6 +2514,7 @@
       notifyEnabled: fNotifyEnabled.checked, // 通知（issue #80）：主进程读配置即时生效，无需重拉板数据
       notifyMode: notifyModeValue(),
       trayAttentionCount: fTrayCount.checked,
+      density: densityValue(), // 密度档位（issue #84）：渲染层即时生效，此处随自动保存落盘
       aiEnabled: fAiEnabled.checked, // AI 功能开关（issue #29）
       aiEngine: fAiEngine.disabled ? '' : fAiEngine.value,
       aiPromptWeekly: promptDraftOf(fPromptWeekly, aiPromptDefaults().weekly), // 提示词模板（issue #78）：与默认一致存 null
@@ -2914,6 +2940,7 @@
     themeId = th.id;
     themeAccent = th.accent;
     applyTheme(th.id, th.accent);
+    applyDensity(cfg.density); // 密度档位（issue #84）
   });
   api.getPrefs().then(function (p) {
     state.prefs = p;
