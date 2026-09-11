@@ -11,7 +11,7 @@ npm install       # 安装依赖（electron，约 100MB）
 npm start         # 启动应用：托盘常驻，Ctrl+Shift+D 唤出/隐藏
 npm run test:scan # 不起界面，直接跑项目扫描并打印 JSON，用于验证
 npm run shot      # 隐藏窗口渲染真实数据后截图到 screenshot.png
-npm run logo      # 从 assets/logo/draft-a.svg 重新渲染全尺寸图标（PNG/ICO）
+npm run logo      # 从 assets/logo/draft-d.svg（托盘用简化稿 draft-d-tray.svg）重新渲染全尺寸图标（PNG/ICO/官网 icon）
 ```
 
 唤出窗口时主动重扫一次；后台每 20 分钟静默刷新。扫描全异步：扫描期间面板保持可交互，顶栏显示「扫描中…」；本地扫描缓存先展出，后台重扫补丁到达后整板替换渲染并熄灭扫描指示。

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 方向 D（定稿，issue #89）：按 前端设计参考/logo2.png 实测复原。奶油底板带外边距（外圈透明），
+       3x3 圆角方格点阵，对角两格为明黄「信号格」。几何（1024 画布）：底板 763@131,131 rx126；
+       格阵 522 居中，格 150、间距 36、格 rx31。取色自 logo2 采样。 -->
+  <rect x="130.5" y="130.5" width="763" height="763" rx="126" fill="#f3eee2"/>
+  <rect x="251" y="251" width="150" height="150" rx="31" fill="#322b23"/>
+  <rect x="437" y="251" width="150" height="150" rx="31" fill="#322b23"/>
+  <rect x="623" y="251" width="150" height="150" rx="31" fill="#f5d00b"/>
+  <rect x="251" y="437" width="150" height="150" rx="31" fill="#322b23"/>
+  <rect x="437" y="437" width="150" height="150" rx="31" fill="#322b23"/>
+  <rect x="623" y="437" width="150" height="150" rx="31" fill="#322b23"/>
+  <rect x="251" y="623" width="150" height="150" rx="31" fill="#f5d00b"/>
+  <rect x="437" y="623" width="150" height="150" rx="31" fill="#322b23"/>
+  <rect x="623" y="623" width="150" height="150" rx="31" fill="#322b23"/>
+</svg>

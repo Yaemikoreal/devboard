@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 托盘简化稿（issue #89）：去奶油底板、只留 3x3 格阵，满幅排布保 16px 可辨。
+       深色任务栏用 paper-cream 格变体（管线内生成），浅色任务栏可用本墨格版（tray-light-*）。 -->
+  <rect x="65" y="65" width="258" height="258" rx="53" fill="#322b23"/>
+  <rect x="383" y="65" width="258" height="258" rx="53" fill="#322b23"/>
+  <rect x="701" y="65" width="258" height="258" rx="53" fill="#f5d00b"/>
+  <rect x="65" y="383" width="258" height="258" rx="53" fill="#322b23"/>
+  <rect x="383" y="383" width="258" height="258" rx="53" fill="#322b23"/>
+  <rect x="701" y="383" width="258" height="258" rx="53" fill="#322b23"/>
+  <rect x="65" y="701" width="258" height="258" rx="53" fill="#f5d00b"/>
+  <rect x="383" y="701" width="258" height="258" rx="53" fill="#322b23"/>
+  <rect x="701" y="701" width="258" height="258" rx="53" fill="#322b23"/>
+</svg>

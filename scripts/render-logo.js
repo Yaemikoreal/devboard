@@ -1,5 +1,6 @@
-// Logo 全尺寸渲染（issue #10）：用 Electron offscreen 窗口加载定稿 SVG（方向 A），
-// capturePage 出 1024 母版后 nativeImage.resize 到各目标尺寸；ICO 用纯 Node 容器封装 PNG payload。
+// Logo 全尺寸渲染（issue #10；#89 切换为方向 D，按 前端设计参考/logo2.png 复原）：
+// 用 Electron offscreen 窗口加载定稿 SVG，capturePage 出 1024 母版后 nativeImage.resize 到各目标尺寸；
+// ICO 用纯 Node 容器封装 PNG payload。托盘用简化稿 draft-d-tray.svg（去底板、格阵满幅）。
 // 用法：npm run logo（electron scripts/render-logo.js）
 'use strict';
 
@@ -10,13 +11,12 @@ const { app, BrowserWindow, nativeImage } = require('electron');
 const ROOT = path.join(__dirname, '..');
 const LOGO_DIR = path.join(ROOT, 'assets', 'logo');
 const BUILD_DIR = path.join(ROOT, 'build');
-const SRC = fs.readFileSync(path.join(LOGO_DIR, 'draft-a.svg'), 'utf8');
+const SITE_ICON = path.join(ROOT, 'site', 'assets', 'icon.png');
+const SRC = fs.readFileSync(path.join(LOGO_DIR, 'draft-d.svg'), 'utf8');
+const SRC_TRAY = fs.readFileSync(path.join(LOGO_DIR, 'draft-d-tray.svg'), 'utf8');
 
-// 墨底纸纹变体（托盘用，深色任务栏可辨）：纸底 <-> 墨黑互换，明黄信号格保持不变
-const SRC_DARK = SRC
-  .split('#f5f2e8').join('#__PAPER__')
-  .split('#322e27').join('#f5f2e8')
-  .split('#__PAPER__').join('#322e27');
+// 托盘深色任务栏变体：墨格 -> 纸奶油格（深色任务栏可辨），明黄信号格保持不变
+const SRC_TRAY_DARK = SRC_TRAY.split('#322b23').join('#f3eee2');
 
 function pageUrl(svg) {
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(
@@ -80,15 +80,19 @@ app.whenReady().then(async () => {
 
   try {
     const paper = await renderMaster(win, SRC);
-    const dark = await renderMaster(win, SRC_DARK);
+    const trayDark = await renderMaster(win, SRC_TRAY_DARK);
+    const trayLight = await renderMaster(win, SRC_TRAY);
 
-    // 窗口 / 任务栏 / README：纸底深纹版
+    // 窗口 / 任务栏 / README：带奶油底板的定稿版
     for (const s of [16, 24, 32, 256]) {
       saveResized(paper, s, path.join(LOGO_DIR, `icon-${s}.png`));
     }
-    // 托盘：墨底纸纹版
+    // 官网 favicon（site/assets/icon.png）
+    saveResized(paper, 256, SITE_ICON);
+    // 托盘：纸奶油格版（深色任务栏，默认）；墨格版（浅色任务栏备选）
     for (const s of [16, 24, 32]) {
-      saveResized(dark, s, path.join(LOGO_DIR, `tray-${s}.png`));
+      saveResized(trayDark, s, path.join(LOGO_DIR, `tray-${s}.png`));
+      saveResized(trayLight, s, path.join(LOGO_DIR, `tray-light-${s}.png`));
     }
     // 安装包 ICO：16/32/48/256 多尺寸
     const icoEntries = [16, 32, 48, 256].map((s) => ({
