@@ -1936,6 +1936,7 @@
   var fWarnDirty = document.getElementById('fWarnDirty');
   var fWarnUnpushed = document.getElementById('fWarnUnpushed');
   var fWarnPr = document.getElementById('fWarnPr');
+  var fReduceMotion = document.getElementById('fReduceMotion'); // 降低动效（issue #82）
   var fNotifyEnabled = document.getElementById('fNotifyEnabled');
   var notifyModeSeg = document.getElementById('notifyModeSeg');
   var fTrayCount = document.getElementById('fTrayCount');
@@ -2024,6 +2025,15 @@
     applyDensity(b.getAttribute('data-density'));
     scheduleSave();
   });
+
+  /* ----- 降低动效（issue #82）：手动开关与系统偏好任一命中即停动效、玻璃退化为实底 ----- */
+  var motionMq = window.matchMedia('(prefers-reduced-motion: reduce)');
+  function applyMotion() {
+    document.body.dataset.motion = (fReduceMotion.checked || motionMq.matches) ? 'reduced' : '';
+  }
+  fReduceMotion.addEventListener('change', function () { applyMotion(); }); // 落盘走设置页委托 change
+  if (motionMq.addEventListener) motionMq.addEventListener('change', applyMotion);
+  else if (motionMq.addListener) motionMq.addListener(applyMotion); // 旧内核兜底
 
   /* ----- 提示词模板自定义（issue #78）：编辑单位 = 模板 + {{事实}} 插入点 ----- */
   // 默认模板由主进程随 settings:get 下发（aiPromptDefaults）；文本域预填当前生效模板（自定义值或默认）
@@ -2434,6 +2444,8 @@
       fTrayCount.checked = cfg.trayAttentionCount !== false; // 托盘计数显隐（issue #80）
       renderDensity(cfg.density === 'compact' ? 'compact' : 'standard'); // 密度档位（issue #84）
       applyDensity(cfg.density);
+      fReduceMotion.checked = !!cfg.reduceMotion; // 降低动效（issue #82）：先置开关再按「开关∪系统偏好」落 body 态
+      applyMotion();
       fAiEnabled.checked = cfg.aiEnabled !== false; // AI 功能总开关（issue #29）
       fillPromptTemplates(cfg); // 提示词模板（issue #78）：预填自定义值或内置默认
       loadAiTools().then(function () { renderAiEngineSelect(cfg); });
@@ -2515,6 +2527,7 @@
       notifyMode: notifyModeValue(),
       trayAttentionCount: fTrayCount.checked,
       density: densityValue(), // 密度档位（issue #84）：渲染层即时生效，此处随自动保存落盘
+      reduceMotion: fReduceMotion.checked, // 降低动效（issue #82）：同上，渲染层即时生效
       aiEnabled: fAiEnabled.checked, // AI 功能开关（issue #29）
       aiEngine: fAiEngine.disabled ? '' : fAiEngine.value,
       aiPromptWeekly: promptDraftOf(fPromptWeekly, aiPromptDefaults().weekly), // 提示词模板（issue #78）：与默认一致存 null
@@ -2941,6 +2954,8 @@
     themeAccent = th.accent;
     applyTheme(th.id, th.accent);
     applyDensity(cfg.density); // 密度档位（issue #84）
+    fReduceMotion.checked = !!cfg.reduceMotion; // 降低动效（issue #82）：开关∪系统偏好
+    applyMotion();
   });
   api.getPrefs().then(function (p) {
     state.prefs = p;

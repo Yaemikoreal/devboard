@@ -649,12 +649,8 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 }
 .outline-pill.nc{margin-left:2px}
 
-/* 全年热力图：正方形格、3 级单色黄渐深（总览全局 / 详情面板单项目共用） */
+/* 全年热力图：正方形格、3 级单色黄渐深（总览全局 / 详情面板单项目共用；容器类 gheat/p-heat/mheat） */
 .heat{margin-top:10px}
-.heat-grid{
-  display:grid;grid-template-rows:repeat(7, auto);
-  grid-auto-flow:column;grid-auto-columns:1fr;gap:var(--heat-gap);width:100%;
-}
 .cell{border-radius:20%;background:var(--cell-empty);aspect-ratio:1;display:block}
 .cell.blank{visibility:hidden}
 .cell.l1{background:var(--accent-soft)}
@@ -1148,6 +1144,21 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{transition:none !important;animation:none !important}
+}
+/* 手动「降低动效」开关（issue #82）：与系统偏好等效——动效全停 */
+body[data-motion=reduced] *,body[data-motion=reduced] *::before,body[data-motion=reduced] *::after{transition:none !important;animation:none !important}
+/* 玻璃退化（issue #82）：降低动效时半透明模糊表面换不透明实底，渲染与滚动更轻 */
+body[data-motion=reduced] .ov-card,body[data-motion=reduced] .rows,
+body[data-motion=reduced] .panel-in,body[data-motion=reduced] .settings-card,
+body[data-motion=reduced] .skel,body[data-motion=reduced] .nav,
+body[data-motion=reduced] .search,body[data-motion=reduced] .chips,
+body[data-motion=reduced] .icon-btn{
+  background:var(--card);-webkit-backdrop-filter:none;backdrop-filter:none;
+  border-color:var(--line);box-shadow:var(--shadow-1);
+}
+body[data-motion=reduced] .attn-card{
+  background:var(--tile);-webkit-backdrop-filter:none;backdrop-filter:none;
+  border-color:var(--tile);box-shadow:var(--shadow-1);
 }
 
 /* ---------- AI 功能（issue #29）：周报/建议结果区、生成按钮、筛选 chip ---------- */
