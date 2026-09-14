@@ -357,6 +357,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
     scanAndCache()
       .then(({ projects, config, settled, gen }) => {
         const { board, stale } = assembleBoard(projects, config, false);
+        board.scanGeneration = gen; // 渲染层据此丢弃旧代次/重演补丁（issue #112）
         maybeRefreshGithub(false, stale, projects, config);
         sendPatch(board);
         // 有降级条目时，等迟到的真实扫描全部落地后再推一次最终补丁
@@ -366,6 +367,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
             const cur = store.getScanCache();
             const finalProjects = projects.map((p) => (p.degraded && cur.projects[p.path]) || p);
             const { board: finalBoard } = assembleBoard(finalProjects, config, false);
+            finalBoard.scanGeneration = gen;
             sendPatch(finalBoard);
           });
         }
@@ -413,22 +415,29 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
   }
 
   // board:get：有磁盘缓存则陈旧数据先出 + 后台重扫补丁更新（issue #22）；无缓存走全量
+  let cachedBoardInFlight = null; // 缓存路径拼板在飞（issue #105）：唤出 tick 与 maybeNotify 并发触发时共享同一结果，不再重复拼板
   async function buildBoard(forceGithubRefresh) {
     healGithubUsername(store.getConfig()); // 见函数注释：token 在而 username 空的历史安装自愈（issue #44）
     if (!forceGithubRefresh) {
       const cache = store.getScanCache();
       const cachedProjects = Object.values(cache.projects);
       if (cachedProjects.length > 0) {
-        const config = store.getConfig();
-        const { board, stale } = assembleBoard(cachedProjects, config, true);
-        // GitHub 拉取与重扫并行：不再等全量扫描结束才开始取数（详情页「同步中」停留过久，issue #46）
-        maybeRefreshGithub(false, stale, cachedProjects, config);
-        rescanInBackground();
-        return board;
+        if (cachedBoardInFlight) return cachedBoardInFlight;
+        cachedBoardInFlight = Promise.resolve().then(() => {
+          const config = store.getConfig();
+          const { board, stale } = assembleBoard(cachedProjects, config, true);
+          // GitHub 拉取与重扫并行：不再等全量扫描结束才开始取数（详情页「同步中」停留过久，issue #46）
+          maybeRefreshGithub(false, stale, cachedProjects, config);
+          rescanInBackground();
+          board.scanGeneration = scanGeneration; // 渲染层据此丢弃旧代次补丁（issue #112）
+          return board;
+        }).finally(() => { cachedBoardInFlight = null; });
+        return cachedBoardInFlight;
       }
     }
-    const { projects, config } = await scanAndCache();
+    const { projects, config, gen } = await scanAndCache();
     const { board, stale } = assembleBoard(projects, config, false);
+    board.scanGeneration = gen;
     maybeRefreshGithub(forceGithubRefresh, stale, projects, config);
     return board;
   }

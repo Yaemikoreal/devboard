@@ -1192,6 +1192,8 @@ body[data-motion=reduced] .attn-card{
   background:var(--tile);-webkit-backdrop-filter:none;backdrop-filter:none;
   border-color:var(--tile);box-shadow:var(--shadow-1);
 }
+/* 玻璃退化补充（issue #111）：嵌套小卡片的半透明底（--glass-well）换实底 */
+body[data-motion=reduced] .set-group,body[data-motion=reduced] .ai-box{background:var(--card)}
 
 /* ---------- AI 功能（issue #29）：周报/建议结果区、生成按钮、筛选 chip ---------- */
 /* 卡片标题行：活动流 / AI 周报独立卡（issue #32）共用 */

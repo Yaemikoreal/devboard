@@ -36,6 +36,7 @@
     loading: false,
     loadPromise: null, // 在飞 load 的 Promise：去重时复用，refresh spinner 不提前熄灭
     awaitPatch: false,
+    boardGen: 0, // 当前板的扫描代次：过期补丁丢弃依据（issue #112）
     branchSel: {}, // path -> 选中分支名（issue #4，持久化在 prefs.branchSel）
     branchDetail: {}, // path + ' ' + branch -> { lastCommitAt, commits } | 'loading'
     suggestIdx: -1, // 搜索补全键盘选中项（issue #6）
@@ -569,14 +570,21 @@
     }
     heatTip.textContent = c.dataset.tip;
     heatTip.style.opacity = 1;
-    // 气泡 fixed 定位跟随格子；贴窗口左右缘时钳制内收（面板滚动经 scroll 捕获隐藏）
-    var r = c.getBoundingClientRect();
-    var cx = r.left + r.width / 2;
-    var half = heatTip.offsetWidth / 2 + 8;
-    if (cx + half > window.innerWidth) cx = window.innerWidth - half;
-    else if (cx < half) cx = half;
-    heatTip.style.left = cx + 'px';
-    heatTip.style.top = (r.top - 8) + 'px';
+    // 宽度读取延迟两帧（issue #104）：写内容后立即读 offsetWidth 会强制同步布局；
+    // 双 rAF 让本帧布局先落地再读（免强制）。定位晚一帧（~16ms）无感
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        if (!c.isConnected) return;
+        // 气泡 fixed 定位跟随格子；贴窗口左右缘时钳制内收（面板滚动经 scroll 捕获隐藏）
+        var r = c.getBoundingClientRect();
+        var cx = r.left + r.width / 2;
+        var half = heatTip.offsetWidth / 2 + 8;
+        if (cx + half > window.innerWidth) cx = window.innerWidth - half;
+        else if (cx < half) cx = half;
+        heatTip.style.left = cx + 'px';
+        heatTip.style.top = (r.top - 8) + 'px';
+      });
+    });
   });
   document.addEventListener('mouseleave', function () { heatTip.style.opacity = 0; }, true);
   document.addEventListener('scroll', function () { heatTip.style.opacity = 0; }, true);
@@ -1739,6 +1747,7 @@
     var p = promise.then(function (board) {
       invalidateDetailCaches(board);
       state.board = board;
+      if (board && typeof board.scanGeneration === 'number') state.boardGen = board.scanGeneration;
       renderAll();
       console.log('[devboard] rendered'); // 供 scripts/screenshot.js 等待
       // 缓存先出（issue #22）：陈旧数据已渲染，扫描指示保持，等后台重扫补丁到达再熄灭
@@ -1760,6 +1769,12 @@
   // 增量形态（issue #94）：watcher 推 {project, stats, attention}，只就地替换该项目与全局聚合
   api.onBoardPatch(function (patch) {
     if (state.loading) return;
+    if (patch && typeof patch.scanGeneration === 'number' && state.board) {
+      // 过期补丁丢弃（issue #112）：手动刷新落地后，旧代次的迟到补丁不再盖回旧数据
+      if (patch.scanGeneration < state.boardGen) return;
+      // 同代次整板补丁且不在等补丁：同一次扫描的重演，跳过重复渲染
+      if (patch.scanGeneration === state.boardGen && !patch.project && !state.awaitPatch) return;
+    }
     state.awaitPatch = false;
     if (patch && patch.project) {
       if (!state.board) return; // 增量早于首板到达：丢弃，首板随即覆盖
@@ -1777,6 +1792,7 @@
     } else if (patch && patch.projects) {
       invalidateDetailCaches(patch);
       state.board = patch;
+      if (typeof patch.scanGeneration === 'number') state.boardGen = patch.scanGeneration;
     }
     renderAll();
     setScanning(false);
@@ -2199,7 +2215,8 @@
     var sub = e.target.closest('.sn-subs button');
     if (sub) {
       var target = document.getElementById(sub.dataset.target);
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // 降低动效时平滑滚动一并停（issue #111）
+      if (target) target.scrollIntoView({ behavior: document.body.dataset.motion === 'reduced' ? 'auto' : 'smooth', block: 'start' });
       return;
     }
     var btn = e.target.closest('.sn-item');
