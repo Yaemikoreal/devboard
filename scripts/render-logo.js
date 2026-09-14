@@ -1,6 +1,9 @@
 // Logo 全尺寸渲染（issue #10；#89 切换为方向 D，按 前端设计参考/logo2.png 复原）：
-// 用 Electron offscreen 窗口加载定稿 SVG，capturePage 出 1024 母版后 nativeImage.resize 到各目标尺寸；
-// ICO 用纯 Node 容器封装 PNG payload。托盘用简化稿 draft-d-tray.svg（去底板、格阵满幅）。
+// 用 Electron offscreen 窗口加载定稿 SVG，capturePage 出正方形母版后 nativeImage.resize 到各目标尺寸；
+// ICO 用纯 Node 容器封装 PNG payload。托盘定稿主版统一（issue #113 讨论结论）：
+// 托盘与 exe/任务栏图标同用带奶油底板的 logo2 样式，draft-d-tray 深浅变体退役（SVG 源留档）。
+// 窗口只承担「等比画布」角色：512 逻辑尺寸任何屏幕工作区都容纳，SVG 以 100% 尺寸填满窗口，
+// 母版恒为正方形（#113：原 1024 固定窗口在 150% 缩放屏被工作区钳成长方形，resize 非等比拉伸致产物变形）。
 // 用法：npm run logo（electron scripts/render-logo.js）
 'use strict';
 
@@ -13,23 +16,40 @@ const LOGO_DIR = path.join(ROOT, 'assets', 'logo');
 const BUILD_DIR = path.join(ROOT, 'build');
 const SITE_ICON = path.join(ROOT, 'site', 'assets', 'icon.png');
 const SRC = fs.readFileSync(path.join(LOGO_DIR, 'draft-d.svg'), 'utf8');
-const SRC_TRAY = fs.readFileSync(path.join(LOGO_DIR, 'draft-d-tray.svg'), 'utf8');
-
-// 托盘深色任务栏变体：墨格 -> 纸奶油格（深色任务栏可辨），明黄信号格保持不变
-const SRC_TRAY_DARK = SRC_TRAY.split('#322b23').join('#f3eee2');
+const RENDER_SIZE = 512; // 母版边长（逻辑像素）：256 产物的两倍超采样，远小于最低配工作区
 
 function pageUrl(svg) {
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(
     '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' +
     'html,body{margin:0;padding:0;background:transparent}' +
-    'svg{display:block;width:1024px;height:1024px}' +
+    'svg{display:block;width:100vw;height:100vh}' +
     '</style></head><body>' + svg + '</body></html>');
 }
 
-async function renderMaster(win, svg) {
-  await win.loadURL(pageUrl(svg));
-  await new Promise((r) => setTimeout(r, 400)); // 等渲染稳定
-  return win.webContents.capturePage();
+async function renderMaster(svg) {
+  // 独立窗口逐次创建销毁（#113）：复用窗口连续 loadURL 曾竞态失败，capturePage 捕到上一页内容
+  const win = new BrowserWindow({
+    width: RENDER_SIZE,
+    height: RENDER_SIZE,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    webPreferences: { offscreen: true },
+  });
+  try {
+    await win.loadURL(pageUrl(svg));
+    await new Promise((r) => setTimeout(r, 400)); // 等渲染稳定
+    const img = await win.webContents.capturePage();
+    // fail-fast（#113）：母版非正方形 = 窗口被屏幕工作区钳制，resize 会非等比拉伸，宁失败不产出变形图
+    const s = img.getSize();
+    if (s.width !== s.height) {
+      throw new Error(`母版非正方形 ${s.width}x${s.height}（渲染窗口被屏幕工作区钳制），终止产出`);
+    }
+    return img;
+  } finally {
+    win.destroy();
+  }
 }
 
 function saveResized(master, size, file) {
@@ -68,32 +88,18 @@ app.whenReady().then(async () => {
   fs.mkdirSync(LOGO_DIR, { recursive: true });
   fs.mkdirSync(BUILD_DIR, { recursive: true });
 
-  const win = new BrowserWindow({
-    width: 1024,
-    height: 1024,
-    show: false,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    webPreferences: { offscreen: true },
-  });
-
   try {
-    const paper = await renderMaster(win, SRC);
-    const trayDark = await renderMaster(win, SRC_TRAY_DARK);
-    const trayLight = await renderMaster(win, SRC_TRAY);
+    const paper = await renderMaster(SRC);
 
-    // 窗口 / 任务栏 / README：带奶油底板的定稿版
+    // 窗口 / 任务栏 / 托盘 / README（#113 主版统一）：带奶油底板的定稿版
     for (const s of [16, 24, 32, 256]) {
       saveResized(paper, s, path.join(LOGO_DIR, `icon-${s}.png`));
     }
+    for (const s of [16, 24, 32]) {
+      saveResized(paper, s, path.join(LOGO_DIR, `tray-${s}.png`));
+    }
     // 官网 favicon（site/assets/icon.png）
     saveResized(paper, 256, SITE_ICON);
-    // 托盘：纸奶油格版（深色任务栏，默认）；墨格版（浅色任务栏备选）
-    for (const s of [16, 24, 32]) {
-      saveResized(trayDark, s, path.join(LOGO_DIR, `tray-${s}.png`));
-      saveResized(trayLight, s, path.join(LOGO_DIR, `tray-light-${s}.png`));
-    }
     // 安装包 ICO：16/32/48/256 多尺寸
     const icoEntries = [16, 32, 48, 256].map((s) => ({
       size: s,
@@ -103,7 +109,7 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(BUILD_DIR, 'icon.ico'), ico);
     console.log(`[logo] build/icon.ico (${ico.length}B, sizes: ${icoEntries.map((e) => e.size).join('/')})`);
 
-    // 验收 4：确认 nativeImage 能从文件加载托盘图标且非空
+    // 验收：确认 nativeImage 能从文件加载托盘图标且非空
     const trayImg = nativeImage.createFromPath(path.join(LOGO_DIR, 'tray-32.png'));
     console.log(`[logo] tray-32.png nativeImage.isEmpty() = ${trayImg.isEmpty()}, size = ${JSON.stringify(trayImg.getSize())}`);
     if (trayImg.isEmpty()) {
