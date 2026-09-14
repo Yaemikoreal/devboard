@@ -112,7 +112,7 @@ npm run shot       # 隐藏窗口渲染真实数据后截图到 screenshot.png
 npm run logo       # 从 assets/logo/draft-d.svg 重渲全套图标（托盘用简化稿 draft-d-tray.svg）
 ```
 
-领域语言与边界见 [CONTEXT.md](CONTEXT.md)，架构决策见 [docs/adr/](docs/adr/)，官网源码在 [site/](site/)。
+领域语言与边界见 [CONTEXT.md](CONTEXT.md)，官网源码在 [site/](site/)。
 
 ## 已知取舍
 
@@ -195,7 +195,7 @@ npm run shot       # render real data in a hidden window and screenshot to scree
 npm run logo       # re-render the full icon set from assets/logo/draft-d.svg
 ```
 
-Domain language and boundaries live in [CONTEXT.md](CONTEXT.md), architecture decisions in [docs/adr/](docs/adr/), and the website source in [site/](site/).
+Domain language and boundaries live in [CONTEXT.md](CONTEXT.md), and the website source in [site/](site/).
 
 ## Known trade-offs
 

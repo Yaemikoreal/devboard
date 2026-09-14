@@ -13,3 +13,6 @@ site-preview-desktop.png
 
 # 设计参考素材（本地参考；logo 定稿已入库 assets/logo/）
 前端设计参考/
+
+# 架构决策记录（本地保留，不入库）
+docs/adr/
