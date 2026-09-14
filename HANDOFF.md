@@ -1,6 +1,6 @@
 # HANDOFF · SignalBoard v0.1.0 发布交接
 
-> 给下一位 Agent：本文档是当前会话的完整交接。目标：**完成 #90 剩余中/低危修复，然后执行 #91 发布**。所有 issue 已在 GitHub 建好，按本文档顺序执行即可。
+> 给下一位 Agent：本文档是当前会话的完整交接。~~目标：完成 #90 剩余中/低危修复~~（✅ 2026-09-14 已全部完成），**下一步：执行 #91 发布（第三节），并补 gh issue 关闭（见第一节末）**。
 
 ## 一、当前状态（已完成）
 
@@ -8,12 +8,38 @@
 |---|---|---|
 | 换用 logo2 为项目 Logo（draft-d.svg 管线，托盘简化稿） | #89 | ✅ 已关闭（commit `824864d`） |
 | README 中英双语改版（官网同源叙事 + 补 MIT LICENSE） | #92 | ✅ 已关闭（commit `b880a5f`） |
-| 发布前三轴审查（性能/流畅度/稳定性），20 条发现逐条建档 | #90 | 🔄 高危已清零，中/低危待修 |
+| 发布前三轴审查（性能/流畅度/稳定性），20 条发现逐条建档 | #90 | ✅ 高危+中低危全部修复（评论归档待网络恢复） |
 | 审查高危 7 项修复 | #93–#99 | ✅ 已关闭（commit `30d29f8`） |
+| 审查中/低危 13 项修复 | #100–#112 | ✅ 已修复（commit 见下表；issue 关闭待网络恢复） |
 | 工作区整理（官网入库、真实数据截图移出跟踪） | #91 前置 | ✅ 已提交（commit `8c10ed5`） |
 | 敏感数据处置 + 安装包 + Release v0.1.0 | #91 | ⬜ 待做（本文档第三节） |
 
-**本地 master 领先 origin 多个 commit，交接前需 push（见第四节）。**
+**本地 master 领先 origin 多个 commit，发布第一步 git push 时一并推（见第三节）。**
+
+### 中/低危修复 commit 对照（#100–#112，2026-09-14 完成）
+
+| Issue | Commit | 修法落地 |
+|---|---|---|
+| #100 补丁打断拖拽/焦点/展开态 | `8e12f81` | 拖拽在飞补丁排队到 dragend；renderRows 重放焦点行；renderPanel 重放折叠组展开态 |
+| #110 dragover O(N) | `8e12f81` | dragstart 缓存行数组，dragover 索引比较 + 移动后同步 |
+| #101 冷启动主题闪烁 | `3a8c3c2` | `src/main/boot-theme.js` 首帧 token 表；建窗前定底色；preload sendSync 桥 + head 内联脚本铺底 |
+| #102 kimi 探测无共享缓存 | `f111af4` | 60s TTL 全量 cwd→updatedAt 映射（与 codexSessionMap 同款） |
+| #103 FS 探测无并发上限 | `f111af4` | dirLatestMtime 入口接入 fsSlot（上限 8，gitSlot 同款队列） |
+| #104 悬停气泡同步布局 | `801b547` | 双 rAF 延迟读 offsetWidth |
+| #105 唤出重复拼板 | `801b547` | buildBoard 缓存分支 cachedBoardInFlight 在飞去重 |
+| #106 迁移幂等缺口 | `fe2998c` | .migrated 完成标记 + 逐文件只补缺失（五场景单测过） |
+| #107 Device Flow 无超时 | `62bf9a3` | 10s AbortController；poll 超时按 pending 继续 |
+| #108 自启失败静默 | `3a8c3c2`+`b49da53` | setLoginItemSettings 回读验证；settings:autoStartError 链路 + 设置页 err 位 |
+| #109 seal 无兜底 | `236b6da` | _seal 包 try，失败回落明文记日志；迁移处失败保留明文下次重试 |
+| #111 降低动效遗漏 | `801b547` | 锚点导航 smooth→auto；.set-group/.ai-box 半透明底换实底 |
+| #112 双渲染/过期补丁 | `801b547` | 板与补丁带 scanGeneration；渲染层丢弃旧代次迟到补丁与同代次整板重演 |
+
+**验证记录**：`node --check` 全过；`npm run test:scan` 正常；`DEVBOARD_MOCK=1 npm run shot` 与 `DEVBOARD_MOCK_THEME=dark` 出图完好（深色无浅色残影）；`npm start` 真实启动冒烟正常（29 项目扫描、无异常日志）。
+
+### ⚠️ 网络受限待办：gh issue 关闭
+
+会话内本机代理未开（`gh` 连 127.0.0.1:443 被拒），以下 issue 的关闭评论待网络恢复后补：
+`#100`→`8e12f81`、`#101`→`3a8c3c2`、`#102`→`f111af4`、`#103`→`f111af4`、`#104`→`801b547`、`#105`→`801b547`、`#106`→`fe2998c`、`#107`→`62bf9a3`、`#108`→`3a8c3c2`、`#109`→`236b6da`、`#110`→`8e12f81`、`#111`→`801b547`、`#112`→`801b547`；随后关 `#90` 并在评论归档三轴审查结论。
 
 ### 高危修复要点（#93–#99，已验证）
 
@@ -25,9 +51,9 @@
 - **#98** `board:scanfail` 频道（ipc.js catch 分支发 → preload → 渲染层熄灭扫描指示）。
 - **#99** `styles.css`：`.rows`/`.panel-in` 移出玻璃共享规则改 `var(--card)` 实底（与 reduced-motion 退化观感一致）；玻璃保留 `.ov-card/.settings-card/.skel/.nav/.search/.chips/.icon-btn/.attn-card`。
 
-## 二、待办 A：#90 中/低危修复（13 项，#100–#112）
+## 二、✅ 已完成：#90 中/低危修复（13 项，#100–#112，2026-09-14）
 
-约定：逐条修复，**一个 commit 可合并同文件的多条低危**，commit message 引用 issue 号；修完即 `gh issue close <n> --comment "已修复（<sha>）…"`。全部清零后关闭 #90 并在评论里归档三份审查报告结论。
+原修法摘要留档如下，落地情况见第一节的 commit 对照表。
 
 | Issue | 级别 | 位置 | 修法摘要 |
 |---|---|---|---|
