@@ -2,10 +2,11 @@
 'use strict';
 
 const path = require('path');
-const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, Notification, screen, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, Notification, screen, dialog, ipcMain } = require('electron');
 const { Store } = require('./store');
 const { registerIpc } = require('./ipc');
 const { migrateUserData } = require('./userdata-migrate');
+const { bootThemePayload } = require('./boot-theme');
 
 let win = null;
 let tray = null;
@@ -15,6 +16,7 @@ let gitWatcher = null;
 let quitting = false;
 let tickTimer = null;
 let lastHotkeyError = '';
+let lastAutoStartError = ''; // 开机自启注册失败原因，设置页展示（issue #108）
 
 function debounce(fn, ms) {
   let t = null;
@@ -49,7 +51,7 @@ function createWindow() {
     minHeight: 800,
     frame: false,
     show: false,
-    backgroundColor: '#f5f2e8',
+    backgroundColor: bootThemePayload(store.getConfig().theme).bgArt, // 按主题深浅定底色（issue #101）
     icon: path.join(__dirname, '..', '..', 'assets', 'logo', 'icon-256.png'),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
@@ -169,7 +171,16 @@ function applySettings(cfg) {
       lastHotkeyError = '热键注册失败：' + err.message;
     }
   }
-  app.setLoginItemSettings({ openAtLogin: !!cfg.autoStart });
+  lastAutoStartError = '';
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!cfg.autoStart });
+    // 回读验证（issue #108）：写入被系统策略/安全软件拦截时不静默，设置页展示原因
+    if (!!cfg.autoStart !== app.getLoginItemSettings().openAtLogin) {
+      lastAutoStartError = '开机自启未能生效（可能被系统策略或安全软件拦截）';
+    }
+  } catch (err) {
+    lastAutoStartError = '开机自启设置失败：' + err.message;
+  }
   applyTickTimer(cfg);
   updateTrayTooltip(lastAttentionCount);
 }
@@ -238,8 +249,12 @@ if (!gotLock) {
       getWindow: () => win,
       applySettings,
       getHotkeyError: () => lastHotkeyError,
+      getAutoStartError: () => lastAutoStartError, // 开机自启注册失败原因，设置页展示（issue #108）
       onAttentionCount: updateTrayTooltip, // 拼板后刷新托盘计数（显隐由 tooltip 函数按设置裁决，issue #80）
     }));
+
+    // 冷启动防闪（issue #101）：preload 同步取首帧关键 token，head 内联脚本在样式生效前铺底
+    ipcMain.on('boot:theme', (e) => { e.returnValue = bootThemePayload(store.getConfig().theme); });
 
     applySettings(store.getConfig()); // 含后台刷新定时器首次建立（applyTickTimer）
     createWindow();

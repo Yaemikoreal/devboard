@@ -2,8 +2,22 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://avatars.githubusercontent.com">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://avatars.githubusercontent.com">
 <title>SignalBoard</title>
+<script>
+/* 冷启动防闪（issue #101）：样式表生效前先铺当前主题的首帧关键 token，深色主题不再白闪。
+   取值来自 preload 同步桥（主进程按已存主题算好），随后 app.js applyTheme 全量接管 */
+try {
+  var boot = window.devboardBoot && window.devboardBoot.theme;
+  if (boot) {
+    var bootStyle = document.documentElement.style;
+    bootStyle.setProperty('--bg', boot.bg);
+    bootStyle.setProperty('--card', boot.card);
+    bootStyle.setProperty('--ink', boot.ink);
+    bootStyle.setProperty('--bg-art', boot.bgArt);
+  }
+} catch (e) { /* 兜底：走 styles.css 默认浅色 token */ }
+</script>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -434,6 +448,8 @@
                 <input type="checkbox" id="fAutoStart">
                 <label for="fAutoStart">开机自启</label>
               </div>
+              <!-- 自启注册失败原因（issue #108）：主进程回读验证，仿热键错误链展示 -->
+              <div class="err" id="autoStartErr"></div>
               <!-- 唤出着陆视图（issue #86）：每次从托盘/热键唤出时落在哪个视图 -->
               <div class="field">
                 <label>唤出时着陆到</label>

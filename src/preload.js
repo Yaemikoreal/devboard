@@ -2,6 +2,14 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+// 冷启动防闪（issue #101）：同步取主进程按已存主题算好的首帧关键色，head 内联脚本在样式生效前铺底
+let bootTheme = null;
+try {
+  bootTheme = ipcRenderer.sendSync('boot:theme');
+} catch { /* 主进程未就绪等异常时走 styles.css 默认浅色 token */ }
+
+contextBridge.exposeInMainWorld('devboardBoot', { theme: bootTheme });
+
 contextBridge.exposeInMainWorld('devboard', {
   getBoard: () => ipcRenderer.invoke('board:get'),
   rescan: () => ipcRenderer.invoke('board:rescan'),
@@ -11,6 +19,7 @@ contextBridge.exposeInMainWorld('devboard', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
   getHotkeyError: () => ipcRenderer.invoke('settings:hotkeyError'),
+  getAutoStartError: () => ipcRenderer.invoke('settings:autoStartError'), // 自启注册失败原因（issue #108）
   getPrefs: () => ipcRenderer.invoke('prefs:get'),
   setPrefs: (patch) => ipcRenderer.invoke('prefs:set', patch),
   snooze: (projectPath, type, label) => ipcRenderer.invoke('snooze:set', projectPath, type, label),

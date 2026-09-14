@@ -7,6 +7,7 @@ const fs = require('fs');
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { Store } = require('../src/main/store');
 const { registerIpc } = require('../src/main/ipc');
+const { bootThemePayload } = require('../src/main/boot-theme');
 
 const MOCK = process.env.DEVBOARD_MOCK === '1';
 // DEVBOARD_SHOT_OUT：自定义输出路径（官网素材批量出图用）；缺省维持仓库根目录固定名
@@ -31,8 +32,11 @@ async function capture() {
 }
 
 app.whenReady().then(() => {
+  let bootPayload = null; // 冷启动防闪（issue #101）：preload 同步桥取首帧关键 token
   if (MOCK) {    // 布局密度验证：注入 8 个 mock 项目，只注册渲染所需的最小 IPC
     const { mockBoard, mockProjectDetail } = require('./mock-board');
+    bootPayload = bootThemePayload({ id: process.env.DEVBOARD_MOCK_THEME || 'warm' });
+    ipcMain.on('boot:theme', (e) => { e.returnValue = bootPayload; });
     ipcMain.handle('board:get', () => mockBoard());
     ipcMain.handle('board:rescan', () => mockBoard());
     ipcMain.handle('memo:set', () => true);
@@ -117,6 +121,8 @@ app.whenReady().then(() => {
     // DEVBOARD_USERDATA：指向真实安装的 userData（如 %APPDATA%/SignalBoard），用真实配置/缓存验证（issue #44）
     if (process.env.DEVBOARD_USERDATA) app.setPath('userData', process.env.DEVBOARD_USERDATA);
     const store = new Store(app.getPath('userData'), require('../src/main/token-vault'));
+    bootPayload = bootThemePayload(store.getConfig().theme);
+    ipcMain.on('boot:theme', (e) => { e.returnValue = bootPayload; });
     registerIpc({ store, getWindow: () => win, applySettings: () => {} });
   }
 
@@ -126,7 +132,7 @@ app.whenReady().then(() => {
     // show:false + offscreen 渲染：无需显示窗口也能持续产帧，capturePage 拿到真实画面
     show: false,
     skipTaskbar: true,
-    backgroundColor: '#f5f2e8',
+    backgroundColor: bootPayload.bgArt, // 按主题深浅定底色（issue #101）
     webPreferences: {
       preload: path.join(__dirname, '..', 'src', 'preload.js'),
       contextIsolation: true,

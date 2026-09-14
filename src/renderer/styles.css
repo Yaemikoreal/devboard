@@ -964,6 +964,8 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   background:var(--well);border:1px solid var(--line);
 }
 .set-group > h3 .scan-stat:empty{display:none}
+/* 开机自启注册失败原因（issue #108）：位于 .field.check 之后的独立 err 位，仿 .field .err 样式 */
+#autoStartErr{margin-top:4px;font-size:var(--fs-aux);color:#c0392b}
 .set-group > .group-desc{font-size:var(--fs-aux);color:var(--ink-3);margin-bottom:10px}
 
 /* 分段选择器（issue #70 后台刷新间隔）：预设档位，不用裸数字输入 */

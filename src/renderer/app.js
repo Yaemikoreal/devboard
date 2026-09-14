@@ -2419,6 +2419,13 @@
     return document.getElementById(id).value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
   }
 
+  // 开机自启注册失败原因展示（issue #108）：仿热键错误链，保存后与打开设置页时各查一次
+  function refreshAutoStartErr() {
+    api.getAutoStartError().then(function (msg) {
+      document.getElementById('autoStartErr').textContent = msg || '';
+    }).catch(function () {});
+  }
+
   function pathRow(listEl, value) {
     var row = el('div', 'path-row');
     var input = el('input');
@@ -2717,6 +2724,7 @@
       renderThemeCards();
       renderSwatches();
       ghStateText();
+      refreshAutoStartErr(); // 自启注册失败原因（issue #108）：打开设置页即展示存量错误
       renderGhAccount();
       // 自动保存默认静默（issue #71）：hint 平时留空，仅出错时亮起；「更改即时生效、自动保存」由首启欢迎提示承担
       clearTimeout(hintTimer);
@@ -2814,6 +2822,7 @@
     var warnChanged = patch.warningDirtyDays !== (prev.warningDirtyDays || 3) ||
       JSON.stringify(patch.warningTypes) !==
         JSON.stringify({ dirty: prevWt.dirty !== false, unpushed: prevWt.unpushed !== false, pr: prevWt.pr !== false });
+    var autoStartChanged = patch.autoStart !== !!prev.autoStart; // 自启开关变化后回读注册结果（issue #108）
     // AI 开关/引擎变化需重估能力（issue #29）；自定义工具清单变化同时影响两者
     var aiChanged = patch.aiEnabled !== (prev.aiEnabled !== false) || patch.aiEngine !== (prev.aiEngine || '');
     // 提示词模板改动（issue #78）：缓存键已含模板哈希，旧结果不会掩盖修改；
@@ -2824,6 +2833,7 @@
       state.settings = cfg;
       ghStateText();
       if (typedToken) fToken.value = '';
+      if (autoStartChanged) refreshAutoStartErr(); // 自启注册结果回读（issue #108）
       var jobs = [];
       if (hotkeyChanged) jobs.push(api.getHotkeyError());
       if (pathsChanged) jobs.push(api.scanPreview({}));
