@@ -37,6 +37,7 @@
     loadPromise: null, // 在飞 load 的 Promise：去重时复用，refresh spinner 不提前熄灭
     awaitPatch: false,
     boardGen: 0, // 当前板的扫描代次：过期补丁丢弃依据（issue #112）
+    pendingPatch: null, // 拖拽在飞时排队的补丁，dragend 后放行（issue #100）
     branchSel: {}, // path -> 选中分支名（issue #4，持久化在 prefs.branchSel）
     branchDetail: {}, // path + ' ' + branch -> { lastCommitAt, commits } | 'loading'
     suggestIdx: -1, // 搜索补全键盘选中项（issue #6）
@@ -1031,6 +1032,10 @@
 
   /* ---------- 项目页：行列表（issue #16） ---------- */
 
+  // 拖拽在飞上下文（issue #110）：{node, rows}，dragover 高频触发时只做索引比较，
+  // 不再每事件 querySelectorAll O(N) 查询；拖拽中到达的补丁也据此排队（issue #100）
+  var dragState = null;
+
   function projectRow(p) {
     var row = el('div', 'row' + (state.selectedPath === p.path ? ' selected' : ''));
     row.setAttribute('data-band', p.band);
@@ -1094,19 +1099,28 @@
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', p.path);
       row.classList.add('dragging');
+      dragState = { node: row, rows: Array.prototype.slice.call(rowsEl.querySelectorAll('.row')) };
     });
     row.addEventListener('dragend', function () {
       row.classList.remove('dragging');
+      dragState = null;
       persistRowOrder();
+      flushPendingPatch(); // 拖拽结束后放行排队的补丁（issue #100）
     });
     row.addEventListener('dragover', function (e) {
       if (!canDrag()) return;
       e.preventDefault();
-      var dragging = rowsEl.querySelector('.dragging');
+      var dragging = dragState && dragState.node;
       if (!dragging || dragging === row) return;
-      var all = Array.prototype.slice.call(rowsEl.querySelectorAll('.row'));
-      if (all.indexOf(dragging) < all.indexOf(row)) row.after(dragging);
+      var all = dragState.rows;
+      var ia = all.indexOf(dragging);
+      var ib = all.indexOf(row);
+      if (ia < 0 || ib < 0) return;
+      if (ia < ib) row.after(dragging);
       else row.before(dragging);
+      // DOM 移动后同步缓存数组，连续跨行移动时索引不过期（issue #110）
+      all.splice(ia, 1);
+      all.splice(ib, 0, dragging);
     });
     return row;
   }
@@ -1134,6 +1148,10 @@
   }
 
   function renderRows() {
+    // 焦点行保留（issue #100）：后台补丁整板重渲时，键盘流聚焦的行（含行内控件）重建后重新聚焦
+    var activeEl = document.activeElement;
+    var focusRow = activeEl && activeEl.closest ? activeEl.closest('.row') : null;
+    var focusPath = focusRow ? focusRow.dataset.path : null;
     rowsEl.innerHTML = '';
     if (!state.board) return;
     var list = sortedProjects();
@@ -1148,6 +1166,10 @@
       return;
     }
     list.forEach(function (p) { rowsEl.appendChild(projectRow(p)); });
+    if (focusPath) {
+      var fr = rowsEl.querySelector('.row[data-path="' + CSS.escape(focusPath) + '"]');
+      if (fr) fr.focus();
+    }
   }
 
   // 空项目引导卡：手绘雷达图形 + 一句话简介 + 三步指引 + 打开设置主按钮
@@ -1288,6 +1310,13 @@
     var memoSel = memoLive ? [memoTa.selectionStart, memoTa.selectionEnd] : null;
     // 换项目时面板从顶部开始；同一项目的后台补丁重渲染才保留滚动位置（issue #63）
     var scrollTop = state.panelPath === p.path ? panelIn.scrollTop : 0;
+    // 折叠组（未提交文件/更多事实）展开态按出现顺序记录，重建后重放（issue #100）
+    var openToggles = [];
+    if (state.panelPath === p.path) {
+      Array.prototype.forEach.call(panelIn.querySelectorAll('.dirty-toggle'), function (t) {
+        openToggles.push(t.classList.contains('open'));
+      });
+    }
     panelIn.innerHTML = '';
     var current = isCurrentBranch(p);
     var bd = branchDetailOf(p);
@@ -1512,6 +1541,10 @@
     moreSec.appendChild(mToggle);
     moreSec.appendChild(mWrap);
     panelIn.appendChild(moreSec);
+    // 折叠组展开态重放（issue #100）：索引对不上（如脏文件清零后区块消失）时宁误开不错关
+    Array.prototype.forEach.call(panelIn.querySelectorAll('.dirty-toggle'), function (t, i) {
+      if (openToggles[i]) t.click();
+    });
     state.panelPath = p.path;
     panelIn.scrollTop = scrollTop;
   }
@@ -1766,8 +1799,9 @@
   }
 
   // 后台重扫补丁（issue #22）：整板替换渲染；若期间用户又在手动刷新则丢弃。
-  // 增量形态（issue #94）：watcher 推 {project, stats, attention}，只就地替换该项目与全局聚合
-  api.onBoardPatch(function (patch) {
+  // 增量形态（issue #94）：watcher 推 {project, stats, attention}，只就地替换该项目与全局聚合。
+  // 拖拽在飞时排队到 dragend 后应用（issue #100），避免整板重渲打断拖拽
+  function handleBoardPatch(patch) {
     if (state.loading) return;
     if (patch && typeof patch.scanGeneration === 'number' && state.board) {
       // 过期补丁丢弃（issue #112）：手动刷新落地后，旧代次的迟到补丁不再盖回旧数据
@@ -1775,6 +1809,7 @@
       // 同代次整板补丁且不在等补丁：同一次扫描的重演，跳过重复渲染
       if (patch.scanGeneration === state.boardGen && !patch.project && !state.awaitPatch) return;
     }
+    if (dragState) { state.pendingPatch = patch; return; } // 拖拽在飞：排队（issue #100）
     state.awaitPatch = false;
     if (patch && patch.project) {
       if (!state.board) return; // 增量早于首板到达：丢弃，首板随即覆盖
@@ -1797,7 +1832,16 @@
     renderAll();
     setScanning(false);
     console.log('[devboard] patched'); // 供 scripts/screenshot.js 等待（DEVBOARD_WAIT_PATCH=1）
-  });
+  }
+  api.onBoardPatch(handleBoardPatch);
+
+  // 拖拽结束后放行排队中的补丁（issue #100）
+  function flushPendingPatch() {
+    if (!state.pendingPatch) return;
+    var p = state.pendingPatch;
+    state.pendingPatch = null;
+    handleBoardPatch(p);
+  }
 
   // 后台重扫失败（issue #98）：补丁不会来了，熄灭扫描指示，保留旧板展示
   api.onBoardScanfail(function () {
