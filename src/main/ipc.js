@@ -206,7 +206,7 @@ function promptTplKey(template) {
   return crypto.createHash('sha1').update(String(template)).digest('hex').slice(0, 10);
 }
 
-function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttentionCount }) {
+function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoStartError, onAttentionCount }) {
   // IPC handler 统一兜底（issue #97）：handler 抛错（写盘 ENOSPC/EPERM 等）时给渲染层干净的中文消息，
   // 由渲染层 ipcErrText 剥掉 Electron 的「Error invoking remote method」包装后展示
   const rawHandle = ipcMain.handle.bind(ipcMain);
@@ -671,6 +671,9 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, onAttent
 
   // 保存设置后由渲染层查询热键注册结果（空串 = 成功）
   ipcMain.handle('settings:hotkeyError', () => (getHotkeyError ? getHotkeyError() : ''));
+
+  // 开机自启注册失败原因（issue #108）：仿热键错误链，设置页保存后与打开时查询展示
+  ipcMain.handle('settings:autoStartError', () => (getAutoStartError ? getAutoStartError() : ''));
 
   ipcMain.handle('prefs:get', () => store.getPrefs());
   ipcMain.handle('prefs:set', (_e, patch) => store.setPrefs(patch || {}));
