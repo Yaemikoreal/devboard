@@ -9,6 +9,7 @@
     "test:scan": "node scripts/test-scan.js",
     "test:ai": "node scripts/test-ai.js",
     "shot": "electron scripts/screenshot.js",
+    "demo": "electron scripts/screenshot.js --gif",
     "logo": "electron scripts/render-logo.js",
     "dist": "electron-builder"
   },
@@ -18,20 +19,28 @@
     "productName": "SignalBoard",
     "win": {
       "icon": "build/icon.ico",
-      "target": ["nsis"]
+      "target": [
+        "nsis"
+      ]
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "SignalBoard"
     },
-    "files": ["src/**", "assets/**", "package.json"],
+    "files": [
+      "src/**",
+      "assets/**",
+      "package.json"
+    ],
     "directories": {
       "output": "dist"
     }
   },
   "devDependencies": {
     "electron": "^39.8.10",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "gifenc": "^1.0.3",
+    "sharp": "^0.35.4"
   }
 }

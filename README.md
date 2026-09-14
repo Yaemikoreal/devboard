@@ -71,6 +71,10 @@ SignalBoard 是一个本地桌面端项目概况板：在众多并行的 vibecod
 
 七套整体主题（暖阳 / 雾蓝 / 青野 / 樱粉 / 紫藤 / 暗夜 / 夜幕，含两套深色），可跟随系统自动明暗切换；强调色可预设可自定义，热力图与分带随之联动；密度两档，可降低动效。
 
+<p align="center">
+  <img src="site/assets/demo.gif" alt="七套主题切换演示（演示数据）" width="720">
+</p>
+
 <p>
   <img src="site/assets/theme-warm.webp" width="210" alt="暖阳">
   <img src="site/assets/theme-mist.webp" width="210" alt="雾蓝">
@@ -109,6 +113,7 @@ npm start     # 启动：托盘常驻，Ctrl+Shift+D 唤出/隐藏
 ```bash
 npm run test:scan  # 不起界面，直接跑项目扫描并打印 JSON
 npm run shot       # 隐藏窗口渲染真实数据后截图到 screenshot.png
+npm run demo       # 生成 README 主题轮播演示动图（site/assets/demo.gif，mock 数据）
 npm run logo       # 从 assets/logo/draft-d.svg 重渲全套图标（托盘用简化稿 draft-d-tray.svg）
 ```
 
@@ -161,6 +166,10 @@ Calls your locally signed-in Agent CLIs (claude / codex / kimi / grok, or a cust
 
 Seven full themes (Warm / Mist / Meadow / Sakura / Iris / Dark / Abyss, two of them dark), with an auto mode that follows the system; preset or custom accent colors that cascade into heatmaps and bands; two density levels and a reduced-motion option.
 
+<p align="center">
+  <img src="site/assets/demo.gif" alt="Theme switching demo (sample data)" width="720">
+</p>
+
 ## Install
 
 - **Installer**: grab `SignalBoard-Setup-x.y.z.exe` from [Releases](https://github.com/Yaemikoreal/devboard/releases) (Windows)
@@ -192,6 +201,7 @@ Everything lives in the Electron userData directory (`%APPDATA%/SignalBoard/`) a
 ```bash
 npm run test:scan  # run the project scan headlessly and print JSON
 npm run shot       # render real data in a hidden window and screenshot to screenshot.png
+npm run demo       # generate the theme-switching demo GIF for this README (site/assets/demo.gif, mock data)
 npm run logo       # re-render the full icon set from assets/logo/draft-d.svg
 ```
 
