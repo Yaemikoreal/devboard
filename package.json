@@ -9,16 +9,29 @@
     "test:scan": "node scripts/test-scan.js",
     "test:ai": "node scripts/test-ai.js",
     "shot": "electron scripts/screenshot.js",
-    "logo": "electron scripts/render-logo.js"
+    "logo": "electron scripts/render-logo.js",
+    "dist": "electron-builder"
   },
   "license": "MIT",
   "build": {
     "appId": "com.yaemikoreal.signalboard",
+    "productName": "SignalBoard",
     "win": {
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "target": ["nsis"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "SignalBoard"
+    },
+    "files": ["src/**", "assets/**", "package.json"],
+    "directories": {
+      "output": "dist"
     }
   },
   "devDependencies": {
-    "electron": "^39.8.10"
+    "electron": "^39.8.10",
+    "electron-builder": "^26.15.3"
   }
 }
