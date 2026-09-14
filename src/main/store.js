@@ -77,6 +77,17 @@ class Store {
     return !!(this.vault && this.vault.available());
   }
 
+  // seal 包 try（issue #109）：系统加密调用失败（DPAPI 异常等）时返回 null 让调用方回落明文，
+  // 不让保存/启动链崩掉；unseal 已有同款兜底（token-vault.js）
+  _seal(plain) {
+    try {
+      return this.vault.seal(plain);
+    } catch (err) {
+      console.error('[devboard] token 加密封存失败，退回明文:', (err && err.message) || err);
+      return null;
+    }
+  }
+
   // 设置页据此提示「当前环境无法加密存储」（issue #65）：无 keyring 环境下 token 退回明文落盘
   cryptoAvailable() {
     return this._canSeal();
@@ -87,8 +98,13 @@ class Store {
     const out = Object.assign({}, cfg);
     delete out.hasGithubToken;
     if (this._canSeal()) {
-      out.githubTokenEnc = cfg.githubToken ? this.vault.seal(cfg.githubToken) : '';
-      delete out.githubToken;
+      const enc = cfg.githubToken ? this._seal(cfg.githubToken) : '';
+      if (cfg.githubToken && enc === null) {
+        out.githubToken = cfg.githubToken; // seal 失败退回明文：功能可用性优先（issue #109）
+      } else {
+        out.githubTokenEnc = enc;
+        delete out.githubToken;
+      }
     } else {
       out.githubToken = cfg.githubToken || ''; // 无加密能力时按注释承诺退回明文兜底
     }
@@ -97,15 +113,18 @@ class Store {
 
   getConfig() {
     const raw = this.readJson('config.json', {});
-    // 迁移旧明文 token：读到时立即改写为加密存储（issue #12）
+    // 迁移旧明文 token：读到时立即改写为加密存储（issue #12）；seal 失败保留明文下次重试（issue #109）
     if (raw.githubToken && this._canSeal()) {
-      const migrated = Object.assign({}, DEFAULT_CONFIG, raw, {
-        githubTokenEnc: this.vault.seal(raw.githubToken),
-      });
-      delete migrated.githubToken;
-      this.writeJson('config.json', migrated);
-      raw.githubTokenEnc = migrated.githubTokenEnc;
-      delete raw.githubToken;
+      const enc = this._seal(raw.githubToken);
+      if (enc !== null) {
+        const migrated = Object.assign({}, DEFAULT_CONFIG, raw, {
+          githubTokenEnc: enc,
+        });
+        delete migrated.githubToken;
+        this.writeJson('config.json', migrated);
+        raw.githubTokenEnc = migrated.githubTokenEnc;
+        delete raw.githubToken;
+      }
     }
     const cfg = Object.assign({}, DEFAULT_CONFIG, raw);
     if (raw.githubTokenEnc && this._canSeal()) {
