@@ -26,6 +26,35 @@ const GIT_CONCURRENCY = 6;
 let gitRunning = 0;
 const gitQueue = [];
 
+// AI 会话痕迹 FS 探测的全局并发上限（issue #103）：目录遍历任务排队执行，
+// 避免项目多时每项目 8 路递归 readdir/stat 同时铺开拖垮磁盘 IO（与 gitSlot 同款队列模式）
+const FS_CONCURRENCY = 8;
+let fsRunning = 0;
+const fsQueue = [];
+
+function fsSlotAcquire() {
+  if (fsRunning < FS_CONCURRENCY) {
+    fsRunning++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => fsQueue.push(resolve));
+}
+
+function fsSlotRelease() {
+  const next = fsQueue.shift();
+  if (next) next();
+  else fsRunning--;
+}
+
+async function fsSlot(fn) {
+  await fsSlotAcquire();
+  try {
+    return await fn();
+  } finally {
+    fsSlotRelease();
+  }
+}
+
 // 单项目扫描预算：超时降级为缓存数据（issue #24）
 const PROJECT_SCAN_BUDGET_MS = 3000;
 
@@ -130,32 +159,34 @@ function emptyProject(projectPath) {
   };
 }
 
-// 单个目录内最新文件 mtime（有界遍历，budget 共享条目数上限）
-async function dirLatestMtime(dir, budget) {
-  let latest = 0;
-  const walk = async (d, depth) => {
-    if (budget.n <= 0 || depth > 3) return;
-    let entries;
-    try {
-      entries = await fsp.readdir(d, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      if (budget.n <= 0) return;
-      budget.n--;
-      const full = path.join(d, e.name);
+// 单个目录内最新文件 mtime（有界遍历，budget 共享条目数上限）；入口过 FS 并发限制（issue #103）
+function dirLatestMtime(dir, budget) {
+  return fsSlot(async () => {
+    let latest = 0;
+    const walk = async (d, depth) => {
+      if (budget.n <= 0 || depth > 3) return;
+      let entries;
       try {
-        if (e.isDirectory()) await walk(full, depth + 1);
-        else {
-          const st = await fsp.stat(full);
-          if (st.mtimeMs > latest) latest = st.mtimeMs;
-        }
-      } catch { /* 忽略不可读项 */ }
-    }
-  };
-  await walk(dir, 0);
-  return latest;
+        entries = await fsp.readdir(d, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (budget.n <= 0) return;
+        budget.n--;
+        const full = path.join(d, e.name);
+        try {
+          if (e.isDirectory()) await walk(full, depth + 1);
+          else {
+            const st = await fsp.stat(full);
+            if (st.mtimeMs > latest) latest = st.mtimeMs;
+          }
+        } catch { /* 忽略不可读项 */ }
+      }
+    };
+    await walk(dir, 0);
+    return latest;
+  });
 }
 
 // 路径归一化：跨工具 cwd 记录格式不一（正反斜杠、大小写、尾斜杠），比较前统一
@@ -171,39 +202,44 @@ function grokSessionDir(projectPath) {
   return path.join(HOME, '.grok', 'sessions', encodeURIComponent(projectPath));
 }
 
-// kimi：wd_<basename 小写、空白转 _>_<hash> 下每个 session_*/state.json 记录 cwd 与 updatedAt
-async function kimiSessionAt(projectPath) {
-  const base = path.basename(projectPath).toLowerCase().replace(/\s+/g, '_');
+// kimi：wd_<basename 小写、空白转 _>_<hash> 下每个 session_*/state.json 记录 cwd 与 updatedAt。
+// 全量 cwd→updatedAt 映射按 60s TTL 缓存（issue #102，与 codexSessionMap 同款）：
+// 一次 board 扫描中所有项目共享，不再逐项目重扫会话目录
+let kimiMap = null;
+let kimiMapAt = 0;
+async function kimiSessionMap() {
+  const now = Date.now();
+  if (kimiMap && now - kimiMapAt < 60000) return kimiMap;
+  const map = new Map();
   const root = path.join(HOME, '.kimi-code', 'sessions');
-  let names;
+  let names = [];
   try {
     names = await fsp.readdir(root);
-  } catch {
-    return 0;
-  }
-  const target = normPath(projectPath);
-  let latest = 0;
-  for (const d of names) {
-    if (!d.startsWith('wd_' + base + '_')) continue;
+  } catch { /* 无 kimi 会话目录 */ }
+  await Promise.all(names.filter((d) => d.startsWith('wd_')).map(async (d) => {
     let sessions;
     try {
       sessions = await fsp.readdir(path.join(root, d));
     } catch {
-      continue;
+      return;
     }
     for (const s of sessions.slice(0, 40)) {
-      let j;
       try {
-        j = JSON.parse(await fsp.readFile(path.join(root, d, s, 'state.json'), 'utf8'));
-      } catch {
-        continue;
-      }
-      if (normPath(j.cwd) !== target) continue;
-      const t = Number(j.updatedAt) || Number(j.createdAt) || 0;
-      if (t > latest) latest = t;
+        const j = JSON.parse(await fsp.readFile(path.join(root, d, s, 'state.json'), 'utf8'));
+        const cwd = normPath(j.cwd);
+        if (!cwd) continue;
+        const t = Number(j.updatedAt) || Number(j.createdAt) || 0;
+        if (t > (map.get(cwd) || 0)) map.set(cwd, t);
+      } catch { /* 忽略不可读会话 */ }
     }
-  }
-  return latest;
+  }));
+  kimiMap = map;
+  kimiMapAt = now;
+  return map;
+}
+
+function kimiSessionAt(projectPath) {
+  return kimiSessionMap().then((map) => map.get(normPath(projectPath)) || 0);
 }
 
 // codex：rollout 按 年/月/日 分目录，首行 session_meta 记录 cwd；只扫近 120 天，上限 400 个文件。
