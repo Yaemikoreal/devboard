@@ -212,8 +212,11 @@ function importGhToken() {
 // OAuth Device Flow 第一步：取设备码（8 位 user_code 展示给用户）
 async function deviceStart() {
   if (!DEVICE_FLOW_CLIENT_ID) return { ok: false, reason: '应用尚未配置 OAuth Client ID' };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10000); // 弱网挂起不再无限等（issue #107，与 testConnection 同款）
   try {
     const res = await fetch('https://github.com/login/device/code', {
+      signal: ctrl.signal,
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify({ client_id: DEVICE_FLOW_CLIENT_ID, scope: DEVICE_FLOW_SCOPE }),
@@ -229,15 +232,21 @@ async function deviceStart() {
       interval: Math.max(1, d.interval || 5),
       expiresIn: d.expires_in || 900,
     };
-  } catch {
-    return { ok: false, reason: '网络错误，无法连接 GitHub' };
+  } catch (err) {
+    const timedOut = err && err.name === 'AbortError';
+    return { ok: false, reason: timedOut ? '请求超时，无法连接 GitHub' : '网络错误，无法连接 GitHub' };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 // OAuth Device Flow 第二步：渲染层按 interval 轮询；success 时返回 token
 async function devicePoll(deviceCode) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10000); // 单次轮询挂起不阻塞下一轮（issue #107）
   try {
     const res = await fetch('https://github.com/login/oauth/access_token', {
+      signal: ctrl.signal,
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -253,8 +262,11 @@ async function devicePoll(deviceCode) {
     if (d.error === 'expired_token') return { status: 'error', reason: '设备码已过期，请重新开始' };
     if (d.error === 'access_denied') return { status: 'error', reason: '已取消授权' };
     return { status: 'error', reason: d.error_description || d.error || '授权失败' };
-  } catch {
-    return { status: 'error', reason: '网络错误，无法连接 GitHub' };
+  } catch (err) {
+    // 超时按 pending 处理：渲染层下一轮会继续轮询，不因单次网络抖动终止授权流程
+    return { status: err && err.name === 'AbortError' ? 'pending' : 'error', reason: '网络错误，无法连接 GitHub' };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
