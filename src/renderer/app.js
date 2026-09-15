@@ -811,9 +811,22 @@
   // 任务一旦发起即在后台执行：切换项目/视图不中断、不重复发起；回来恢复「生成中」进度或展出结果
   function aiJobKey(kind, path) { return kind + '|' + (path || ''); }
 
+  // 系统睡眠跨夜后在飞任务的 IPC 回复可能永久丢失，running 态永不落幕（实测挂起 9h 后仍显示生成中）；
+  // 主进程侧最坏路径是引擎链全部超时（每引擎 90s），超过 10 分钟仍 running 的必是死任务，读时即清。
+  // 清掉后各入口自然落回缓存读取或重新发起（主进程在飞去重 + 结果缓存双兜底）
+  var AI_JOB_STALE_MS = 10 * 60 * 1000;
+  function liveAiJob(key) {
+    var job = state.aiJobs[key];
+    if (job && job.status === 'running' && Date.now() - job.startAt > AI_JOB_STALE_MS) {
+      delete state.aiJobs[key];
+      return null;
+    }
+    return job;
+  }
+
   function startAiJob(kind, payload) {
     var key = aiJobKey(kind, payload.path);
-    var job = state.aiJobs[key];
+    var job = liveAiJob(key);
     if (job && job.status === 'running') return job; // 在飞任务复用（主进程侧同样有在飞去重）
     job = state.aiJobs[key] = { status: 'running', startAt: Date.now(), result: null };
     api.aiAsk(payload).then(function (r) {
@@ -880,7 +893,7 @@
     if (!aiReady()) return;
     var btn = document.getElementById('aiWeeklyBtn');
     var box = document.getElementById('aiWeeklyBox');
-    var job = state.aiJobs[aiJobKey('weekly')];
+    var job = liveAiJob(aiJobKey('weekly'));
     if (job && job.status === 'running') { paintAiRunning(box, btn, job); return; }
     delete btn.dataset.busy;
     btn.textContent = '✦ 生成周报';
@@ -931,7 +944,7 @@
     var box = el('div', 'ai-box hidden');
     s.appendChild(box);
     var key = aiJobKey('advice', p.path);
-    var job = state.aiJobs[key];
+    var job = liveAiJob(key);
     if (job && job.status === 'running') {
       paintAiRunning(box, btn, job); // 后台任务在飞：切出去再回来恢复进行态
     } else if (job) {
