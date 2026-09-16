@@ -14,7 +14,9 @@ const MAX_OUTPUT = 4000; // 渲染层展示与缓存的文本上限
 // 实测 claude 配额耗尽时会立刻输出 429 错误但进程挂起不退出（SessionEnd hook 卡住），
 // 必须流式命中即快速失败，否则用户只能干等到超时（issue #41）。
 // 数字错误码（401/403/429）要求同行伴随错误语义词才判定：AI 正常中文输出也会提到这些数字，裸匹配会误伤引擎
-const ENGINE_ERROR_RE = /API Error|(?=[^\n]*(?:error|unauthorized|forbidden|rate.?limit|错误|未授权|超限))[^\n]*\b(?:401|403|429)\b|unauthorized|invalid[-_ ]?api[-_ ]?key|unrecognized_model|quota|insufficient|token plan|用量上限|余额不足/i;
+// 不收录 unrecognized_model：claude -p 对第三方模型名会先打这条提示、再回退默认模型正常完成（实测），
+// 是良性警告，命中会把成功的调用误杀
+const ENGINE_ERROR_RE = /API Error|(?=[^\n]*(?:error|unauthorized|forbidden|rate.?limit|错误|未授权|超限))[^\n]*\b(?:401|403|429)\b|unauthorized|invalid[-_ ]?api[-_ ]?key|quota|insufficient|token plan|用量上限|余额不足/i;
 
 // 从原始输出中提取第一条引擎错误行（无则返回空串）
 function engineErrorLine(raw) {
@@ -33,14 +35,14 @@ function engineErrorLine(raw) {
 // streamJson: 输出为 JSON 行，取 role=assistant 的 content 作为正文（kimi 文本模式会混入过程 bullet，故用 stream-json）
 const TOOL_SPECS = {
   claude: { args: ['-p'], stdin: true, shell: true },
-  codex: { args: ['exec'], stdin: false, shell: false },
+  codex: { args: ['exec', '--skip-git-repo-check'], stdin: false, shell: false },
   kimi: { args: ['-p'], stdin: false, shell: false, streamJson: true },
   grok: { args: ['--single'], stdin: false, shell: false },
 };
 // 自定义命令无法预知参数形态，按最通行的 stdin 方式喂入
 const CUSTOM_SPEC = { args: [], stdin: true, shell: true };
 
-const ANSI_RE = /\[[0-9;?]*[a-zA-Z]|\[[0-9;]*m/g;
+const ANSI_RE = /\[[0-9;?]*[a-zA-Z]|\x1b\[[0-9;]*m/g; // 第二分支也必须带 ESC 前缀，否则会吃掉正文里的 "[1m]"（模型名后缀实测中招）
 
 function stripAnsi(s) {
   return String(s || '').replace(ANSI_RE, '');
@@ -169,7 +171,11 @@ function runCli(cmd, prompt, opts) {
       // exit 0 也可能是引擎把 API 错误写进 stdout（claude 429 实测如此），不能误判为成功
       if (errLine) finish(false, '引擎报错：' + errLine);
       else if (code === 0 && text) finish(true);
-      else finish(false, stripAnsi(errText).trim().split('\n')[0] || '退出码 ' + code);
+      else {
+        // 取 stderr 末行兜底：codex 等会先打「Reading additional input from stdin...」类信息行，真正错误在后面
+        const errLines = stripAnsi(errText).trim().split('\n').filter(Boolean);
+        finish(false, errLines[errLines.length - 1] || '退出码 ' + code);
+      }
     });
     // 子进程启动即死时写 stdin 会触发 EPIPE，吞掉避免 uncaughtException
     child.stdin.on('error', () => {});

@@ -79,6 +79,11 @@ async function main() {
     '结果',
     '文本模式应去掉会话恢复尾行'
   );
+  assert.strictEqual(
+    ai.cleanOutput('模型 glm-5.3-flash[1m] 正常\x1b[31m红\x1b[0m', {}),
+    '模型 glm-5.3-flash[1m] 正常红',
+    'ANSI 清洗只应剥 ESC 序列，不应吃掉正文里的 "[1m]"（模型名后缀实测中招）'
+  );
 
   // --- runCli：成功（参数模式，node 回显 argv）---
   const echoArgv = 'process.stdout.write(process.argv.slice(1).join("|"))';
@@ -110,6 +115,11 @@ async function main() {
   assert.ok(ai.engineErrorLine('API Error: Request rejected (429) · 用量上限'), '应识别 API Error/429');
   assert.ok(ai.engineErrorLine('Error: 401 unauthorized'), '应识别 401');
   assert.strictEqual(ai.engineErrorLine('- 建议先提交代码\n- 尽快 push'), '', '正常建议文本不应误判');
+  assert.strictEqual(
+    ai.engineErrorLine('[claude-code:unrecognized_model] {"model":"glm-5.3-flash[1m]"}'),
+    '',
+    'unrecognized_model 是 claude -p 的良性回退警告（其后正常成功），不应触发快速失败'
+  );
 
   // --- runCli：引擎报错后进程挂起 → 流式命中即快速失败（claude 429 实测场景）---
   const tFast = Date.now();
@@ -126,6 +136,13 @@ async function main() {
     timeout: 10000,
   });
   assert.ok(!r.ok && r.reason.includes('401'), 'exit 0 的引擎错误输出应判失败，实际: ' + JSON.stringify(r));
+
+  // --- runCli：失败原因取 stderr 末行——首行信息行不掩盖真实错误（codex trust 报错实测场景）---
+  r = await ai.runCli(process.execPath, 'x', {
+    spec: { args: ['-e', 'console.error("Reading additional input from stdin..."); console.error("Not inside a trusted directory"); process.exit(1)'], stdin: false, shell: false },
+    timeout: 10000,
+  });
+  assert.ok(!r.ok && r.reason.includes('Not inside a trusted directory'), '失败原因应取 stderr 末行，实际: ' + JSON.stringify(r));
 
   // --- runCli：超时但已有有效输出 → 采用部分输出（进程输出完毕却不退出的兜底）---
   r = await ai.runCli(process.execPath, 'x', {
