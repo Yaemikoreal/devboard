@@ -115,7 +115,7 @@ function mockBoard() {
     },
   ];
 
-  // 最近动静 = max(最后提交, AI 会话痕迹)（scanner 同规则，mock 此处补齐）
+  // 最近动静 = max(最后提交, AI 会话痕迹)；scanner 另有 dirtyAt 第三路（未提交改动文件 mtime），mock 未建模文件 mtime 且 band 已硬编码，此处省略
   projects.forEach((p) => {
     p.lastActivityAt = [p.lastCommitAt, p.aiSessionAt].filter(Boolean).sort().pop() || null;
   });

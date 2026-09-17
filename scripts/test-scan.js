@@ -6,7 +6,8 @@ const scanner = require('../src/main/scanner');
 const { DEFAULT_CONFIG } = require('../src/main/store');
 
 (async () => {
-  const roots = process.argv[2] ? [process.argv[2]] : DEFAULT_CONFIG.roots;
+  // 缺省扫本仓的父目录（出厂 roots 已改为空，不再内置任何本机路径）
+  const roots = process.argv[2] ? [process.argv[2]] : [path.join(__dirname, '..', '..')];
   const projects = await scanner.scan(roots, DEFAULT_CONFIG.blacklist);
   for (const p of projects) delete p.originUrl; // 内部字段，不在契约内
 

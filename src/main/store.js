@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_CONFIG = {
-  roots: ['E:\\myproject'],
+  roots: [], // 出厂默认空：不写死任何本机路径，首启由空态引导卡带用户添加扫描根目录（设置页 roots + scan:preview 设施复用）
   extraPaths: [],
   blacklist: ['node_modules', '$RECYCLE.BIN', '.git'],
   githubToken: '',
@@ -215,7 +215,7 @@ class Store {
     this.writeJson('scan-cache.json', cache, true);
   }
 
-  // AI 结果缓存（issue #29）：weekly 按当天日期复用；advice 按 项目+HEAD+引擎 复用
+  // AI 结果缓存（issue #29）：weekly 按当天日期复用；advice 按 项目+HEAD+模板哈希 复用（issue #78）
   getAiCache() {
     const c = this.readJson('ai-cache.json', { weekly: null, advice: {} });
     if (!c.advice || typeof c.advice !== 'object') c.advice = {};
