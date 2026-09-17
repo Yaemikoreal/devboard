@@ -21,59 +21,51 @@ const MAX_BRANCHES = 50;
 // 扫描总耗时超过该阈值时在控制台输出 breakdown（issue #8）
 const SLOW_SCAN_MS = 3000;
 
+// 并发槽工厂（issue #12 第 3 条）：git 子进程与 FS 探测共用同一限流实现——
+// 并发未满直接放行，超额排队，release 唤醒队首
+function makeSlot(limit) {
+  let running = 0;
+  const queue = [];
+  return {
+    acquire() {
+      if (running < limit) {
+        running++;
+        return Promise.resolve();
+      }
+      return new Promise((resolve) => queue.push(resolve));
+    },
+    release() {
+      const next = queue.shift();
+      if (next) next();
+      else running--;
+    },
+  };
+}
+
 // git 子进程全局并发上限：超过的命令排队，避免多项目同时铺开拖死系统（issue #8）
 const GIT_CONCURRENCY = 6;
-let gitRunning = 0;
-const gitQueue = [];
+const gitSlot = makeSlot(GIT_CONCURRENCY);
 
 // AI 会话痕迹 FS 探测的全局并发上限（issue #103）：目录遍历任务排队执行，
-// 避免项目多时每项目 8 路递归 readdir/stat 同时铺开拖垮磁盘 IO（与 gitSlot 同款队列模式）
+// 避免项目多时每项目 8 路递归 readdir/stat 同时铺开拖垮磁盘 IO
 const FS_CONCURRENCY = 8;
-let fsRunning = 0;
-const fsQueue = [];
+const fsLim = makeSlot(FS_CONCURRENCY);
 
-function fsSlotAcquire() {
-  if (fsRunning < FS_CONCURRENCY) {
-    fsRunning++;
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => fsQueue.push(resolve));
-}
-
-function fsSlotRelease() {
-  const next = fsQueue.shift();
-  if (next) next();
-  else fsRunning--;
-}
-
+// 过 FS 并发槽执行 fn：取槽 → 执行 → finally 放槽
 async function fsSlot(fn) {
-  await fsSlotAcquire();
+  await fsLim.acquire();
   try {
     return await fn();
   } finally {
-    fsSlotRelease();
+    fsLim.release();
   }
 }
 
 // 单项目扫描预算：超时降级为缓存数据（issue #24）
 const PROJECT_SCAN_BUDGET_MS = 3000;
 
-function gitSlotAcquire() {
-  if (gitRunning < GIT_CONCURRENCY) {
-    gitRunning++;
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => gitQueue.push(resolve));
-}
-
-function gitSlotRelease() {
-  const next = gitQueue.shift();
-  if (next) next();
-  else gitRunning--;
-}
-
 function git(projectPath, args, timeout = 5000) {
-  return gitSlotAcquire().then(
+  return gitSlot.acquire().then(
     () =>
       new Promise((resolve, reject) => {
         // core.quotepath=false：非 ASCII 文件名按 UTF-8 原文输出，否则 porcelain 给八进制转义，dirtyFiles/dirtyMtime 解析不到真实路径
@@ -82,7 +74,7 @@ function git(projectPath, args, timeout = 5000) {
           else resolve(stdout.trim());
         });
       })
-  ).finally(gitSlotRelease);
+  ).finally(() => gitSlot.release());
 }
 
 async function exists(p) {
@@ -159,12 +151,12 @@ function emptyProject(projectPath) {
   };
 }
 
-// 单个目录内最新文件 mtime（有界遍历，budget 共享条目数上限）；入口过 FS 并发限制（issue #103）
-function dirLatestMtime(dir, budget) {
+// 单个目录内最新文件 mtime（有界遍历，remaining 为整棵树共享的剩余可遍历条目数）；入口过 FS 并发限制（issue #103）
+function dirLatestMtime(dir, remaining) {
   return fsSlot(async () => {
     let latest = 0;
     const walk = async (d, depth) => {
-      if (budget.n <= 0 || depth > 3) return;
+      if (remaining.n <= 0 || depth > 3) return;
       let entries;
       try {
         entries = await fsp.readdir(d, { withFileTypes: true });
@@ -172,8 +164,8 @@ function dirLatestMtime(dir, budget) {
         return;
       }
       for (const e of entries) {
-        if (budget.n <= 0) return;
-        budget.n--;
+        if (remaining.n <= 0) return;
+        remaining.n--;
         const full = path.join(d, e.name);
         try {
           if (e.isDirectory()) await walk(full, depth + 1);
@@ -204,12 +196,28 @@ function grokSessionDir(projectPath) {
 
 // kimi：wd_<basename 小写、空白转 _>_<hash> 下每个 session_*/state.json 记录 cwd 与 updatedAt。
 // 全量 cwd→updatedAt 映射按 60s TTL 缓存（issue #102，与 codexSessionMap 同款）：
-// 一次 board 扫描中所有项目共享，不再逐项目重扫会话目录
+// 一次 board 扫描中所有项目共享，不再逐项目重扫会话目录。
+// 在飞去重（issue #14）：缓存构建中的 Promise，并发调用方复用同一次构建；
+// 落地后写结果值、清 Promise；失败时不写结果值且清 Promise，下次调用重新构建（不会永久卡住）
 let kimiMap = null;
 let kimiMapAt = 0;
+let kimiMapPromise = null;
 async function kimiSessionMap() {
   const now = Date.now();
   if (kimiMap && now - kimiMapAt < 60000) return kimiMap;
+  if (!kimiMapPromise) {
+    kimiMapPromise = buildKimiSessionMap()
+      .then((map) => {
+        kimiMap = map;
+        kimiMapAt = now;
+        return map;
+      })
+      .finally(() => { kimiMapPromise = null; });
+  }
+  return kimiMapPromise;
+}
+
+async function buildKimiSessionMap() {
   const map = new Map();
   const root = path.join(HOME, '.kimi-code', 'sessions');
   let names = [];
@@ -223,7 +231,18 @@ async function kimiSessionMap() {
     } catch {
       return;
     }
-    for (const s of sessions.slice(0, 40)) {
+    // 会话目录名非时间序（session_<uuid>），先按目录 mtime 倒序再取最新 40 个（issue #19，
+    // stat 走 fsSlot 闸门）；直接按 readdir 序截断可能漏掉最新会话，updatedAt max 失真
+    const withMtime = await Promise.all(sessions.map(async (s) => {
+      try {
+        const st = await fsSlot(() => fsp.stat(path.join(root, d, s)));
+        return { s, t: st.mtimeMs };
+      } catch {
+        return { s, t: 0 };
+      }
+    }));
+    const recent = withMtime.sort((a, b) => b.t - a.t).slice(0, 40);
+    for (const { s } of recent) {
       try {
         const j = JSON.parse(await fsp.readFile(path.join(root, d, s, 'state.json'), 'utf8'));
         const cwd = normPath(j.cwd);
@@ -233,22 +252,31 @@ async function kimiSessionMap() {
       } catch { /* 忽略不可读会话 */ }
     }
   }));
-  kimiMap = map;
-  kimiMapAt = now;
   return map;
-}
-
-function kimiSessionAt(projectPath) {
-  return kimiSessionMap().then((map) => map.get(normPath(projectPath)) || 0);
 }
 
 // codex：rollout 按 年/月/日 分目录，首行 session_meta 记录 cwd；只扫近 120 天，上限 400 个文件。
 // 全量映射按 60s TTL 缓存：一次 board 扫描中所有项目共享，避免逐项目重扫会话目录。
+// 在飞去重（issue #14）与 kimiSessionMap 同款；rollout 文件的 open/read/stat 统一走 fsSlot 闸门
 let codexMap = null;
 let codexMapAt = 0;
+let codexMapPromise = null;
 async function codexSessionMap() {
   const now = Date.now();
   if (codexMap && now - codexMapAt < 60000) return codexMap;
+  if (!codexMapPromise) {
+    codexMapPromise = buildCodexSessionMap(now)
+      .then((map) => {
+        codexMap = map;
+        codexMapAt = now;
+        return map;
+      })
+      .finally(() => { codexMapPromise = null; });
+  }
+  return codexMapPromise;
+}
+
+async function buildCodexSessionMap(now) {
   const map = new Map();
   const files = [];
   const root = path.join(HOME, '.codex', 'sessions');
@@ -284,7 +312,8 @@ async function codexSessionMap() {
     }
     if (files.length >= 400) break;
   }
-  await Promise.all(files.map(async (f) => {
+  // rollout 文件读统一过 fsSlot（issue #14）：最多 400 个文件的 open/read/stat 不再绕过 #103 并发闸门
+  await Promise.all(files.map((f) => fsSlot(async () => {
     try {
       const fh = await fsp.open(f, 'r');
       const buf = Buffer.alloc(2048);
@@ -296,9 +325,7 @@ async function codexSessionMap() {
       const st = await fsp.stat(f);
       if (st.mtimeMs > (map.get(cwd) || 0)) map.set(cwd, st.mtimeMs);
     } catch { /* 忽略不可读文件 */ }
-  }));
-  codexMap = map;
-  codexMapAt = now;
+  })));
   return map;
 }
 
@@ -311,7 +338,7 @@ async function aiSessionTraces(projectPath) {
     if (await exists(dir)) bump(pair[1], await dirLatestMtime(dir, { n: 300 }));
   })());
   jobs.push(dirLatestMtime(claudeSessionDir(projectPath), { n: 300 }).then((t) => bump('claude', t)));
-  jobs.push(kimiSessionAt(projectPath).then((t) => bump('kimi', t)));
+  jobs.push(kimiSessionMap().then((map) => bump('kimi', map.get(normPath(projectPath)) || 0))); // kimiSessionAt 已内联（issue #12 第 5 条）
   jobs.push(codexSessionMap().then((map) => bump('codex', map.get(normPath(projectPath)) || 0)));
   jobs.push(dirLatestMtime(grokSessionDir(projectPath), { n: 300 }).then((t) => bump('grok', t)));
   await Promise.all(jobs);
@@ -604,4 +631,5 @@ async function scan(roots, blacklist, extraPaths, opts) {
   return projects;
 }
 
-module.exports = { scan, discover, bandOf, localWarnings, emptyProject, branchDetail, projectDetail, scanProject };
+// 导出收窄（issue #12 第 6 条）：bandOf/emptyProject 全仓无消费方（仅模块内自用），不再导出
+module.exports = { scan, discover, localWarnings, branchDetail, projectDetail, scanProject };

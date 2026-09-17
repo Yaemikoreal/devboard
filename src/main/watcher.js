@@ -85,4 +85,5 @@ function createGitWatcher({ scanProject, getCached, onUpdate }) {
   };
 }
 
-module.exports = { createGitWatcher, resolveGitdir, DEBOUNCE_MS, COOLDOWN_MS, MAX_WATCHED };
+// 导出收窄（issue #12 第 6 条）：resolveGitdir/DEBOUNCE_MS/COOLDOWN_MS/MAX_WATCHED 全仓无消费方，不再导出
+module.exports = { createGitWatcher };
