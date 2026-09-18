@@ -336,6 +336,9 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
         },
         attention,
         projects: out,
+        // GitHub 通知快照（issue #145）：未读事件跨项目注意力流，TTL 过期照发（刷新落地后推补丁）；
+        // 增量补丁（单项目）不带此字段，渲染层保留旧值
+        notifications: store.getGithubCache().notifications || { fetchedAt: 0, data: [], error: null },
       },
       stale,
     };
@@ -432,7 +435,13 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
           .map((p) => github.parseGitHubRemote(p.originUrl))
           .filter((r) => r && r.owner.toLowerCase() === me)
       : stale;
-    github.refreshCache(remotes, config, store).then((changed) => {
+    // 通知（issue #145）与 per-repo 缓存同触发点并行刷：TTL 内跳过，落地有变化并入补丁判断
+    const notifyChanged = github.refreshNotifications(config, store).catch((err) => {
+      console.error('[devboard] GitHub 通知刷新失败', err);
+      return false;
+    });
+    github.refreshCache(remotes, config, store).then(async (changed) => {
+      if (await notifyChanged) changed = true;
       // GitHub 数据落地后立即重推整板补丁：此前补丁发出时数据未到，UI 只能等下次启动（issue #44）
       if (!changed) return;
       const cur = store.getScanCache();

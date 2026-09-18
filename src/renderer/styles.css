@@ -772,6 +772,21 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 }
 .gh-item .rv-changes{color:var(--warn);border-color:var(--warn)}
 .gh-item .rv-approved{color:var(--accent);border-color:var(--accent)}
+
+/* GitHub 通知小节（issue #145）：未读事件流；repo 用等宽字体与标题区分层级 */
+.ntf-item{
+  display:flex;align-items:baseline;gap:8px;
+  padding:6px 0;border-top:1px solid var(--line);font-size:var(--fs-body);
+  cursor:pointer;
+}
+.ntf-item:first-of-type{border-top:0}
+.ntf-item:hover .t{text-decoration:underline}
+.ntf-item .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ntf-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:none}
+.ntf-repo{flex:none;font-size:var(--fs-cap);color:var(--ink-2);max-width:9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ntf-reason{flex:none;font-size:var(--fs-cap);font-weight:700;color:var(--ink-3)}
+.ntf-more{padding:6px 0 0;font-size:var(--fs-aux);color:var(--ink-3)}
+#ghNotifySub.bad{color:#c0392b}
 .gh-empty{margin-top:4px;font-size:var(--fs-aux);color:var(--ink-3)}
 .gh-empty.bad{color:#c0392b}
 
