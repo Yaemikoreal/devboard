@@ -22,6 +22,16 @@ function parseGitHubRemote(url) {
   return { owner: m[1], repo: m[2] };
 }
 
+// GitHub REST 请求头工厂（issue-12）：issues 拉取与连接测试共用同一组头
+function apiHeaders(token) {
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'devboard',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+}
+
 // 单仓拉取：12s 超时 + 至多 3 次尝试（递增退避）。
 // 本机到 api.github.com 偶发 TLS 断连，单次失败率不低（issue #44/#46 实测），
 // 多一次尝试可把「两次都撞上断连」的概率再压一个量级
@@ -39,12 +49,7 @@ async function fetchIssues(owner, repo, token) {
           `https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=100&page=${page}`,
           {
             signal: ctrl.signal,
-            headers: {
-              Authorization: `Bearer ${token}`,
-              Accept: 'application/vnd.github+json',
-              'User-Agent': 'devboard',
-              'X-GitHub-Api-Version': '2022-11-28',
-            },
+            headers: apiHeaders(token),
           }
         );
         if (!res.ok) throw new Error(`GitHub API ${res.status}`);
@@ -171,12 +176,7 @@ async function testConnection(token) {
     try {
       const res = await fetch('https://api.github.com/user', {
         signal: ctrl.signal,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'devboard',
-          'X-GitHub-Api-Version': '2022-11-28',
-        },
+        headers: apiHeaders(token),
       });
       if (res.status === 401) return { ok: false, reason: 'Token 无效或已过期' };
       if (!res.ok) return { ok: false, reason: `GitHub API ${res.status}` };

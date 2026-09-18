@@ -140,13 +140,31 @@ const DEFAULT_AI_TOOLS = [
 
 // 合并默认与自定义工具并逐项 where 探测；随发品牌图标（issue #21）。aitools:list 与 ai 引擎解析共用。
 // 结果缓存 60s：启动负载期（扫描 + 探测并发）进程创建很慢，重复 spawn 会互相拖超时（issue #29 实测）；
-// 缓存键含自定义清单，设置变更后立即重探
-let aiToolsDetectCache = { at: 0, key: '', list: null };
-async function detectAiTools(cfg) {
+// 缓存键含自定义清单，设置变更后立即重探。
+// 在飞去重（issue-14）：缓存进行中的 Promise 而非仅落地后的结果——启动时 loadAiTools/loadAiCaps
+// 并发打到主进程、结果缓存均空时复用同一轮探测（where 进程数 = 工具数 ×1 而非 ×2）；
+// 失败时清掉在飞缓存，下次调用立即重试
+let aiToolsDetectCache = { at: 0, key: '', list: null, promise: null };
+function detectAiTools(cfg) {
   const key = JSON.stringify(cfg.aiTools || []);
-  if (aiToolsDetectCache.list && aiToolsDetectCache.key === key && Date.now() - aiToolsDetectCache.at < 60000) {
-    return aiToolsDetectCache.list;
+  const c = aiToolsDetectCache;
+  if (c.key === key) {
+    if (c.list && Date.now() - c.at < 60000) return Promise.resolve(c.list);
+    if (c.promise) return c.promise;
   }
+  const promise = probeAiTools(cfg).then((list) => {
+    // 旧 key 的在飞 Promise 落地时不覆盖新条目（设置变更可能已触发重探）
+    if (aiToolsDetectCache.promise === promise) aiToolsDetectCache = { at: Date.now(), key, list, promise: null };
+    return list;
+  }, (err) => {
+    if (aiToolsDetectCache.promise === promise) aiToolsDetectCache = { at: 0, key, list: null, promise: null };
+    throw err;
+  });
+  aiToolsDetectCache = { at: 0, key, list: null, promise };
+  return promise;
+}
+
+async function probeAiTools(cfg) {
   const custom = (cfg.aiTools || [])
     .map((t, i) => ({
       id: 'custom-' + i,
@@ -156,7 +174,7 @@ async function detectAiTools(cfg) {
     }))
     .filter((t) => t.cmd);
   const tools = DEFAULT_AI_TOOLS.concat(custom);
-  const list = await Promise.all(
+  return Promise.all(
     tools.map(async (t) => {
       const icon = AI_TOOL_ICONS[t.logoKey] || AI_TOOL_ICONS[t.id] || AI_TOOL_ICONS.terminal;
       return {
@@ -168,14 +186,6 @@ async function detectAiTools(cfg) {
       };
     })
   );
-  aiToolsDetectCache = { at: Date.now(), key, list };
-  return list;
-}
-
-// AI 引擎解析（issue #29）：优先 config.aiEngine 指定项，其次最近成功引擎（issue #41），否则取第一个已安装工具
-async function resolveEngine(cfg, lastGoodId) {
-  const ordered = await resolveEngines(cfg, lastGoodId);
-  return ordered[0] || null;
 }
 
 // 引擎候选排序：显式指定 > 最近成功 > 清单默认顺序（稳定排序）；供 ai:ask 链式回退（issue #41）
@@ -204,6 +214,33 @@ function localDateStr(d) {
 // 键基于实际生效的模板（默认模板亦如此：未来内置模板优化时旧缓存自然重建）
 function promptTplKey(template) {
   return crypto.createHash('sha1').update(String(template)).digest('hex').slice(0, 10);
+}
+
+// filter 短超时（issue-16）：自然语言筛选是交互式场景，只打首选引擎 + 20s 上限，
+// 失败即回让渲染层安静回退关键字搜索；weekly/advice 维持 runCli 默认 90s 不变
+const FILTER_TIMEOUT_MS = 20000;
+
+// AI 引擎错误归类（issue-22）：抛给渲染层的失败原因映射为中文类别，普通用户读得懂；
+// 原始（多为英文）错误行由调用方进 console.error 供排查
+function aiErrorCategory(reason) {
+  const s = String(reason || '');
+  if (/超时|timed? ?out/i.test(s)) return '响应超时';
+  if (/401|403|unauthorized|forbidden|未授权|鉴权|invalid[-_ ]?api[-_ ]?key/i.test(s)) return '鉴权失败（请在终端重新登录该引擎）';
+  if (/429|quota|rate.?limit|insufficient|token plan|用量上限|余额不足|超限/i.test(s)) return '配额不足或已达用量上限';
+  if (/启动失败|ENOENT|not found|找不到|未安装/i.test(s)) return '引擎未安装或命令不可用';
+  if (/ECONN|ENOTFOUND|EAI_AGAIN|网络|network/i.test(s)) return '网络连接失败';
+  if (/输出无法解析/.test(s)) return '输出无法解析';
+  if (/命令行过长/.test(s)) return '提示词超出命令行长度上限';
+  if (/输出超限/.test(s)) return '输出异常（内容过长）';
+  return '调用失败';
+}
+
+// advice 事实摘要签名（issue-15）：ahead/behind/dirtyCount/警示标签哈希进缓存键——
+// git push 后 HEAD 不变但 ahead 变化即 miss，不再展出过期语境的建议
+function adviceFactsKey(p) {
+  const warnSig = (p.warnings || []).map((w) => w.label).join('|');
+  const sig = [p.ahead || 0, p.behind || 0, p.dirtyCount || 0, warnSig].join('/');
+  return crypto.createHash('sha1').update(sig).digest('hex').slice(0, 10);
 }
 
 function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoStartError, onAttentionCount }) {
@@ -342,6 +379,14 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
       next.projects[p.path] = p.degraded && cache.projects[p.path] ? cache.projects[p.path] : p;
     }
     store.setScanCache(next);
+    // advice 缓存尸体裁剪（issue-23）：按现存项目集删掉已消失项目的缓存键，
+    // 项目删除/改根目录后 ai-cache.json 不再永久累积尸体条目
+    const aiCache = store.getAiCache();
+    const deadAdviceKeys = Object.keys(aiCache.advice).filter((k) => !next.projects[k]);
+    if (deadAdviceKeys.length) {
+      for (const k of deadAdviceKeys) delete aiCache.advice[k];
+      store.setAiCache(aiCache);
+    }
     gitWatcher.syncWatchers(projects.map((p) => p.path)); // 对齐监听清单，顺带重建失效 watcher
     return { projects, config, settled: projects.settled || Promise.resolve(), gen };
   }
@@ -401,6 +446,21 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
       if (win && !win.isDestroyed()) win.webContents.send('board:patch', board);
     }).catch((err) => console.error('[devboard] GitHub 缓存刷新失败', err))
       .finally(() => { refreshInFlight = false; });
+  }
+
+  // GitHub 连接/导入/断开后的即时处理（issue-02）：不再等下一个刷新触发点（后台定时默认最长 20 分钟）。
+  // 连接/导入：复用 maybeRefreshGithub「落地即推补丁」链路（issue #44）立即拉一轮本人仓库；
+  // 断开：token 已清、拉取无意义，直接重推一次拼板，渲染层即时清掉 GitHub 区块
+  function refreshGithubNow(connected) {
+    const projs = Object.values(store.getScanCache().projects);
+    if (!projs.length) return;
+    if (!connected) {
+      const { board } = assembleBoard(projs, store.getConfig(), true);
+      const win = getWindow && getWindow();
+      if (win && !win.isDestroyed()) win.webContents.send('board:patch', board);
+      return;
+    }
+    maybeRefreshGithub(true, [], projs, store.getConfig());
   }
 
   // 历史安装自愈：token 已配置但 username 为空（旧版导入不落登录名，issue #44）时，
@@ -478,7 +538,8 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   ipcMain.handle('ai:caps', async () => {
     const cfg = store.getConfig();
     const enabled = cfg.aiEnabled !== false;
-    const engine = enabled ? await resolveEngine(cfg, store.getAiCache().lastGoodEngine) : null;
+    // 首选引擎 = 候选链首项（issue-12：原 resolveEngine 仅转发 resolveEngines 取 [0]，已内联删除）
+    const engine = enabled ? (await resolveEngines(cfg, store.getAiCache().lastGoodEngine))[0] || null : null;
     return {
       enabled,
       engine: engine ? { id: engine.id, label: engine.label, cmd: engine.cmd } : null,
@@ -487,89 +548,158 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
 
   // 在飞 AI 任务：同 kind+目标 的请求共享同一 Promise，切页后重复触发不会再起 CLI 进程（issue #40）
   const aiInFlight = new Map();
-  // 会话级引擎黑名单：本进程内已失败过的引擎不再重复尝试（配额/挂起类故障在会话内不会自愈，issue #41）
+  // 会话级引擎黑名单：本进程内已失败过的引擎不再重复尝试（配额/挂起类故障在会话内不会自愈，issue #41）；
+  // settings:set 变更 AI 配置（aiEngine/aiTools/aiEnabled）时清空（issue-22），修好引擎后无需重启即可恢复首选
   const sessionBadEngines = new Set();
 
-  // AI 统一调用入口（issue #29）：prompt 组装 / 90s 超时 / 失败降级 / 结果缓存
-  // kind: weekly（按当天缓存）| advice（按 项目+HEAD 缓存）| filter（不缓存）
-  // 引擎链式回退：首选失败后自动尝试其余已安装引擎，成功则记为最近可用（issue #41）
+  // 记最近可用引擎（issue #41）：filter 无结果缓存，成功时单独落 lastGoodEngine（issue-21）；
+  // weekly/advice 在缓存写回时一并落，不走这里
+  function writeLastGoodEngine(engineId) {
+    const cur = store.getAiCache();
+    cur.lastGoodEngine = engineId;
+    store.setAiCache(cur);
+  }
+
+  // AI kind 处理器表（issue-12）：doAiAsk 与 ai:promptPreview 的按 kind 分派共用此表，
+  // 取代两处平行的 if 级联。字段约定：
+  //   customTplOf(cfg)                  —— 已落盘的自定义模板（null = 内置默认，issue #78）
+  //   tplOf(cfg)                        —— 实际生效模板（含内置默认回落），其哈希进缓存键（issue #78）
+  //   previewable                       —— 是否开放 ai:promptPreview（filter 是 parseFilter 严格 JSON 契约，不开放）
+  //   keyOf({ payload, now })           —— 缓存键上下文；filter 不缓存（issue #29）无此层
+  //   readHit({ cache, key, tplKey })   —— 命中返回缓存条目，否则 null
+  //   writeEntry(ctx, text, engineId)   —— 写 kind 专属缓存条目（lastGoodEngine 由调用方统一落）
+  //   buildPrompt(ctx)                  —— { ok, prompt } | { ok:false, reason }；
+  //                                        template/emptyReason/project 由调用方按场景给（预览可传草稿模板）
+  const aiKindHandlers = {
+    weekly: {
+      customTplOf: (cfg) => cfg.aiPromptWeekly,
+      tplOf: (cfg) => cfg.aiPromptWeekly || ai.DEFAULT_WEEKLY_TEMPLATE,
+      previewable: true,
+      // 周报按当天日期缓存（issue #29）；两处空数据文案不同：emptyReason 由调用方传
+      keyOf: ({ now }) => ({ date: localDateStr(now) }),
+      readHit: ({ cache, key, tplKey }) => {
+        const hit = cache.weekly;
+        return hit && hit.date === key.date && hit.text && hit.tpl === tplKey ? hit : null;
+      },
+      writeEntry: ({ cache, key, tplKey, now }, text, engineId) => {
+        cache.weekly = { date: key.date, engine: engineId, text, at: now.toISOString(), tpl: tplKey };
+      },
+      buildPrompt: ({ now, template, emptyReason }) => {
+        const projects = Object.values(store.getScanCache().projects);
+        if (!projects.some((p) => p.commits7d > 0)) return { ok: false, reason: emptyReason };
+        return { ok: true, prompt: ai.buildWeeklyPrompt(projects, now, template) };
+      },
+    },
+    advice: {
+      customTplOf: (cfg) => cfg.aiPromptAdvice,
+      tplOf: (cfg) => cfg.aiPromptAdvice || ai.DEFAULT_ADVICE_TEMPLATE,
+      previewable: true,
+      // 建议按 项目+HEAD+事实摘要签名 缓存（issue-15：git push 后 ahead 变化即 miss，不展出过期语境的建议）；
+      // 项目不在扫描缓存时 keyOf 返回 null，由 buildPrompt 统一报「项目不在扫描缓存中」
+      keyOf: ({ payload }) => {
+        const p = store.getScanCache().projects[String((payload && payload.path) || '')];
+        if (!p) return null;
+        return { project: p, head: p.headSha || 'nohead', facts: adviceFactsKey(p) };
+      },
+      readHit: ({ cache, key, tplKey }) => {
+        const hit = cache.advice[key.project.path];
+        return hit && hit.head === key.head && hit.facts === key.facts && hit.text && hit.tpl === tplKey ? hit : null;
+      },
+      writeEntry: ({ cache, key, tplKey, now }, text, engineId) => {
+        cache.advice[key.project.path] = { head: key.head, facts: key.facts, engine: engineId, text, at: now.toISOString(), tpl: tplKey };
+      },
+      buildPrompt: ({ project, now, template, emptyReason }) => {
+        if (!project) return { ok: false, reason: emptyReason };
+        return { ok: true, prompt: ai.buildAdvicePrompt(project, now, template) };
+      },
+      // 预览无指定项目：取近 7 天最活跃的项目作示例；扫描缓存为空时返回 null
+      previewSubject: () => {
+        const projects = Object.values(store.getScanCache().projects);
+        if (!projects.length) return null;
+        return projects.slice().sort((a, b) => (b.commits7d || 0) - (a.commits7d || 0))[0];
+      },
+    },
+    filter: {
+      previewable: false,
+      tplOf: () => '',
+      buildPrompt: ({ payload }) => {
+        const query = String((payload && payload.query) || '').trim().slice(0, 100);
+        if (!query) return { ok: false, reason: '查询为空' };
+        return { ok: true, prompt: ai.buildFilterPrompt(query) };
+      },
+    },
+  };
+
+  // AI 统一调用入口（issue #29）：prompt 组装 / 超时 / 失败降级 / 结果缓存；kind 分派走处理器表（issue-12）
+  // kind: weekly（按当天缓存）| advice（按 项目+HEAD+事实摘要签名+模板哈希 缓存，issue-15）| filter（不缓存）
+  // 缓存命中分支在引擎探测之前（issue-23）：纯缓存命中不再等一轮 where 探测
+  // 引擎链式回退：首选失败后自动尝试其余已安装引擎，成功则记为最近可用（issue #41）；
+  // filter 例外（issue-16）：只打链首首选引擎 + 20s 短超时，失败即回，渲染层安静回退关键字搜索
   async function doAiAsk(payload) {
     const cfg = store.getConfig();
     if (cfg.aiEnabled === false) return { ok: false, reason: 'AI 功能已在设置中关闭' };
+    const kind = payload && payload.kind;
+    const handler = aiKindHandlers[kind];
+    if (!handler) return { ok: false, reason: '未知的 AI 请求类型' };
+    const now = new Date();
     const cache = store.getAiCache();
+    const tplKey = handler.readHit ? promptTplKey(handler.tplOf(cfg)) : ''; // 模板哈希入缓存键（issue #78）
+    const keyCtx = handler.keyOf ? handler.keyOf({ payload, now }) : null;
+
+    if (handler.readHit && keyCtx) {
+      const hit = handler.readHit({ cache, key: keyCtx, tplKey });
+      if (hit) {
+        const eng = await findToolInfo(cfg, hit.engine);
+        return { ok: true, kind, text: hit.text, engine: eng, cached: true, at: hit.at || null };
+      }
+    }
+    if (payload.cachedOnly) return { ok: false, kind, reason: 'no-cache' };
+
     let engines = await resolveEngines(cfg, cache.lastGoodEngine);
     if (!engines.length) return { ok: false, reason: '未检测到可用的 AI 命令行工具' };
     const healthy = engines.filter((t) => !sessionBadEngines.has(t.id));
     if (healthy.length) engines = healthy; // 全灭时也照旧全试一遍（可能已恢复）
-    const kind = payload && payload.kind;
-    const now = new Date();
+    if (kind === 'filter') engines = engines.slice(0, 1); // filter 只打首选引擎（issue-16）
 
-    let prompt = '';
-    let cacheWrite = null;
-    if (kind === 'weekly') {
-      const today = localDateStr(now);
-      const tplKey = promptTplKey(cfg.aiPromptWeekly || ai.DEFAULT_WEEKLY_TEMPLATE); // 模板哈希入缓存键（issue #78）
-      const hit = cache.weekly;
-      if (hit && hit.date === today && hit.text && hit.tpl === tplKey) {
-        const eng = await findToolInfo(cfg, hit.engine);
-        return { ok: true, kind, text: hit.text, engine: eng, cached: true, at: hit.at || null };
-      }
-      if (payload.cachedOnly) return { ok: false, kind, reason: 'no-cache' };
-      const projects = Object.values(store.getScanCache().projects);
-      if (!projects.some((p) => p.commits7d > 0)) {
-        return { ok: false, reason: '近 7 天没有提交活动，暂无可摘要的内容' };
-      }
-      prompt = ai.buildWeeklyPrompt(projects, now, cfg.aiPromptWeekly);
-      cacheWrite = (text, engineId) => {
-        const cur = store.getAiCache();
-        cur.weekly = { date: today, engine: engineId, text, at: now.toISOString(), tpl: tplKey };
-        cur.lastGoodEngine = engineId;
-        store.setAiCache(cur);
-      };
-    } else if (kind === 'advice') {
-      const p = store.getScanCache().projects[String((payload && payload.path) || '')];
-      if (!p) return { ok: false, reason: '项目不在扫描缓存中' };
-      const head = p.headSha || 'nohead';
-      const tplKey = promptTplKey(cfg.aiPromptAdvice || ai.DEFAULT_ADVICE_TEMPLATE); // 模板哈希入缓存键（issue #78）
-      const hit = cache.advice[p.path];
-      if (hit && hit.head === head && hit.text && hit.tpl === tplKey) {
-        const eng = await findToolInfo(cfg, hit.engine);
-        return { ok: true, kind, text: hit.text, engine: eng, cached: true, at: hit.at || null };
-      }
-      if (payload.cachedOnly) return { ok: false, kind, reason: 'no-cache' };
-      prompt = ai.buildAdvicePrompt(p, now, cfg.aiPromptAdvice);
-      cacheWrite = (text, engineId) => {
-        const cur = store.getAiCache();
-        cur.advice[p.path] = { head, engine: engineId, text, at: now.toISOString(), tpl: tplKey };
-        cur.lastGoodEngine = engineId;
-        store.setAiCache(cur);
-      };
-    } else if (kind === 'filter') {
-      const query = String((payload && payload.query) || '').trim().slice(0, 100);
-      if (!query) return { ok: false, reason: '查询为空' };
-      prompt = ai.buildFilterPrompt(query);
-    } else {
-      return { ok: false, reason: '未知的 AI 请求类型' };
-    }
+    const built = handler.buildPrompt({
+      payload,
+      now,
+      template: handler.customTplOf ? handler.customTplOf(cfg) : undefined,
+      project: keyCtx ? keyCtx.project : undefined,
+      emptyReason: kind === 'weekly' ? '近 7 天没有提交活动，暂无可摘要的内容' : '项目不在扫描缓存中',
+    });
+    if (!built.ok) return { ok: false, reason: built.reason };
 
     const fails = [];
     for (const engine of engines) {
       const engineInfo = { id: engine.id, label: engine.label, cmd: engine.cmd };
-      const r = await ai.runCli(engine.cmd, prompt, { toolId: engine.id });
+      const r = await ai.runCli(engine.cmd, built.prompt, {
+        toolId: engine.id,
+        timeout: kind === 'filter' ? FILTER_TIMEOUT_MS : undefined, // filter 短超时（issue-16）
+      });
       if (!r.ok) {
         sessionBadEngines.add(engine.id);
-        fails.push(engine.label + '：' + r.reason);
+        console.error('[devboard] AI 引擎调用失败（' + engine.id + '）：' + r.reason); // 原始错误行进 console（issue-22）
+        fails.push(engine.label + '：' + aiErrorCategory(r.reason)); // 上屏只给中文类别（issue-22）
         continue;
       }
       if (kind === 'filter') {
         const filter = ai.parseFilter(r.text);
         if (!filter) {
+          // 输出无法解析视同引擎失败拉黑（issue-21）：对 filter 持续输出噪音的引擎不再被首选重试
+          sessionBadEngines.add(engine.id);
           fails.push(engine.label + '：输出无法解析');
           continue;
         }
+        writeLastGoodEngine(engine.id); // filter 成功同样记最近可用引擎（issue-21）
         return { ok: true, kind, filter, engine: engineInfo };
       }
-      if (cacheWrite) cacheWrite(r.text, engine.id);
+      if (handler.writeEntry && keyCtx) {
+        const cur = store.getAiCache();
+        handler.writeEntry({ cache: cur, key: keyCtx, tplKey, now }, r.text, engine.id);
+        cur.lastGoodEngine = engine.id; // 成功引擎记为最近可用（issue #41）
+        store.setAiCache(cur);
+      }
       return { ok: true, kind, text: r.text, engine: engineInfo, cached: false, at: now.toISOString() };
     }
     return { ok: false, kind, reason: fails.join('；') || '所有可用 AI 引擎均调用失败' };
@@ -593,30 +723,35 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
 
   // 提示词模板预览（issue #78）：用真实数据组装完整 prompt 展示给设置页，眼见为实地编辑；
   // 只组装不调用引擎。渲染层可传当前草稿模板（template 字段），未传则用已落盘配置；
-  // 自然语言筛选 prompt 不开放（parseFilter 严格 JSON 契约）
+  // 自然语言筛选 prompt 不开放（parseFilter 严格 JSON 契约，处理器表 previewable=false）
+  // kind 分派与 doAiAsk 共用处理器表（issue-12）；预览专属差异：草稿模板优先 + 预览措辞的空数据文案
   ipcMain.handle('ai:promptPreview', (_e, payload) => {
     const kind = String((payload && payload.kind) || '');
+    const handler = aiKindHandlers[kind];
+    if (!handler || !handler.previewable) return { ok: false, reason: '未知的预览类型' };
     const cfg = store.getConfig();
     const now = new Date();
-    const projects = Object.values(store.getScanCache().projects);
     // 草稿优先：payload 显式带 template 字段时（含 null = 恢复默认）用草稿，否则用已存配置
     const hasDraft = payload && Object.prototype.hasOwnProperty.call(payload, 'template');
     const draft = hasDraft
       ? ((typeof payload.template === 'string' && payload.template.trim()) ? payload.template.slice(0, 10000) : null)
       : undefined;
-    if (kind === 'weekly') {
-      if (!projects.some((p) => p.commits7d > 0)) {
-        return { ok: false, reason: '近 7 天没有提交活动，暂无事实可组装（先完成一次扫描）' };
-      }
-      return { ok: true, prompt: ai.buildWeeklyPrompt(projects, now, draft === undefined ? cfg.aiPromptWeekly : draft) };
-    }
-    if (kind === 'advice') {
-      if (!projects.length) return { ok: false, reason: '扫描缓存为空，请先完成一次扫描' };
-      // 无指定项目时取近 7 天最活跃的项目作示例
-      const sample = projects.slice().sort((a, b) => (b.commits7d || 0) - (a.commits7d || 0))[0];
-      return { ok: true, sample: sample.name, prompt: ai.buildAdvicePrompt(sample, now, draft === undefined ? cfg.aiPromptAdvice : draft) };
-    }
-    return { ok: false, reason: '未知的预览类型' };
+    const template = draft === undefined ? handler.customTplOf(cfg) : draft;
+    // advice 无指定项目时取近 7 天最活跃的项目作示例（previewSubject 返回 null = 扫描缓存为空）
+    const subject = handler.previewSubject ? handler.previewSubject() : undefined;
+    const built = handler.buildPrompt({
+      payload,
+      now,
+      template,
+      project: subject,
+      emptyReason: subject === null
+        ? '扫描缓存为空，请先完成一次扫描'
+        : '近 7 天没有提交活动，暂无事实可组装（先完成一次扫描）',
+    });
+    if (!built.ok) return { ok: false, reason: built.reason };
+    const out = { ok: true, prompt: built.prompt };
+    if (subject) out.sample = subject.name;
+    return out;
   });
 
   // 详情面板深区数据：README 首段摘要 + AI 会话痕迹明细（issue #17）
@@ -664,6 +799,11 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
       p[k] = raw[k];
     }
     if (!p.githubToken) delete p.githubToken; // 空值 = 不改动已存 token（清空走 github:importGh 失败态外的显式入口）
+    // AI 配置变更清空会话级引擎黑名单（issue-22）：aiEngine/aiTools/aiEnabled 任一变化，
+    // 被偶发故障拉黑的引擎立即可再试，修好登录/配额后不再整会话雪藏
+    if (['aiEngine', 'aiTools', 'aiEnabled'].some((k) => Object.prototype.hasOwnProperty.call(p, k))) {
+      sessionBadEngines.clear();
+    }
     const cfg = store.setConfig(p);
     applySettings(cfg); // 热键重注册 + 开机自启即时生效
     return settingsView(cfg);
@@ -726,6 +866,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     const t = await github.testConnection(r.token);
     if (!t.ok) return { status: 'error', reason: t.reason };
     store.setConfig({ githubToken: r.token, githubUsername: t.login });
+    refreshGithubNow(true); // 授权成功立即拉一轮并走「落地即推补丁」链路（issue-02），不等下一个刷新触发点
     return { status: 'success', login: t.login };
   });
 
@@ -736,6 +877,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     const t = await github.testConnection(token);
     if (!t.ok) return { ok: false, reason: t.reason };
     store.setConfig({ githubToken: token, githubUsername: t.login });
+    refreshGithubNow(true); // 导入成功立即拉一轮并走「落地即推补丁」链路（issue-02）
     return { ok: true, login: t.login };
   });
 
@@ -751,6 +893,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   // 断开连接：清除 token 与登录名（GitHub 数据挂接随之停止）
   ipcMain.handle('github:disconnect', () => {
     store.setConfig({ githubToken: '', githubUsername: '' });
+    refreshGithubNow(false); // 立即重推一次拼板，渲染层即时清掉 GitHub 区块（issue-02）
     return true;
   });
 
