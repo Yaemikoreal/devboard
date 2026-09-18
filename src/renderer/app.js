@@ -706,7 +706,7 @@
       api.aiToolsOpen(tool.cmd, p.path).then(function (ok) {
         flashBtn(btn, ok ? '已启动' : '启动失败', ok);
         setTimeout(renderTools, 950);
-      });
+      }).catch(function () { flashBtn(btn, '启动失败', false); }); // IPC reject 也亮错（issue #119）
     }
 
     input.addEventListener('input', function () {
@@ -812,12 +812,15 @@
   function aiJobKey(kind, path) { return kind + '|' + (path || ''); }
 
   // 系统睡眠跨夜后在飞任务的 IPC 回复可能永久丢失，running 态永不落幕（实测挂起 9h 后仍显示生成中）；
-  // 主进程侧最坏路径是引擎链全部超时（每引擎 90s），超过 10 分钟仍 running 的必是死任务，读时即清。
+  // 主进程侧最坏路径是引擎链全部超时（每引擎 90s），超过阈值仍 running 的必是死任务，读时即清。
+  // 阈值按已安装引擎数动态放大（issue #139）：max(10 分钟, 引擎数 × 100s)，6+ 引擎的合法长任务不被误清。
   // 清掉后各入口自然落回缓存读取或重新发起（主进程在飞去重 + 结果缓存双兜底）
-  var AI_JOB_STALE_MS = 10 * 60 * 1000;
+  function aiJobStaleMs() {
+    return Math.max(10 * 60 * 1000, installedTools().length * 100 * 1000);
+  }
   function liveAiJob(key) {
     var job = state.aiJobs[key];
-    if (job && job.status === 'running' && Date.now() - job.startAt > AI_JOB_STALE_MS) {
+    if (job && job.status === 'running' && Date.now() - job.startAt > aiJobStaleMs()) {
       delete state.aiJobs[key];
       return null;
     }
@@ -838,8 +841,9 @@
     }).finally(function () {
       refreshAiJobViews(key);
       // 注册表只承担「在飞态 + 一次性交接结果」：重绘后即清除，
-      // 之后各视图统一走主进程 ai-cache 展出（单一事实源，HEAD 变化后不会出现陈旧建议）
-      delete state.aiJobs[key];
+      // 之后各视图统一走主进程 ai-cache 展出（单一事实源，HEAD 变化后不会出现陈旧建议）；
+      // 身份比对（issue #129）：死任务被「读时即清」后同 key 新任务已在飞，旧任务迟到 resolve 的 finally 不得误删新任务
+      if (state.aiJobs[key] === job) delete state.aiJobs[key];
     });
     return job;
   }
@@ -884,7 +888,9 @@
   /* ----- P0 · AI 周报（总览页独立模块，issue #32；手动触发，当天缓存；后台执行 issue #40） ----- */
   // 打开应用即有周报（issue #42）：今日无缓存时启动后自动生成一次（后台执行）；
   // 自动生成失败保持安静（不展示错误条），用户仍可手动点「生成周报」
-  var weeklyAutoDay = ''; // 自动生成标记与当天日期绑定：应用常驻跨天后复位，第二天无缓存时再自动生成一次
+  var weeklyAutoDay = ''; // 自动生成标记与当天日期绑定（成功后才落，issue #136）：应用常驻跨天后复位，第二天无缓存时再自动生成一次
+  var weeklyAutoFailAt = 0; // 自动失败退避起点（issue #136）：「无数据」类暂时性失败不消耗当天名额，退避期内 onTick 重估不再发起
+  var WEEKLY_AUTO_RETRY_MS = 10 * 60 * 1000; // 自动失败后的重试退避窗口；手动点「生成周报」不受限
 
   function renderAiWeeklyEntry() {
     var card = document.getElementById('aiWeeklyCard');
@@ -898,6 +904,11 @@
     delete btn.dataset.busy;
     btn.textContent = '✦ 生成周报';
     if (job) {
+      // 自动名额结算（issue #136）：成功才落当天日期标记；失败记退避起点，退避期内 onTick 重估不再自动发起
+      if (job.auto) {
+        if (job.status === 'done') weeklyAutoDay = localDateStr(new Date());
+        else weeklyAutoFailAt = Date.now();
+      }
       if (job.status === 'error' && job.auto) return; // 自动生成失败保持安静（issue #42）
       // 刚完成的后台任务：直接展出交接结果
       box.classList.remove('hidden');
@@ -905,8 +916,8 @@
       return;
     }
     // 今日已生成过的周报直接展出（只读缓存，不触发新生成），模块内标明模型与生成时间；
-    // 主进程有同任务在飞时回 pending（如页面重载后）→ 转为正式请求并入该任务；
-    // 今日无缓存 → 启动后自动后台生成一次（issue #42）
+    // 主进程有同任务在飞时回 pending（如页面重载后）→ 转为正式请求并入该任务（不置 auto：失败对触发者可见，issue #138）；
+    // 今日无缓存 → 启动后自动后台生成一次（issue #42），自动失败退避期内不再发起（issue #136）
     api.aiAsk({ kind: 'weekly', cachedOnly: true }).then(function (r) {
       if (r && r.ok) {
         box.classList.remove('hidden');
@@ -914,8 +925,9 @@
       } else if (r && r.reason === 'pending') {
         startAiJob('weekly', { kind: 'weekly' });
         renderAiWeeklyEntry();
-      } else if (r && r.reason === 'no-cache' && weeklyAutoDay !== localDateStr(new Date())) {
-        weeklyAutoDay = localDateStr(new Date());
+      } else if (r && r.reason === 'no-cache' && weeklyAutoDay !== localDateStr(new Date()) &&
+        Date.now() - weeklyAutoFailAt > WEEKLY_AUTO_RETRY_MS) {
+        // auto 仅在此（自动发起处）置位（issue #138）：手动点击与 pending 并入的任务失败都走可见错误条
         var j = startAiJob('weekly', { kind: 'weekly' });
         j.auto = true;
         renderAiWeeklyEntry();
@@ -974,12 +986,18 @@
   }
 
   /* ----- P1 · 自然语言筛选（搜索框 Enter，无补全选中项时触发；失败回退普通关键字） ----- */
+  var aiFilterJob = null; // 在飞的筛选解析 { query, cancelled }：Esc 取消（issue #132）；落地前校验上下文（issue #138）
   function applyAiFilter(query) {
     suggestEl.innerHTML = '';
     suggestEl.appendChild(el('div', 'drop-empty', 'AI 解析筛选条件中…'));
     suggestEl.classList.remove('hidden');
     suggestEl.classList.add('open');
+    var job = aiFilterJob = { query: query, cancelled: false };
     api.aiAsk({ kind: 'filter', query: query }).then(function (r) {
+      if (aiFilterJob === job) aiFilterJob = null;
+      // 迟到结果不落地（issue #138）：在飞期间用户已 Esc 取消（issue #132）、改过查询词或跳转他处
+      // （state.query 已变），不再强行 switchView/改 band；hint 已被 Esc 收起或被新输入的补全列表替换，均不动
+      if (job.cancelled || state.query !== query) return;
       closeSuggest();
       if (r && r.ok && r.filter) {
         state.aiFilter = { raw: query, keyword: r.filter.keyword, days: r.filter.days };
@@ -996,6 +1014,8 @@
         if (cands[0]) jumpToProject(cands[0].path);
       }
     }).catch(function () {
+      if (aiFilterJob === job) aiFilterJob = null;
+      if (job.cancelled || state.query !== query) return; // 同上：迟到失败不落地
       closeSuggest();
       var cands = suggestCandidates();
       if (cands[0]) jumpToProject(cands[0].path);
@@ -1274,7 +1294,7 @@
       x.title = '消音此警示（状态变化后自动复出）';
       x.addEventListener('click', function (e) {
         e.stopPropagation();
-        api.snooze(p.path, w.type, w.label).then(function () { refresh(false); });
+        api.snooze(p.path, w.type, w.label).then(function () { refresh(false); }).catch(failTo('消音警示')); // 写盘失败 toast 可见（issue #119）
       });
       s.appendChild(x);
       box.appendChild(s);
@@ -1438,7 +1458,7 @@
                 if (cur) renderPanel(cur);
               }
             }, 950);
-          });
+          }).catch(function () { flashBtn(btn, '启动失败', false); }); // IPC reject 也亮错（issue #119）
         }));
       });
       qSec.appendChild(tRow);
@@ -2130,60 +2150,52 @@
   var deviceGen = 0; // 轮询代次号：stopDeviceFlow 递增，作废旧轮询链上在飞的回调
   fHotkey.readOnly = true; // 热键通过按键捕捉录入
 
+  /* ----- 分段控件通用设施（issue #128）：render（active 标记）/ value（读取活动项）/ click→scheduleSave 收敛一处；
+     差异经 opts 注入：numeric 数值转换、fallback 空选兜底、renderExtra 每钮附加渲染、onChange 点击副作用 ----- */
+  function bindSeg(segEl, attr, opts) {
+    opts = opts || {};
+    function render(v) {
+      Array.prototype.forEach.call(segEl.querySelectorAll('button'), function (b) {
+        b.classList.toggle('active', b.getAttribute(attr) === String(v));
+        if (opts.renderExtra) opts.renderExtra(b);
+      });
+    }
+    function value() {
+      var b = segEl.querySelector('button.active');
+      var raw = b ? b.getAttribute(attr) : null;
+      if (raw === null) return opts.fallback;
+      return opts.numeric ? Number(raw) : raw;
+    }
+    segEl.addEventListener('click', function (e) {
+      var b = e.target.closest('button');
+      if (!b) return;
+      render(b.getAttribute(attr));
+      if (opts.onChange) opts.onChange(opts.numeric ? Number(b.getAttribute(attr)) : b.getAttribute(attr));
+      scheduleSave();
+    });
+    return { render: render, value: value };
+  }
+
   /* ----- 后台刷新间隔（issue #70）：预设 5/10/20/60 四档分段选择，改动随自动保存落盘、主进程即时重设定时器 ----- */
   var SCAN_INTERVALS = [5, 10, 20, 60];
-  function renderScanInterval(min) {
-    Array.prototype.forEach.call(scanIntervalSeg.querySelectorAll('button'), function (b) {
-      b.classList.toggle('active', Number(b.getAttribute('data-min')) === min);
-    });
-  }
-  function scanIntervalValue() {
-    var b = scanIntervalSeg.querySelector('button.active');
-    return b ? Number(b.getAttribute('data-min')) : 20;
-  }
-  scanIntervalSeg.addEventListener('click', function (e) {
-    var b = e.target.closest('button');
-    if (!b) return;
-    renderScanInterval(Number(b.getAttribute('data-min')));
-    scheduleSave();
-  });
+  var scanIntervalCtl = bindSeg(scanIntervalSeg, 'data-min', { numeric: true, fallback: 20 });
+  var renderScanInterval = scanIntervalCtl.render;
+  var scanIntervalValue = scanIntervalCtl.value;
 
   /* ----- 警示规则（issue #73）：超期天数 1/3/7 三档分段 + 三类开关；改动随自动保存落盘并触发重算 ----- */
   var WARN_DIRTY_DAYS = [1, 3, 7];
-  function renderWarnDirtyDays(days) {
-    Array.prototype.forEach.call(warnDirtyDaysSeg.querySelectorAll('button'), function (b) {
-      b.classList.toggle('active', Number(b.getAttribute('data-days')) === days);
-    });
-  }
-  function warnDirtyDaysValue() {
-    var b = warnDirtyDaysSeg.querySelector('button.active');
-    return b ? Number(b.getAttribute('data-days')) : 3;
-  }
-  warnDirtyDaysSeg.addEventListener('click', function (e) {
-    var b = e.target.closest('button');
-    if (!b) return;
-    renderWarnDirtyDays(Number(b.getAttribute('data-days')));
-    scheduleSave();
-  });
+  var warnDirtyDaysCtl = bindSeg(warnDirtyDaysSeg, 'data-days', { numeric: true, fallback: 3 });
+  var renderWarnDirtyDays = warnDirtyDaysCtl.render;
+  var warnDirtyDaysValue = warnDirtyDaysCtl.value;
 
   /* ----- 通知（issue #80）：警示摘要开关 + 时机分段 + 托盘计数显隐；总开关关闭时时机分段禁用 ----- */
   var NOTIFY_MODES = ['daily', 'newOnly'];
-  function renderNotifyMode(mode) {
-    Array.prototype.forEach.call(notifyModeSeg.querySelectorAll('button'), function (b) {
-      b.classList.toggle('active', b.getAttribute('data-mode') === mode);
-      b.disabled = !fNotifyEnabled.checked;
-    });
-  }
-  function notifyModeValue() {
-    var b = notifyModeSeg.querySelector('button.active');
-    return b ? b.getAttribute('data-mode') : 'daily';
-  }
-  notifyModeSeg.addEventListener('click', function (e) {
-    var b = e.target.closest('button');
-    if (!b) return;
-    renderNotifyMode(b.getAttribute('data-mode'));
-    scheduleSave();
+  var notifyModeCtl = bindSeg(notifyModeSeg, 'data-mode', {
+    fallback: 'daily',
+    renderExtra: function (b) { b.disabled = !fNotifyEnabled.checked; },
   });
+  var renderNotifyMode = notifyModeCtl.render;
+  var notifyModeValue = notifyModeCtl.value;
   fNotifyEnabled.addEventListener('change', function () { renderNotifyMode(notifyModeValue()); });
 
   /* ----- 密度档位（issue #84）：标准/紧凑两档分段，改动即生效并随自动保存落盘 ----- */
@@ -2192,22 +2204,9 @@
   function applyDensity(d) {
     document.body.dataset.density = DENSITIES.indexOf(d) >= 0 ? d : 'standard';
   }
-  function renderDensity(d) {
-    Array.prototype.forEach.call(densitySeg.querySelectorAll('button'), function (b) {
-      b.classList.toggle('active', b.getAttribute('data-density') === d);
-    });
-  }
-  function densityValue() {
-    var b = densitySeg.querySelector('button.active');
-    return b ? b.getAttribute('data-density') : 'standard';
-  }
-  densitySeg.addEventListener('click', function (e) {
-    var b = e.target.closest('button');
-    if (!b) return;
-    renderDensity(b.getAttribute('data-density'));
-    applyDensity(b.getAttribute('data-density'));
-    scheduleSave();
-  });
+  var densityCtl = bindSeg(densitySeg, 'data-density', { fallback: 'standard', onChange: applyDensity });
+  var renderDensity = densityCtl.render;
+  var densityValue = densityCtl.value;
 
   /* ----- 降低动效（issue #82）：手动开关与系统偏好任一命中即停动效、玻璃退化为实底 ----- */
   var motionMq = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -2221,15 +2220,9 @@
   /* ----- 唤出着陆视图（issue #86）：总览/项目/上次停留；启动与 win:shown 时应用，设置页开着不动 ----- */
   var LANDINGS = ['overview', 'projects', 'last'];
   var landingViewSeg = document.getElementById('landingViewSeg');
-  function landingValue() {
-    var b = landingViewSeg.querySelector('button.active');
-    return b ? b.getAttribute('data-landing') : 'overview';
-  }
-  function renderLanding(v) {
-    Array.prototype.forEach.call(landingViewSeg.querySelectorAll('button'), function (b) {
-      b.classList.toggle('active', b.getAttribute('data-landing') === v);
-    });
-  }
+  var landingCtl = bindSeg(landingViewSeg, 'data-landing', { fallback: 'overview' });
+  var landingValue = landingCtl.value;
+  var renderLanding = landingCtl.render;
   function applyLanding() {
     var lv = (state.settings && state.settings.landingView) || 'overview';
     if (LANDINGS.indexOf(lv) < 0) lv = 'overview';
@@ -2237,12 +2230,6 @@
     if (appEl.classList.contains('show-settings')) return;
     if (view !== state.view) switchView(view);
   }
-  landingViewSeg.addEventListener('click', function (e) {
-    var b = e.target.closest('button');
-    if (!b) return;
-    renderLanding(b.getAttribute('data-landing'));
-    scheduleSave();
-  });
   api.onWinShown(function () { applyLanding(); });
 
   /* ----- 提示词模板自定义（issue #78）：编辑单位 = 模板 + {{事实}} 插入点 ----- */
@@ -2508,7 +2495,8 @@
     return Array.prototype.map.call(listEl.querySelectorAll('input'), function (i) { return i.value.trim(); }).filter(Boolean);
   }
 
-  // 默认 AI 引擎下拉（issue #29）：候选 = 已探测可用的工具；无可用工具时禁用并给提示
+  // 默认 AI 引擎下拉（issue #29）：「自动（推荐）」为首档（值 ''，保留缺省语义：lastGood 优先、其次第一个可用，issue #41）；
+  // 空配置选中自动档而不物化成 avail[0]（issue #134）；无可用工具时禁用并给提示
   function renderAiEngineSelect(cfg) {
     var hint = document.getElementById('aiEngineHint');
     fAiEngine.innerHTML = '';
@@ -2522,14 +2510,18 @@
       return;
     }
     fAiEngine.disabled = false;
+    var auto = el('option', null, '自动（推荐）');
+    auto.value = '';
+    fAiEngine.appendChild(auto);
+    var best = state.aiCaps && state.aiCaps.engine; // 引擎链实际首选（含 lastGood 排序），标注让 UI 与行为对齐（issue #134）
     avail.forEach(function (t) {
-      var o = el('option', null, t.label + '（' + t.cmd + '）');
+      var o = el('option', null, t.label + '（' + t.cmd + '）' + (best && best.id === t.id ? ' · 当前首选' : ''));
       o.value = t.id;
       fAiEngine.appendChild(o);
     });
     var wanted = cfg && cfg.aiEngine;
-    fAiEngine.value = avail.some(function (t) { return t.id === wanted; }) ? wanted : avail[0].id;
-    hint.textContent = '候选为本机已探测可用的工具';
+    fAiEngine.value = wanted && avail.some(function (t) { return t.id === wanted; }) ? wanted : '';
+    hint.textContent = '候选为本机已探测可用的工具；「自动」优先记忆的上次可用引擎';
   }
 
   function markRows(listEl, invalid) {
@@ -2814,13 +2806,14 @@
       reduceMotion: fReduceMotion.checked, // 降低动效（issue #82）：同上，渲染层即时生效
       landingView: landingValue(), // 唤出着陆视图（issue #86）
       aiEnabled: fAiEnabled.checked, // AI 功能开关（issue #29）
-      aiEngine: fAiEngine.disabled ? '' : fAiEngine.value,
       aiPromptWeekly: promptDraftOf(fPromptWeekly, aiPromptDefaults().weekly), // 提示词模板（issue #78）：与默认一致存 null
       aiPromptAdvice: promptDraftOf(fPromptAdvice, aiPromptDefaults().advice),
       theme: { id: themeId, accent: themeAccent, mode: themeMode, lightId: themeLightId, darkId: themeDarkId }, // 外观（issue #27）+ 跟随系统（issue #81）
     };
     var typedToken = fToken.value.trim();
     if (typedToken) patch.githubToken = typedToken; // 留空 = 保持已存 token（issue #12）
+    // 无可用引擎时下拉禁用：不物化 aiEngine，保留原显式偏好待工具回归（issue #134）
+    if (!fAiEngine.disabled) patch.aiEngine = fAiEngine.value;
     // 改动域检测：避免每次击键都重扫 PATH / 重扫磁盘 / 重渲染
     var pathsChanged = JSON.stringify([patch.roots, patch.extraPaths, patch.blacklist]) !==
       JSON.stringify([prev.roots || [], prev.extraPaths || [], prev.blacklist || []]);
@@ -2836,8 +2829,10 @@
       JSON.stringify(patch.warningTypes) !==
         JSON.stringify({ dirty: prevWt.dirty !== false, unpushed: prevWt.unpushed !== false, pr: prevWt.pr !== false });
     var autoStartChanged = patch.autoStart !== !!prev.autoStart; // 自启开关变化后回读注册结果（issue #108）
-    // AI 开关/引擎变化需重估能力（issue #29）；自定义工具清单变化同时影响两者
-    var aiChanged = patch.aiEnabled !== (prev.aiEnabled !== false) || patch.aiEngine !== (prev.aiEngine || '');
+    // AI 开关/引擎变化需重估能力（issue #29）；自定义工具清单变化同时影响两者；
+    // aiEngine 字段被剔除时（无可用引擎）不参与比较（issue #134）
+    var aiChanged = patch.aiEnabled !== (prev.aiEnabled !== false) ||
+      (('aiEngine' in patch) && patch.aiEngine !== (prev.aiEngine || ''));
     // 提示词模板改动（issue #78）：缓存键已含模板哈希，旧结果不会掩盖修改；
     // 周报自动生成标记复位，回到总览即按新模板自动重生成一次
     var promptChanged = patch.aiPromptWeekly !== (prev.aiPromptWeekly || null) ||
@@ -2966,28 +2961,18 @@
       }
     }).catch(function (err) { ghAuthResult(false, '导入失败：' + ipcErrText(err)); });
   });
-  // 账户状态卡操作（issue #45）：重新验证 / 断开连接
+  // 账户状态卡操作（issue #45）：重新验证 / 断开连接（两段确认走通用 armConfirm，issue #121）
   document.getElementById('ghRecheckBtn').addEventListener('click', renderGhAccount);
   document.getElementById('ghDisconnectBtn').addEventListener('click', function () {
-    var btn = document.getElementById('ghDisconnectBtn');
-    if (!btn.dataset.confirm) {
-      btn.dataset.confirm = '1';
-      btn.textContent = '再点一次确认断开';
-      setTimeout(function () {
-        delete btn.dataset.confirm;
-        btn.textContent = '断开连接';
-      }, 2000);
-      return;
-    }
-    delete btn.dataset.confirm;
-    btn.textContent = '断开连接';
-    api.githubDisconnect().then(function () {
-      state.settings = Object.assign({}, state.settings, { hasGithubToken: false, githubUsername: '' });
-      fUsername.value = '';
-      document.getElementById('ghAccount').classList.add('hidden');
-      ghStateText();
-      ghAuthResult(true, '已断开 GitHub 连接');
-    }).catch(function (err) { ghAuthResult(false, '断开失败：' + ipcErrText(err)); });
+    armConfirm(document.getElementById('ghDisconnectBtn'), '断开连接', function () {
+      api.githubDisconnect().then(function () {
+        state.settings = Object.assign({}, state.settings, { hasGithubToken: false, githubUsername: '' });
+        fUsername.value = '';
+        document.getElementById('ghAccount').classList.add('hidden');
+        ghStateText();
+        ghAuthResult(true, '已断开 GitHub 连接');
+      }).catch(function (err) { ghAuthResult(false, '断开失败：' + ipcErrText(err)); });
+    }, '再点一次确认断开');
   });
   document.getElementById('checkEditor').addEventListener('click', function () {
     runCheck(fEditor.value || 'code', document.getElementById('checkEditorRes'));
@@ -3061,11 +3046,11 @@
     }).catch(function () { res.textContent = '导入失败'; res.classList.add('bad'); });
   });
 
-  // 「再点一次确认」模式（沿用断开连接，issue #45）：首次点击武装 2 秒，二次点击才执行
-  function armConfirm(btn, label, fn) {
+  // 「再点一次确认」通用模式（issue #45 引入，#121 收敛为唯一实现）：首次点击武装 2 秒，二次点击才执行；armedLabel 自定义武装期文案
+  function armConfirm(btn, label, fn, armedLabel) {
     if (!btn.dataset.confirm) {
       btn.dataset.confirm = '1';
-      btn.textContent = '再点一次确认';
+      btn.textContent = armedLabel || '再点一次确认';
       setTimeout(function () {
         delete btn.dataset.confirm;
         btn.textContent = label;
@@ -3092,6 +3077,10 @@
           renderSortDrop();
           refresh(false);
         });
+      }).catch(function () { // 写盘失败结果位亮错（issue #119）
+        var res = document.getElementById('resetRes');
+        res.textContent = '重置失败：通信或写盘错误';
+        res.className = 'res bad';
       });
     });
   });
@@ -3101,7 +3090,11 @@
       var res = document.getElementById('resetRes');
       res.textContent = '已清空，正在重启…';
       res.className = 'res ok';
-      api.resetData('all'); // 主进程清空全部数据文件后 relaunch，重启回首启引导态
+      // 主进程清空全部数据文件后 relaunch，重启回首启引导态；reject 时亮错（issue #119）
+      api.resetData('all').catch(function () {
+        res.textContent = '重置失败：通信或写盘错误';
+        res.className = 'res bad';
+      });
     });
   });
 
@@ -3202,6 +3195,7 @@
     }
     if (e.key === 'Escape') {
       e.stopPropagation();
+      if (aiFilterJob) { aiFilterJob.cancelled = true; aiFilterJob = null; } // 取消在飞的 AI 筛选解析（issue #132）
       if (!suggestEl.classList.contains('hidden')) {
         closeSuggest();
       } else if (searchInput.value) {
