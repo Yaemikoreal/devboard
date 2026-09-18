@@ -141,7 +141,7 @@ const DEFAULT_AI_TOOLS = [
 // 合并默认与自定义工具并逐项 where 探测；随发品牌图标（issue #21）。aitools:list 与 ai 引擎解析共用。
 // 结果缓存 60s：启动负载期（扫描 + 探测并发）进程创建很慢，重复 spawn 会互相拖超时（issue #29 实测）；
 // 缓存键含自定义清单，设置变更后立即重探。
-// 在飞去重（issue-14）：缓存进行中的 Promise 而非仅落地后的结果——启动时 loadAiTools/loadAiCaps
+// 在飞去重（issue #130）：缓存进行中的 Promise 而非仅落地后的结果——启动时 loadAiTools/loadAiCaps
 // 并发打到主进程、结果缓存均空时复用同一轮探测（where 进程数 = 工具数 ×1 而非 ×2）；
 // 失败时清掉在飞缓存，下次调用立即重试
 let aiToolsDetectCache = { at: 0, key: '', list: null, promise: null };
@@ -216,11 +216,11 @@ function promptTplKey(template) {
   return crypto.createHash('sha1').update(String(template)).digest('hex').slice(0, 10);
 }
 
-// filter 短超时（issue-16）：自然语言筛选是交互式场景，只打首选引擎 + 20s 上限，
+// filter 短超时（issue #132）：自然语言筛选是交互式场景，只打首选引擎 + 20s 上限，
 // 失败即回让渲染层安静回退关键字搜索；weekly/advice 维持 runCli 默认 90s 不变
 const FILTER_TIMEOUT_MS = 20000;
 
-// AI 引擎错误归类（issue-22）：抛给渲染层的失败原因映射为中文类别，普通用户读得懂；
+// AI 引擎错误归类（issue #138）：抛给渲染层的失败原因映射为中文类别，普通用户读得懂；
 // 原始（多为英文）错误行由调用方进 console.error 供排查
 function aiErrorCategory(reason) {
   const s = String(reason || '');
@@ -235,7 +235,7 @@ function aiErrorCategory(reason) {
   return '调用失败';
 }
 
-// advice 事实摘要签名（issue-15）：ahead/behind/dirtyCount/警示标签哈希进缓存键——
+// advice 事实摘要签名（issue #131）：ahead/behind/dirtyCount/警示标签哈希进缓存键——
 // git push 后 HEAD 不变但 ahead 变化即 miss，不再展出过期语境的建议
 function adviceFactsKey(p) {
   const warnSig = (p.warnings || []).map((w) => w.label).join('|');
@@ -379,7 +379,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
       next.projects[p.path] = p.degraded && cache.projects[p.path] ? cache.projects[p.path] : p;
     }
     store.setScanCache(next);
-    // advice 缓存尸体裁剪（issue-23）：按现存项目集删掉已消失项目的缓存键，
+    // advice 缓存尸体裁剪（issue #139）：按现存项目集删掉已消失项目的缓存键，
     // 项目删除/改根目录后 ai-cache.json 不再永久累积尸体条目
     const aiCache = store.getAiCache();
     const deadAdviceKeys = Object.keys(aiCache.advice).filter((k) => !next.projects[k]);
@@ -448,7 +448,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
       .finally(() => { refreshInFlight = false; });
   }
 
-  // GitHub 连接/导入/断开后的即时处理（issue-02）：不再等下一个刷新触发点（后台定时默认最长 20 分钟）。
+  // GitHub 连接/导入/断开后的即时处理（issue #118）：不再等下一个刷新触发点（后台定时默认最长 20 分钟）。
   // 连接/导入：复用 maybeRefreshGithub「落地即推补丁」链路（issue #44）立即拉一轮本人仓库；
   // 断开：token 已清、拉取无意义，直接重推一次拼板，渲染层即时清掉 GitHub 区块
   function refreshGithubNow(connected) {
@@ -538,7 +538,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   ipcMain.handle('ai:caps', async () => {
     const cfg = store.getConfig();
     const enabled = cfg.aiEnabled !== false;
-    // 首选引擎 = 候选链首项（issue-12：原 resolveEngine 仅转发 resolveEngines 取 [0]，已内联删除）
+    // 首选引擎 = 候选链首项（issue #128：原 resolveEngine 仅转发 resolveEngines 取 [0]，已内联删除）
     const engine = enabled ? (await resolveEngines(cfg, store.getAiCache().lastGoodEngine))[0] || null : null;
     return {
       enabled,
@@ -549,10 +549,10 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   // 在飞 AI 任务：同 kind+目标 的请求共享同一 Promise，切页后重复触发不会再起 CLI 进程（issue #40）
   const aiInFlight = new Map();
   // 会话级引擎黑名单：本进程内已失败过的引擎不再重复尝试（配额/挂起类故障在会话内不会自愈，issue #41）；
-  // settings:set 变更 AI 配置（aiEngine/aiTools/aiEnabled）时清空（issue-22），修好引擎后无需重启即可恢复首选
+  // settings:set 变更 AI 配置（aiEngine/aiTools/aiEnabled）时清空（issue #138），修好引擎后无需重启即可恢复首选
   const sessionBadEngines = new Set();
 
-  // 记最近可用引擎（issue #41）：filter 无结果缓存，成功时单独落 lastGoodEngine（issue-21）；
+  // 记最近可用引擎（issue #41）：filter 无结果缓存，成功时单独落 lastGoodEngine（issue #137）；
   // weekly/advice 在缓存写回时一并落，不走这里
   function writeLastGoodEngine(engineId) {
     const cur = store.getAiCache();
@@ -560,7 +560,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     store.setAiCache(cur);
   }
 
-  // AI kind 处理器表（issue-12）：doAiAsk 与 ai:promptPreview 的按 kind 分派共用此表，
+  // AI kind 处理器表（issue #128）：doAiAsk 与 ai:promptPreview 的按 kind 分派共用此表，
   // 取代两处平行的 if 级联。字段约定：
   //   customTplOf(cfg)                  —— 已落盘的自定义模板（null = 内置默认，issue #78）
   //   tplOf(cfg)                        —— 实际生效模板（含内置默认回落），其哈希进缓存键（issue #78）
@@ -594,7 +594,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
       customTplOf: (cfg) => cfg.aiPromptAdvice,
       tplOf: (cfg) => cfg.aiPromptAdvice || ai.DEFAULT_ADVICE_TEMPLATE,
       previewable: true,
-      // 建议按 项目+HEAD+事实摘要签名 缓存（issue-15：git push 后 ahead 变化即 miss，不展出过期语境的建议）；
+      // 建议按 项目+HEAD+事实摘要签名 缓存（issue #131：git push 后 ahead 变化即 miss，不展出过期语境的建议）；
       // 项目不在扫描缓存时 keyOf 返回 null，由 buildPrompt 统一报「项目不在扫描缓存中」
       keyOf: ({ payload }) => {
         const p = store.getScanCache().projects[String((payload && payload.path) || '')];
@@ -630,11 +630,11 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     },
   };
 
-  // AI 统一调用入口（issue #29）：prompt 组装 / 超时 / 失败降级 / 结果缓存；kind 分派走处理器表（issue-12）
-  // kind: weekly（按当天缓存）| advice（按 项目+HEAD+事实摘要签名+模板哈希 缓存，issue-15）| filter（不缓存）
-  // 缓存命中分支在引擎探测之前（issue-23）：纯缓存命中不再等一轮 where 探测
+  // AI 统一调用入口（issue #29）：prompt 组装 / 超时 / 失败降级 / 结果缓存；kind 分派走处理器表（issue #128）
+  // kind: weekly（按当天缓存）| advice（按 项目+HEAD+事实摘要签名+模板哈希 缓存，issue #131）| filter（不缓存）
+  // 缓存命中分支在引擎探测之前（issue #139）：纯缓存命中不再等一轮 where 探测
   // 引擎链式回退：首选失败后自动尝试其余已安装引擎，成功则记为最近可用（issue #41）；
-  // filter 例外（issue-16）：只打链首首选引擎 + 20s 短超时，失败即回，渲染层安静回退关键字搜索
+  // filter 例外（issue #132）：只打链首首选引擎 + 20s 短超时，失败即回，渲染层安静回退关键字搜索
   async function doAiAsk(payload) {
     const cfg = store.getConfig();
     if (cfg.aiEnabled === false) return { ok: false, reason: 'AI 功能已在设置中关闭' };
@@ -659,7 +659,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     if (!engines.length) return { ok: false, reason: '未检测到可用的 AI 命令行工具' };
     const healthy = engines.filter((t) => !sessionBadEngines.has(t.id));
     if (healthy.length) engines = healthy; // 全灭时也照旧全试一遍（可能已恢复）
-    if (kind === 'filter') engines = engines.slice(0, 1); // filter 只打首选引擎（issue-16）
+    if (kind === 'filter') engines = engines.slice(0, 1); // filter 只打首选引擎（issue #132）
 
     const built = handler.buildPrompt({
       payload,
@@ -675,23 +675,23 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
       const engineInfo = { id: engine.id, label: engine.label, cmd: engine.cmd };
       const r = await ai.runCli(engine.cmd, built.prompt, {
         toolId: engine.id,
-        timeout: kind === 'filter' ? FILTER_TIMEOUT_MS : undefined, // filter 短超时（issue-16）
+        timeout: kind === 'filter' ? FILTER_TIMEOUT_MS : undefined, // filter 短超时（issue #132）
       });
       if (!r.ok) {
         sessionBadEngines.add(engine.id);
-        console.error('[devboard] AI 引擎调用失败（' + engine.id + '）：' + r.reason); // 原始错误行进 console（issue-22）
-        fails.push(engine.label + '：' + aiErrorCategory(r.reason)); // 上屏只给中文类别（issue-22）
+        console.error('[devboard] AI 引擎调用失败（' + engine.id + '）：' + r.reason); // 原始错误行进 console（issue #138）
+        fails.push(engine.label + '：' + aiErrorCategory(r.reason)); // 上屏只给中文类别（issue #138）
         continue;
       }
       if (kind === 'filter') {
         const filter = ai.parseFilter(r.text);
         if (!filter) {
-          // 输出无法解析视同引擎失败拉黑（issue-21）：对 filter 持续输出噪音的引擎不再被首选重试
+          // 输出无法解析视同引擎失败拉黑（issue #137）：对 filter 持续输出噪音的引擎不再被首选重试
           sessionBadEngines.add(engine.id);
           fails.push(engine.label + '：输出无法解析');
           continue;
         }
-        writeLastGoodEngine(engine.id); // filter 成功同样记最近可用引擎（issue-21）
+        writeLastGoodEngine(engine.id); // filter 成功同样记最近可用引擎（issue #137）
         return { ok: true, kind, filter, engine: engineInfo };
       }
       if (handler.writeEntry && keyCtx) {
@@ -724,7 +724,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   // 提示词模板预览（issue #78）：用真实数据组装完整 prompt 展示给设置页，眼见为实地编辑；
   // 只组装不调用引擎。渲染层可传当前草稿模板（template 字段），未传则用已落盘配置；
   // 自然语言筛选 prompt 不开放（parseFilter 严格 JSON 契约，处理器表 previewable=false）
-  // kind 分派与 doAiAsk 共用处理器表（issue-12）；预览专属差异：草稿模板优先 + 预览措辞的空数据文案
+  // kind 分派与 doAiAsk 共用处理器表（issue #128）；预览专属差异：草稿模板优先 + 预览措辞的空数据文案
   ipcMain.handle('ai:promptPreview', (_e, payload) => {
     const kind = String((payload && payload.kind) || '');
     const handler = aiKindHandlers[kind];
@@ -799,7 +799,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
       p[k] = raw[k];
     }
     if (!p.githubToken) delete p.githubToken; // 空值 = 不改动已存 token（清空走 github:importGh 失败态外的显式入口）
-    // AI 配置变更清空会话级引擎黑名单（issue-22）：aiEngine/aiTools/aiEnabled 任一变化，
+    // AI 配置变更清空会话级引擎黑名单（issue #138）：aiEngine/aiTools/aiEnabled 任一变化，
     // 被偶发故障拉黑的引擎立即可再试，修好登录/配额后不再整会话雪藏
     if (['aiEngine', 'aiTools', 'aiEnabled'].some((k) => Object.prototype.hasOwnProperty.call(p, k))) {
       sessionBadEngines.clear();
@@ -866,7 +866,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     const t = await github.testConnection(r.token);
     if (!t.ok) return { status: 'error', reason: t.reason };
     store.setConfig({ githubToken: r.token, githubUsername: t.login });
-    refreshGithubNow(true); // 授权成功立即拉一轮并走「落地即推补丁」链路（issue-02），不等下一个刷新触发点
+    refreshGithubNow(true); // 授权成功立即拉一轮并走「落地即推补丁」链路（issue #118），不等下一个刷新触发点
     return { status: 'success', login: t.login };
   });
 
@@ -877,7 +877,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     const t = await github.testConnection(token);
     if (!t.ok) return { ok: false, reason: t.reason };
     store.setConfig({ githubToken: token, githubUsername: t.login });
-    refreshGithubNow(true); // 导入成功立即拉一轮并走「落地即推补丁」链路（issue-02）
+    refreshGithubNow(true); // 导入成功立即拉一轮并走「落地即推补丁」链路（issue #118）
     return { ok: true, login: t.login };
   });
 
@@ -893,7 +893,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   // 断开连接：清除 token 与登录名（GitHub 数据挂接随之停止）
   ipcMain.handle('github:disconnect', () => {
     store.setConfig({ githubToken: '', githubUsername: '' });
-    refreshGithubNow(false); // 立即重推一次拼板，渲染层即时清掉 GitHub 区块（issue-02）
+    refreshGithubNow(false); // 立即重推一次拼板，渲染层即时清掉 GitHub 区块（issue #118）
     return true;
   });
 

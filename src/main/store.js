@@ -215,7 +215,7 @@ class Store {
     this.writeJson('scan-cache.json', cache, true);
   }
 
-  // AI 结果缓存（issue #29）：weekly 按当天日期复用；advice 按 项目+HEAD+模板哈希 复用（issue #78）
+  // AI 结果缓存（issue #29）：weekly 按当天日期复用；advice 按 项目+HEAD+模板哈希+事实摘要签名 复用（issue #78/#131）
   getAiCache() {
     const c = this.readJson('ai-cache.json', { weekly: null, advice: {} });
     if (!c.advice || typeof c.advice !== 'object') c.advice = {};

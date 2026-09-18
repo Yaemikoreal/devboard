@@ -22,7 +22,7 @@ function parseGitHubRemote(url) {
   return { owner: m[1], repo: m[2] };
 }
 
-// GitHub REST 请求头工厂（issue-12）：issues 拉取与连接测试共用同一组头
+// GitHub REST 请求头工厂（issue #128）：issues 拉取与连接测试共用同一组头
 function apiHeaders(token) {
   return {
     Authorization: `Bearer ${token}`,
