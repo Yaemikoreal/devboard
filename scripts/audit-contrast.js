@@ -1,11 +1,8 @@
 // WCAG 对比度审计（issue #85）：七套主题的文字 token × 玻璃卡合成底色
+// 主题定义取自共享模块（issue #122 单一 token 源 src/shared/themes.js），不再从 app.js 抠字面量
 // 用法：node scripts/audit-contrast.js
 'use strict';
-const fs = require('fs');
-const src = fs.readFileSync(require('path').join(__dirname, '..', 'src', 'renderer', 'app.js'), 'utf8');
-const m = src.match(/var THEMES = (\{[\s\S]*?\n  \};)/);
-if (!m) { console.error('THEMES 字面量未匹配到'); process.exit(1); }
-const THEMES = eval('(' + m[1].replace(/;\s*$/, '') + ')');
+const THEMES = require('../src/shared/themes').THEMES;
 
 function hexToRgb(h) {
   h = String(h).replace('#', '');

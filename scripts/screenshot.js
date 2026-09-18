@@ -22,7 +22,8 @@ let captured = false;
 
 // 动图输出：site/assets/demo.gif（README「主题与个性化」演示用）
 const GIF_OUT = path.join(__dirname, '..', 'site', 'assets', 'demo.gif');
-const DEMO_THEMES = ['warm', 'mist', 'meadow', 'sakura', 'iris', 'dark', 'abyss'];
+// 七套主题轮播顺序 = 共享模块定义序（issue #122 单一 token 源，新增主题自动进入轮播）
+const DEMO_THEMES = require('../src/shared/themes').THEME_IDS;
 
 async function captureAnimated() {
   if (captured) return;
@@ -94,6 +95,7 @@ app.whenReady().then(() => {
     }));
     ipcMain.handle('settings:set', () => ({}));
     ipcMain.handle('settings:hotkeyError', () => '');
+    ipcMain.handle('settings:autoStartError', () => ''); // issue #108 后渲染层会查，mock 补位消 no-handler 报错
     ipcMain.handle('prefs:get', () => ({
       pinned: ['E:\\myproject\\wyy2qqmusic'], cardOrder: [], sortMode: 'manual',
       snoozes: {}, branchSel: {}, windowBounds: null,

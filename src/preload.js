@@ -14,6 +14,10 @@ contextBridge.exposeInMainWorld('devboardBoot', { theme: bootTheme });
 // 渲染层经 window.devboardConsts 消费，不再手写本地副本
 contextBridge.exposeInMainWorld('devboardConsts', require('./shared/constants'));
 
+// 主题 token 单一事实源（issue #122）：七套主题全量 token + 颜色工具，渲染层 app.js 经
+// window.devboardThemes 消费；冷启动四色与 :root 暖阳默认值亦从该模块派生
+contextBridge.exposeInMainWorld('devboardThemes', require('./shared/themes'));
+
 contextBridge.exposeInMainWorld('devboard', {
   getBoard: () => ipcRenderer.invoke('board:get'),
   rescan: () => ipcRenderer.invoke('board:rescan'),

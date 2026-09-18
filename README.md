@@ -115,6 +115,7 @@ npm run test:scan  # 不起界面，直接跑项目扫描并打印 JSON
 npm run shot       # 隐藏窗口渲染真实数据后截图到 screenshot.png
 npm run demo       # 生成 README 主题轮播演示动图（site/assets/demo.gif，mock 数据）
 npm run logo       # 从 assets/logo/draft-d.svg 重渲全套图标（托盘用简化稿 draft-d-tray.svg）
+npm run theme:sync # 主题色值改动后重新生成 styles.css 的 :root 暖阳默认值（权威定义在 src/shared/themes.js）
 ```
 
 领域语言与边界见 [CONTEXT.md](CONTEXT.md)，官网源码在 [site/](site/)。
@@ -203,6 +204,7 @@ npm run test:scan  # run the project scan headlessly and print JSON
 npm run shot       # render real data in a hidden window and screenshot to screenshot.png
 npm run demo       # generate the theme-switching demo GIF for this README (site/assets/demo.gif, mock data)
 npm run logo       # re-render the full icon set from assets/logo/draft-d.svg
+npm run theme:sync # regenerate the styles.css :root (warm) defaults after theme changes (source of truth: src/shared/themes.js)
 ```
 
 Domain language and boundaries live in [CONTEXT.md](CONTEXT.md), and the website source in [site/](site/).

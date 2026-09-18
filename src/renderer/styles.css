@@ -1,5 +1,8 @@
 /* 设计 token 基底：demos/demo-f-overview.html（案例2 Crextio 浅色纪律）；
-   已多主题化（issue #27）：此处 :root 为暖阳默认值，其余主题（雾蓝/青野/暗夜等，含深色）由 app.js THEMES 以整套 token 覆写 */
+   已多主题化（issue #27）：下方 :root 暖阳默认值由 scripts/sync-theme-root.js 从 src/shared/themes.js 生成
+   （issue #122 单一 token 源，勿手改标记块；改主题后跑 npm run theme:sync），
+   其余主题（雾蓝/青野/暗夜等，含深色）由 app.js applyTheme 按同一共享定义整套覆写 */
+/* >>> theme-root：本 :root 块由 scripts/sync-theme-root.js 从 src/shared/themes.js 生成（issue #122），勿手改；改主题后跑 npm run theme:sync >>> */
 :root{
   --bg:#f5f2e8;
   --card:#fdfcf8;
@@ -71,7 +74,7 @@
   --band-stale:#b3ac9a;
   --band-arch:#d8d3c2;
 
-  /* 透玻璃背景板 token（参考案例的透玻璃设计；此处为暖阳默认值，其余主题在 app.js THEMES 覆写） */
+  /* 透玻璃背景板 token（参考案例的透玻璃设计；此处为暖阳默认值，其余主题在 THEMES（src/shared/themes.js）覆写） */
   --bg-art:#f2eee2;                /* 奶油底色：比 --bg 略深，衬出柔光 */
   --blob-1:rgba(245,217,10,.55);   /* 右上光团：由 JS 跟随强调色派生 */
   --blob-2:rgba(158,196,167,.55);  /* 左中 青 */
@@ -86,8 +89,9 @@
   --glass-well:rgba(253,252,248,.5);
   --cell-empty:rgba(24,24,24,.06); /* 热力图空格透出背景柔光 */
   --fade-rgb:242,238,226;          /* 顶栏过渡带的基底（与 --bg-art 同色） */
-  --tile-line:rgba(253,252,248,.12); /* 深色关注卡内的分隔线（浅色 tile 主题在 app.js 覆写） */
+  --tile-line:rgba(253,252,248,.12); /* 深色关注卡内的分隔线（浅色 tile 主题在 THEMES 覆写） */
 }
+/* <<< theme-root 生成块结束 <<< */
 
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%}

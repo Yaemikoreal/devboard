@@ -8,6 +8,7 @@
     "start": "electron .",
     "test:scan": "node scripts/test-scan.js",
     "test:ai": "node scripts/test-ai.js",
+    "theme:sync": "node scripts/sync-theme-root.js",
     "shot": "electron scripts/screenshot.js",
     "demo": "electron scripts/screenshot.js --gif",
     "logo": "electron scripts/render-logo.js",

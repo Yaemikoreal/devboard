@@ -1,9 +1,7 @@
 // 对比度求解（issue #85）：把不达标的文字 token 朝主题墨色方向混合到 AA（≥4.55 留余量），输出新 hex
+// 主题定义取自共享模块（issue #122 单一 token 源 src/shared/themes.js），不再从 app.js 抠字面量
 'use strict';
-const fs = require('fs');
-const src = fs.readFileSync(require('path').join(__dirname, '..', 'src', 'renderer', 'app.js'), 'utf8');
-const m = src.match(/var THEMES = (\{[\s\S]*?\n  \};)/);
-const THEMES = eval('(' + m[1].replace(/;\s*$/, '') + ')');
+const THEMES = require('../src/shared/themes').THEMES;
 
 function hexToRgb(h) { h = String(h).replace('#', ''); const n = parseInt(h, 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
 function rgbToHex(rgb) { return '#' + rgb.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join(''); }
