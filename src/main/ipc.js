@@ -82,7 +82,7 @@ function warningRulesOf(config) {
   const wt = config.warningTypes || {};
   return {
     dirtyDays: config.warningDirtyDays || 3,
-    types: { dirty: wt.dirty !== false, unpushed: wt.unpushed !== false, pr: wt.pr !== false },
+    types: { dirty: wt.dirty !== false, unpushed: wt.unpushed !== false, ci: wt.ci !== false, pr: wt.pr !== false },
   };
 }
 
@@ -298,6 +298,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
 
     const stale = github.attachFromCache(projects, config, store);
     github.applyPrWarnings(projects, rules.types.pr);
+    github.applyCiWarnings(projects, rules.types.ci); // 默认分支 CI 失败（issue #143）
     applySnoozes(projects, store.getPrefs().snoozes);
 
     // originUrl 仅为内部解析用，不下发渲染层

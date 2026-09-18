@@ -5,9 +5,9 @@
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// 警示严重度（issue #74）：需要关注清单与行内警示图形按值升序排（未提交超期 > 未推送 > 开放 PR）；
-// 未知类型回退 9 排最后
-const WARN_SEVERITY = { dirty: 0, ahead: 1, pr: 2 };
+// 警示严重度（issue #74）：需要关注清单与行内警示图形按值升序排（未提交超期 > 未推送 > CI 失败 > 开放 PR）；
+// 未知类型回退 9 排最后。CI 失败位次定在「未推送」与「开放 PR」之间（issue #143）
+const WARN_SEVERITY = { dirty: 0, ahead: 1, ci: 2, pr: 3 };
 
 // 活跃分带单一来源：阈值（maxDays = 最近活动距今天数上限，按数组序首个命中落带）+ 枚举 +
 // 中文 label + 详情面板 pill 类名 + 筛选 chips 提示 + AI 筛选 prompt 释义。
