@@ -128,13 +128,7 @@ try {
   <main id="viewProjects" class="hidden">
     <div class="filterbar">
       <div class="chips" id="bandChips">
-        <!-- 分带判定规则 tooltip（issue #86）：按最近活动距今分带，规则见 scanner.js bandOf -->
-        <button class="active" data-band="all">全部</button>
-        <button data-band="hot" title="活跃：3 天内有动静"><i class="dot"></i>活跃</button>
-        <button data-band="active" title="近期：4-7 天没有动静"><i class="dot"></i>近期</button>
-        <button data-band="cooling" title="渐冷：8-30 天没有动静"><i class="dot"></i>渐冷</button>
-        <button data-band="stale" title="沉睡：31-90 天没有动静"><i class="dot"></i>沉睡</button>
-        <button data-band="archive" title="归档：90 天以上没有动静，或从未有活动"><i class="dot"></i>归档</button>
+        <!-- 分带 chips 由 app.js 按共享定义动态构建（issue-11 / #127）：阈值与文案见 src/shared/constants.js -->
       </div>
       <!-- AI 自然语言筛选生效标记（issue #29）：点击 × 清除 -->
       <span class="ai-chip hidden" id="aiFilterChip"></span>

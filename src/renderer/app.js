@@ -4,13 +4,18 @@
   'use strict';
 
   var api = window.devboard;
-  var BAND_LABEL = { hot: '活跃', active: '近期', cooling: '渐冷', stale: '沉睡', archive: '归档' };
-  var BAND_PILL = { hot: 'bp-hot', active: 'bp-active', cooling: 'bp-cool', stale: 'bp-stall', archive: 'bp-arch' };
+  // 共享领域常量（issue-11 / #127）：经 preload 暴露，与主进程/mock 同源，不再手写本地副本
+  var consts = window.devboardConsts;
+  var BAND_DEFS = consts.BAND_DEFS;
+  var BAND_LABEL = consts.BAND_LABEL;
+  var BAND_PILL = consts.BAND_PILL;
+  var WARN_SEVERITY = consts.WARN_SEVERITY; // 警示严重度排序；未知类型回退 9
+  var heatLevel = consts.heatLevel; // 热力图色阶
+  var localDateStr = consts.localDateStr; // AI 周报缓存的当天日期键
   var SORT_MODES = ['manual', 'activity', 'name'];
   var SORT_LABEL = { manual: '手动', activity: '最近活跃', name: '名称' };
   var AI_TOOL_LABEL = { kimi: 'Kimi Code', claude: 'Claude Code', codex: 'Codex', grok: 'Grok' };
-  // 警示类型（issue #77）：严重度排序（与主进程一致）+ 类型图形 class；未知类型回退 dirty 图形
-  var WARN_SEVERITY = { dirty: 0, ahead: 1, pr: 2 };
+  // 警示类型（issue #77）：类型图形 class；未知类型回退 dirty 图形
   var WARN_GLYPH = { dirty: 'wg-dirty', ahead: 'wg-ahead', pr: 'wg-pr' };
   function warnGlyphClass(type) { return WARN_GLYPH[type] || WARN_GLYPH.dirty; }
   function warnTypesOf(list) {
@@ -90,11 +95,6 @@
   function hhmm(iso) {
     var d = iso ? new Date(iso) : new Date();
     return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-  }
-
-  // 与主进程 localDateStr 一致：AI 周报缓存的当天日期键
-  function localDateStr(d) {
-    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
 
   function flashBtn(b, text, ok) {
@@ -303,7 +303,7 @@
     for (b = 0; b < lead; b++) gridEl.appendChild(el('i', 'cell blank'));
     activity.forEach(function (n, i) {
       var d = new Date(first + i * DAY_MS);
-      var lvl = n === 0 ? 0 : n < 3 ? 1 : n < 7 ? 2 : 3;
+      var lvl = heatLevel(n);
       var cell = el('i', 'cell' + (lvl ? ' l' + lvl : ''));
       // 悬停气泡（issue #19）：样式化深色气泡替代原生 title，空白占位格不写 tip
       cell.dataset.tip = (d.getMonth() + 1) + '月' + d.getDate() + '日 · ' + (n ? n + ' 次提交' : '无提交');
@@ -380,7 +380,7 @@
       var d = new Date(y, m, day);
       var idx = 364 - Math.round((today - d) / DAY_MS);
       var n = (idx >= 0 && idx < 365) ? (act[idx] || 0) : 0;
-      var lvl = n === 0 ? 0 : n < 3 ? 1 : n < 7 ? 2 : 3;
+      var lvl = heatLevel(n);
       var cell = el('i', 'cell' + (lvl ? ' l' + lvl : ''));
       if (d.getTime() > today.getTime()) cell.classList.add('future');
       else if (d.getTime() === today.getTime()) cell.classList.add('today');
@@ -3137,8 +3137,17 @@
     v.addEventListener('scroll', syncScrolled, { passive: true });
   });
 
-  // 项目页分带筛选 chips（issue #16）；手动切换分带即退出 AI 筛选（issue #29）
-  document.querySelectorAll('#bandChips button').forEach(function (btn) {
+  // 项目页分带筛选 chips（issue #16）：按共享分带定义动态构建（issue-11 / #127，阈值/文案/顺序同源），
+  // DOM 结构与 class 与原静态标签一致；手动切换分带即退出 AI 筛选（issue #29）
+  var bandChipsEl = document.getElementById('bandChips');
+  [{ id: 'all', label: '全部', chipHint: '' }].concat(BAND_DEFS).forEach(function (def) {
+    var btn = el('button', def.id === state.band ? 'active' : null);
+    btn.setAttribute('data-band', def.id);
+    if (def.chipHint) {
+      btn.title = def.label + '：' + def.chipHint;
+      btn.appendChild(el('i', 'dot'));
+    }
+    btn.appendChild(document.createTextNode(def.label));
     btn.addEventListener('click', function () {
       state.band = btn.getAttribute('data-band');
       if (state.aiFilter) {
@@ -3149,6 +3158,7 @@
       selectProject(null);
       renderRows();
     });
+    bandChipsEl.appendChild(btn);
   });
 
   // 排序下拉（issue #18）

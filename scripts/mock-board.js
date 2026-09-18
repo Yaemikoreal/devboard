@@ -1,6 +1,8 @@
 // 截图密度验证用：8 个 mock 项目，覆盖五个分带与各类警示。仅 DEVBOARD_MOCK=1 时使用。
 'use strict';
 
+const { WARN_SEVERITY } = require('../src/shared/constants'); // 严重度与真实板同源（issue-11 / #127）
+
 function isoDaysAgo(days, hours = 0) {
   return new Date(Date.now() - days * 86400000 - hours * 3600000).toISOString();
 }
@@ -123,8 +125,7 @@ function mockBoard() {
   // DEVBOARD_MOCK_CALM=1：清零全部警示，验证需要关注卡的平静态（issue #74）
   if (process.env.DEVBOARD_MOCK_CALM === '1') projects.forEach((p) => { p.warnings = []; });
 
-  // 与 src/main/ipc.js assembleBoard 同规则：携带警示类型（issue #77）并按严重度排序（issue #74）
-  const WARN_SEVERITY = { dirty: 0, ahead: 1, pr: 2 };
+  // 携带警示类型（issue #77）并按严重度排序（issue #74），与主进程 assembleBoard 共用 WARN_SEVERITY
   const severityOf = (types) => Math.min.apply(null, types.map((t) => (t in WARN_SEVERITY ? WARN_SEVERITY[t] : 9)));
   const attention = projects
     .filter((p) => p.warnings.length > 0)

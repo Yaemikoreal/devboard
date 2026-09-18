@@ -15,6 +15,7 @@ const github = require('./github');
 const ai = require('./ai');
 const { runEngineChain } = require('./ai-chain'); // 引擎链回退/拉黑/错误归类（issue-24）
 const { DEFAULT_CONFIG, DEFAULT_PREFS } = require('./store');
+const { localDateStr, WARN_SEVERITY } = require('../shared/constants'); // 共享常量（issue-11 / #127）
 const { createGitWatcher } = require('./watcher');
 
 // 启动子进程并给出真实结果：立即非零退出视为失败，存活超过 800ms 视为成功
@@ -217,9 +218,7 @@ async function findToolInfo(cfg, engineId) {
   return { id: engineId || 'unknown', label: t ? t.label : String(engineId || 'AI'), cmd: t ? t.cmd : '' };
 }
 
-function localDateStr(d) {
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-}
+// localDateStr 已收敛至 src/shared/constants.js（issue-11 / #127）
 
 // 提示词模板内容哈希（issue #78）：AI 周报/建议的缓存键纳入模板哈希，
 // 模板被自定义或恢复默认后旧缓存自动失效，不会被旧结果掩盖修改；
@@ -309,8 +308,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     });
 
     // 需要关注清单携带警示类型（issue #77 类型图标）并按严重度排序（issue #74）：
-    // 未提交超期 > 未推送 > 开放 PR，同级按项目名稳定排序
-    const WARN_SEVERITY = { dirty: 0, ahead: 1, pr: 2 };
+    // 未提交超期 > 未推送 > 开放 PR，同级按项目名稳定排序；WARN_SEVERITY 见共享常量模块
     const severityOf = (types) => Math.min.apply(null, types.map((t) => (t in WARN_SEVERITY ? WARN_SEVERITY[t] : 9)));
     const attention = out
       .filter((p) => p.warnings.length > 0)

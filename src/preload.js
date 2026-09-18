@@ -10,6 +10,10 @@ try {
 
 contextBridge.exposeInMainWorld('devboardBoot', { theme: bootTheme });
 
+// 共享领域常量（issue-11 / #127）：分带定义/警示严重度/热力色阶/日期键与主进程同源，
+// 渲染层经 window.devboardConsts 消费，不再手写本地副本
+contextBridge.exposeInMainWorld('devboardConsts', require('./shared/constants'));
+
 contextBridge.exposeInMainWorld('devboard', {
   getBoard: () => ipcRenderer.invoke('board:get'),
   rescan: () => ipcRenderer.invoke('board:rescan'),

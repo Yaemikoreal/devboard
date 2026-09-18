@@ -4,6 +4,7 @@
 'use strict';
 
 const { spawn } = require('child_process');
+const { BAND_DEFS, BAND_IDS } = require('../shared/constants'); // 分带枚举/释义与 scanner、渲染层同源（issue-11 / #127）
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // 单次调用上限：30s 对周报/建议类长 prompt 太紧（实测 kimi 简单 filter 已需 16s），放宽到 90s（issue #41）
@@ -316,7 +317,7 @@ function buildFilterPrompt(query) {
   return [
     '把用户对项目列表的自然语言筛选请求解析为结构化 JSON。',
     '可用的活跃分带（band）枚举与含义：',
-    'hot=活跃（3 天内有活动）、active=近期（3-7 天）、cooling=渐冷（7-30 天）、stale=沉睡（30-90 天）、archive=归档（90 天以上）。',
+    BAND_DEFS.map((b) => b.id + '=' + b.label + '（' + b.aiDesc + '）').join('、') + '。',
     '输出 JSON 格式：{"band": 枚举值或 null, "keyword": 用于匹配项目名/备忘的关键词或 null, "activeWithinDays": 数字或 null}。',
     '规则：涉及「最近/上周/N 天内动过」用 activeWithinDays；涉及语言或技术栈（如 python）放入 keyword；都不满足时 keyword 放原文关键词。',
     '只输出 JSON 本身，不要任何解释或代码块标记。',
@@ -334,9 +335,8 @@ function parseFilter(text) {
   } catch {
     return null;
   }
-  const BANDS = ['hot', 'active', 'cooling', 'stale', 'archive'];
   const out = {
-    band: BANDS.indexOf(j.band) >= 0 ? j.band : null,
+    band: BAND_IDS.indexOf(j.band) >= 0 ? j.band : null,
     keyword: typeof j.keyword === 'string' && j.keyword.trim() ? j.keyword.trim() : null,
     days: Number.isFinite(j.activeWithinDays) && j.activeWithinDays > 0 ? Math.min(365, Math.round(j.activeWithinDays)) : null,
   };

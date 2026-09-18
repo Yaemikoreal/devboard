@@ -180,6 +180,8 @@ app.whenReady().then(() => {
       preload: path.join(__dirname, '..', 'src', 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // 同 src/main/index.js：preload 需加载本地共享常量模块（issue-11 / #127），沙箱内不支持
+      sandbox: false,
       offscreen: true,
     },
   });

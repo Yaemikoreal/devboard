@@ -57,6 +57,9 @@ function createWindow() {
       preload: path.join(__dirname, '..', 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // 关闭 preload 沙箱（issue-11 / #127）：沙箱内 require 仅限白名单，无法加载 src/shared/constants.js；
+      // contextIsolation 仍在，渲染层依旧无 Node，只是 preload 可加载本地模块
+      sandbox: false,
     },
   };
   const b = store.getPrefs().windowBounds;

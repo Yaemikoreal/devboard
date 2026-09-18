@@ -5,6 +5,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const { execFile } = require('child_process');
+const { localDateStr, bandOf } = require('../shared/constants'); // 共享常量（issue-11 / #127）
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_DEPTH = 4;
@@ -438,19 +439,7 @@ function shiftActivity365(cachedArr, cachedDate, now) {
   return out;
 }
 
-function localDateStr(d) {
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-}
-
-function bandOf(lastActivityAt, now) {
-  if (!lastActivityAt) return 'archive';
-  const days = (now.getTime() - Date.parse(lastActivityAt)) / DAY_MS;
-  if (days <= 3) return 'hot';
-  if (days <= 7) return 'active';
-  if (days <= 30) return 'cooling';
-  if (days <= 90) return 'stale';
-  return 'archive';
-}
+// localDateStr / bandOf 已收敛至 src/shared/constants.js（issue-11 / #127），本文件直接消费共享实现
 
 // 未提交改动里最近的文件修改时间（取前 20 个脏文件，改名条目取新路径）
 async function dirtyMtime(projectPath, dirtyLines) {
@@ -634,5 +623,6 @@ async function scan(scope, opts) {
   return projects;
 }
 
-// 导出收窄（issue #12 第 6 条）：bandOf/emptyProject 全仓无消费方（仅模块内自用），不再导出
+// 导出收窄（issue #12 第 6 条）：emptyProject 全仓无消费方（仅模块内自用），不再导出；
+// bandOf 已迁往共享常量模块（issue-11 / #127），同样不再转发导出
 module.exports = { scan, discover, localWarnings, branchDetail, projectDetail, scanProject };
