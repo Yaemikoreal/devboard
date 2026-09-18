@@ -1,4 +1,4 @@
-// GitHub issues/PR 拉取 + 10 分钟 JSON 缓存。仅覆盖 owner 是使用者的仓库，fork 上游自然跳过。
+// GitHub issues/PR/CI 拉取 + 10 分钟 JSON 缓存。仅覆盖 owner 是使用者的仓库，fork 上游自然跳过。
 'use strict';
 
 const { execFile } = require('child_process');
@@ -78,6 +78,55 @@ async function fetchIssues(owner, repo, token) {
   throw lastErr;
 }
 
+// 仓库元数据（issue #143）：默认分支名是 CI 运行查询的定位参数；pushed_at/description 随手带回，
+// 供详情面板元数据交叉验证（issue #146）复用
+async function fetchRepoMeta(owner, repo, token) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      signal: ctrl.signal,
+      headers: apiHeaders(token),
+    });
+    if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+    const d = await res.json();
+    return { defaultBranch: d.default_branch || '', pushedAt: d.pushed_at || null, description: d.description || '' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 默认分支最近一次 workflow 运行（issue #143）。无 Actions 的仓库按无数据处理：
+// 404/403（Actions 禁用）等非 200 与网络失败一律返回 null 不报错，不产生失败条目
+async function fetchCiRun(owner, repo, branch, token) {
+  if (!branch) return null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/actions/runs?branch=${encodeURIComponent(branch)}&per_page=1`,
+        { signal: ctrl.signal, headers: apiHeaders(token) }
+      );
+      if (!res.ok) return null;
+      const d = await res.json();
+      const run = d && d.workflow_runs && d.workflow_runs[0];
+      if (!run) return null;
+      return {
+        conclusion: run.conclusion || null, // null = 运行中，不算失败
+        status: run.status || '',
+        name: run.name || '',
+        url: run.html_url || '',
+        createdAt: run.created_at || null,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return null; // CI 状态是锦上添花，单点失败不拖垮整仓数据
+  }
+}
+
 // 读缓存挂接 github 字段（不发网络请求）；返回需要刷新的 repo 列表
 // 同时标记 p.githubOwned（owner 是否本人，大小写不敏感），渲染层据此区分「同步中」与「非本人仓库」（issue #44）
 function attachFromCache(projects, config, store) {
@@ -127,10 +176,19 @@ async function refreshCache(remotes, config, store) {
   const cache = store.getGithubCache();
   const results = await Promise.all(
     uniq.map((r) =>
-      fetchIssues(r.owner, r.repo, config.githubToken).then(
-        (data) => ({ data }),
-        (err) => ({ error: String((err && err.message) || err || '网络请求失败') })
-      )
+      fetchIssues(r.owner, r.repo, config.githubToken).then(async (data) => {
+        // CI 运行并入条目（issue #143）：元数据提供默认分支名，随后查该分支最近一次运行；
+        // 元数据/CI 任一失败都只降级为无 CI 数据，不影响 issues 数据的成败与 TTL
+        try {
+          const meta = await fetchRepoMeta(r.owner, r.repo, config.githubToken);
+          data.meta = meta;
+          data.ci = await fetchCiRun(r.owner, r.repo, meta.defaultBranch, config.githubToken);
+        } catch {
+          data.meta = null;
+          data.ci = null;
+        }
+        return { data };
+      }, (err) => ({ error: String((err && err.message) || err || '网络请求失败') }))
     )
   );
   const now = Date.now();
@@ -157,12 +215,23 @@ async function refreshCache(remotes, config, store) {
 }
 
 // PR 警示需要在 github 挂接后补充；同一批对象可能重复挂接（最终补丁二次拼装），先清旧值保证幂等。
-// enabled=false（issue #73 三类警示开关之一）时只清不加
+// enabled=false（issue #73 警示开关之一）时只清不加
 function applyPrWarnings(projects, enabled) {
   for (const p of projects) {
     p.warnings = p.warnings.filter((w) => w.type !== 'pr');
     if (enabled !== false && p.github && p.github.openPRs > 0) {
       p.warnings.push({ type: 'pr', label: `${p.github.openPRs} 个开放 PR` });
+    }
+  }
+}
+
+// CI 警示（issue #143）：默认分支最近一次运行 conclusion=failure 即记；
+// 运行中（conclusion 为 null）与非 failure 结局不记。enabled=false 时只清不加
+function applyCiWarnings(projects, enabled) {
+  for (const p of projects) {
+    p.warnings = p.warnings.filter((w) => w.type !== 'ci');
+    if (enabled !== false && p.github && p.github.ci && p.github.ci.conclusion === 'failure') {
+      p.warnings.push({ type: 'ci', label: '默认分支 CI 失败' });
     }
   }
 }
@@ -273,9 +342,12 @@ async function devicePoll(deviceCode) {
 module.exports = {
   parseGitHubRemote,
   fetchIssues,
+  fetchRepoMeta,
+  fetchCiRun,
   attachFromCache,
   refreshCache,
   applyPrWarnings,
+  applyCiWarnings,
   testConnection,
   ghCliAvailable,
   importGhToken,

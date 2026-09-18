@@ -16,7 +16,7 @@
   var SORT_LABEL = { manual: '手动', activity: '最近活跃', name: '名称' };
   var AI_TOOL_LABEL = { kimi: 'Kimi Code', claude: 'Claude Code', codex: 'Codex', grok: 'Grok' };
   // 警示类型（issue #77）：类型图形 class；未知类型回退 dirty 图形
-  var WARN_GLYPH = { dirty: 'wg-dirty', ahead: 'wg-ahead', pr: 'wg-pr' };
+  var WARN_GLYPH = { dirty: 'wg-dirty', ahead: 'wg-ahead', ci: 'wg-ci', pr: 'wg-pr' };
   function warnGlyphClass(type) { return WARN_GLYPH[type] || WARN_GLYPH.dirty; }
   function warnTypesOf(list) {
     var seen = {};
@@ -1961,6 +1961,7 @@
   var warnDirtyDaysSeg = document.getElementById('warnDirtyDaysSeg');
   var fWarnDirty = document.getElementById('fWarnDirty');
   var fWarnUnpushed = document.getElementById('fWarnUnpushed');
+  var fWarnCi = document.getElementById('fWarnCi');
   var fWarnPr = document.getElementById('fWarnPr');
   var fReduceMotion = document.getElementById('fReduceMotion'); // 降低动效（issue #82）
   var fNotifyEnabled = document.getElementById('fNotifyEnabled');
@@ -2528,9 +2529,10 @@
       fAutoStart.checked = !!cfg.autoStart;
       renderScanInterval(SCAN_INTERVALS.indexOf(cfg.scanIntervalMin) >= 0 ? cfg.scanIntervalMin : 20); // issue #70
       renderWarnDirtyDays(WARN_DIRTY_DAYS.indexOf(cfg.warningDirtyDays) >= 0 ? cfg.warningDirtyDays : 3); // 警示超期天数（issue #73）
-      var wt = cfg.warningTypes || {}; // 三类警示开关（issue #73）
+      var wt = cfg.warningTypes || {}; // 警示开关（issue #73，CI 失败扩编 issue #143）
       fWarnDirty.checked = wt.dirty !== false;
       fWarnUnpushed.checked = wt.unpushed !== false;
+      fWarnCi.checked = wt.ci !== false;
       fWarnPr.checked = wt.pr !== false;
       fNotifyEnabled.checked = cfg.notifyEnabled !== false; // 警示摘要通知（issue #80）；先置开关再渲染时机分段（禁用态依赖它）
       renderNotifyMode(NOTIFY_MODES.indexOf(cfg.notifyMode) >= 0 ? cfg.notifyMode : 'daily');
@@ -2625,7 +2627,7 @@
       autoStart: fAutoStart.checked,
       scanIntervalMin: scanIntervalValue(), // 后台刷新间隔（issue #70）
       warningDirtyDays: warnDirtyDaysValue(), // 警示规则（issue #73）
-      warningTypes: { dirty: fWarnDirty.checked, unpushed: fWarnUnpushed.checked, pr: fWarnPr.checked },
+      warningTypes: { dirty: fWarnDirty.checked, unpushed: fWarnUnpushed.checked, ci: fWarnCi.checked, pr: fWarnPr.checked },
       notifyEnabled: fNotifyEnabled.checked, // 通知（issue #80）：主进程读配置即时生效，无需重拉板数据
       notifyMode: notifyModeValue(),
       trayAttentionCount: fTrayCount.checked,
@@ -2648,12 +2650,12 @@
     // 编辑器/终端命令改动随停顿自动校验（issue #76），结果显示在原校验按钮旁的 res 位
     var editorChanged = patch.editorCmd !== (prev.editorCmd || 'code');
     var terminalChanged = patch.terminalCmd !== (prev.terminalCmd || '');
-    // 警示规则改动需重算警示（issue #73）：天数或三类开关变化后重拉板数据，
+    // 警示规则改动需重算警示（issue #73）：天数或开关变化后重拉板数据，
     // 主进程拼板按新规则即时重算（缓存事实字段足够，不等重扫）
     var prevWt = prev.warningTypes || {};
     var warnChanged = patch.warningDirtyDays !== (prev.warningDirtyDays || 3) ||
       JSON.stringify(patch.warningTypes) !==
-        JSON.stringify({ dirty: prevWt.dirty !== false, unpushed: prevWt.unpushed !== false, pr: prevWt.pr !== false });
+        JSON.stringify({ dirty: prevWt.dirty !== false, unpushed: prevWt.unpushed !== false, ci: prevWt.ci !== false, pr: prevWt.pr !== false });
     var autoStartChanged = patch.autoStart !== !!prev.autoStart; // 自启开关变化后回读注册结果（issue #108）
     // AI 开关/引擎变化需重估能力（issue #29）；自定义工具清单变化同时影响两者；
     // aiEngine 字段被剔除时（无可用引擎）不参与比较（issue #134）

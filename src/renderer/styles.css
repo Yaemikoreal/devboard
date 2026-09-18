@@ -329,8 +329,8 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 }
 .show-more:hover{border-color:var(--ink-3);color:var(--ink)}
 
-/* 警示图形符号（issue #77）：三类警示各自的纯 CSS 极简图形，颜色跟随所处表面
-   未提交超期 = 半实心圆；未推送 = 向上箭头；开放 PR = 分叉节点 */
+/* 警示图形符号（issue #77）：各类警示的纯 CSS 极简图形，颜色跟随所处表面
+   未提交超期 = 半实心圆；未推送 = 向上箭头；CI 失败 = 叉号（issue #143）；开放 PR = 分叉节点 */
 .wg{width:10px;height:10px;flex:none;display:block;color:var(--warn);position:relative}
 .wg-dirty::after{
   content:"";position:absolute;inset:0;border-radius:50%;
@@ -342,6 +342,11 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
   border-left:1.5px solid currentColor;border-top:1.5px solid currentColor;
   transform:rotate(45deg);
 }
+.wg-ci::before,.wg-ci::after{
+  content:"";position:absolute;left:4.2px;top:0.8px;width:1.5px;height:8.4px;background:currentColor;
+}
+.wg-ci::before{transform:rotate(45deg)}
+.wg-ci::after{transform:rotate(-45deg)}
 .wg-pr{
   background-image:
     radial-gradient(circle at 28% 20%,currentColor 1.4px,transparent 1.5px),
