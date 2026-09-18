@@ -16,7 +16,7 @@ const DEFAULT_CONFIG = {
   autoStart: true,
   scanIntervalMin: 20, // 后台静默刷新间隔（分钟）：预设 5/10/20/60 四档（issue #70），唤出窗口时总会重扫一次
   warningDirtyDays: 3, // 警示规则：未提交改动滞留超 N 天记警示标记，预设 1/3/7 三档（issue #73）
-  warningTypes: { dirty: true, unpushed: true, ci: true, pr: true }, // 警示独立开关（issue #73，CI 失败扩编见 issue #143）
+  warningTypes: { dirty: true, unpushed: true, ci: true, review: true, pr: true }, // 警示独立开关（issue #73，CI/review 扩编见 issue #143/#144）
   notifyEnabled: true, // 警示摘要通知总开关（issue #80）
   notifyMode: 'daily', // 通知时机：daily=每天首次唤出 / newOnly=仅当需要关注数较昨日新增（issue #80）
   trayAttentionCount: true, // 托盘 tooltip 显示「N 个项目需要关注」计数（issue #80）
@@ -144,6 +144,7 @@ class Store {
       dirty: wt.dirty !== false,
       unpushed: wt.unpushed !== false,
       ci: wt.ci !== false,
+      review: wt.review !== false,
       pr: wt.pr !== false,
     };
     // 通知（issue #80）：时机限已知值

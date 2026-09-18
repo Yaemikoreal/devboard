@@ -65,6 +65,7 @@ async function fetchIssues(owner, repo, token) {
         repo,
         openIssues: issues.length,
         openPRs: prs.length,
+        prNumbers: prs.map((it) => it.number), // 开放 PR 号清单，review 逐个拉取用（issue #144）
         items: prs.map((it) => toItem(it, 'pr')).concat(issues.map((it) => toItem(it, 'issue'))).slice(0, 20),
       };
     } catch (err) {
@@ -127,6 +128,52 @@ async function fetchCiRun(owner, repo, branch, token) {
   }
 }
 
+// 开放 PR 的 review 状态与意见文本（issue #144）。REST 无批量端点，按 PR 逐个拉（reviews + 行级评论），
+// 封顶前 MAX_REVIEW_PRS 个防请求失控（与 items 展示上限一致，更多 PR 的 review 延后到 #146 详情按需拉）；
+// 单 PR 失败静默跳过。文本截断后仅供警示定位与意图路由 prompt（#142）作原料
+const MAX_REVIEW_PRS = 20;
+const REVIEW_BODY_CAP = 240;
+const COMMENT_BODY_CAP = 160;
+async function fetchPrReviews(owner, repo, prNumbers, token) {
+  const targets = (prNumbers || []).slice(0, MAX_REVIEW_PRS);
+  const list = await Promise.all(targets.map(async (n) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const [revRes, comRes] = await Promise.all([
+        fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${n}/reviews?per_page=100`, { signal: ctrl.signal, headers: apiHeaders(token) }),
+        fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${n}/comments?per_page=100`, { signal: ctrl.signal, headers: apiHeaders(token) }),
+      ]);
+      // 状态取最后一条已提交的 review（PENDING 尚未提交不算决议）
+      let state = null, reviewer = '', reviewBody = '';
+      if (revRes.ok) {
+        const revs = await revRes.json();
+        const done = (Array.isArray(revs) ? revs : []).filter((x) => x.state && x.state !== 'PENDING');
+        const last = done.length ? done[done.length - 1] : null;
+        if (last) {
+          state = last.state;
+          reviewer = (last.user && last.user.login) || '';
+          reviewBody = String(last.body || '').trim().slice(0, REVIEW_BODY_CAP);
+        }
+      }
+      let commentCount = 0, lastCommentBody = '';
+      if (comRes.ok) {
+        const cs = await comRes.json();
+        if (Array.isArray(cs)) {
+          commentCount = cs.length;
+          if (cs.length) lastCommentBody = String(cs[cs.length - 1].body || '').trim().slice(0, COMMENT_BODY_CAP);
+        }
+      }
+      return { number: n, state, reviewer, reviewBody, commentCount, lastCommentBody };
+    } catch {
+      return null; // 单 PR 失败不拖垮整仓数据
+    } finally {
+      clearTimeout(timer);
+    }
+  }));
+  return list.filter(Boolean).filter((r) => r.state || r.commentCount);
+}
+
 // 读缓存挂接 github 字段（不发网络请求）；返回需要刷新的 repo 列表
 // 同时标记 p.githubOwned（owner 是否本人，大小写不敏感），渲染层据此区分「同步中」与「非本人仓库」（issue #44）
 function attachFromCache(projects, config, store) {
@@ -187,6 +234,20 @@ async function refreshCache(remotes, config, store) {
           data.meta = null;
           data.ci = null;
         }
+        // review 状态并入（issue #144）：PR 条目挂 reviewState 供徽标，全量意见存 prReviews
+        // 供警示与意图路由 prompt（#142）作原料；拉取失败降级为空清单，不影响 issues 数据
+        try {
+          data.prReviews = Array.isArray(data.prNumbers) && data.prNumbers.length
+            ? await fetchPrReviews(r.owner, r.repo, data.prNumbers, config.githubToken)
+            : [];
+        } catch {
+          data.prReviews = [];
+        }
+        const stateByNum = {};
+        data.prReviews.forEach((x) => { stateByNum[x.number] = x.state; });
+        data.items.forEach((it) => {
+          if (it.type === 'pr') it.reviewState = stateByNum[it.number] || null;
+        });
         return { data };
       }, (err) => ({ error: String((err && err.message) || err || '网络请求失败') }))
     )
@@ -233,6 +294,17 @@ function applyCiWarnings(projects, enabled) {
     if (enabled !== false && p.github && p.github.ci && p.github.ci.conclusion === 'failure') {
       p.warnings.push({ type: 'ci', label: '默认分支 CI 失败' });
     }
+  }
+}
+
+// review 警示（issue #144）：任一开放 PR 最新 review 为 CHANGES_REQUESTED 即记一条，
+// label 列出 PR 号便于定位。enabled=false 时只清不加
+function applyReviewWarnings(projects, enabled) {
+  for (const p of projects) {
+    p.warnings = p.warnings.filter((w) => w.type !== 'review');
+    if (enabled === false || !p.github || !Array.isArray(p.github.prReviews)) continue;
+    const pending = p.github.prReviews.filter((r) => r.state === 'CHANGES_REQUESTED').map((r) => '#' + r.number);
+    if (pending.length) p.warnings.push({ type: 'review', label: 'PR ' + pending.join('、') + ' 有待处理 review' });
   }
 }
 
@@ -344,10 +416,12 @@ module.exports = {
   fetchIssues,
   fetchRepoMeta,
   fetchCiRun,
+  fetchPrReviews,
   attachFromCache,
   refreshCache,
   applyPrWarnings,
   applyCiWarnings,
+  applyReviewWarnings,
   testConnection,
   ghCliAvailable,
   importGhToken,
