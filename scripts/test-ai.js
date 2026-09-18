@@ -1,11 +1,13 @@
 // ai.js 单元验证（issue #29）：prompt 组装 / 输出解析 / runCli 成功、超时、失败、stdin、stream-json 路径。
 // 另覆盖：issue #115 回归（良性警告不误杀 / [1m] 后缀保留 / 失败原因取末行）、issue-04 模板措辞、
 // issue-17 注入护栏与 argv 上限、issue-23 streamJson 空兜底与 win32 杀树、issue-24 超限裁决与残段复检。
+// issue-24（ipc 侧）：ai-chain 引擎链——回退顺序 / 会话黑名单 / lastGood 时机 / 中文类别聚合（假 run 注入）。
 // 不起 Electron；--real 时追加一次真实 kimi 调用冒烟。
 'use strict';
 
 const assert = require('assert');
 const ai = require('../src/main/ai');
+const aiChain = require('../src/main/ai-chain');
 
 const NOW = new Date('2026-09-09T12:00:00');
 const PROJECTS = [
@@ -215,6 +217,85 @@ async function main() {
     timeout: 10000,
   });
   assert.ok(!r.ok && r.reason.includes('401'), '无换行残段应在 close 全量复检时判引擎错误，实际: ' + JSON.stringify(r));
+
+  // --- issue-24（ipc 侧）：ai-chain 引擎链，假 run 注入 ---
+  const engA = { id: 'a', label: '引擎A', cmd: 'a-cmd' };
+  const engB = { id: 'b', label: '引擎B', cmd: 'b-cmd' };
+  const fakeRun = (outcomes) => {
+    const calls = [];
+    return { calls, run: async (e) => { calls.push(e.id); return outcomes[e.id]; } };
+  };
+
+  // 首选失败回退次选：成功写 lastGood，首选入黑名单，fails 聚合中文类别（issue #41/#138）
+  {
+    const fr = fakeRun({ a: { ok: false, reason: 'API Error: Request rejected (429)' }, b: { ok: true, text: 'B 产出' } });
+    const bad = new Set();
+    const lastGood = [];
+    const rc = await aiChain.runEngineChain({ engines: [engA, engB], badEngines: bad, run: fr.run, onLastGood: (id) => lastGood.push(id) });
+    assert.ok(rc.ok && rc.engine.id === 'b' && rc.text === 'B 产出', '首选失败应回退次选成功');
+    assert.deepStrictEqual(fr.calls, ['a', 'b'], '应按候选链顺序依次调用');
+    assert.deepStrictEqual(lastGood, ['b'], '成功引擎应记为 lastGood');
+    assert.ok(bad.has('a') && !bad.has('b'), '失败引擎应入会话黑名单，成功引擎不应入');
+    assert.strictEqual(rc.fails[0], '引擎A：配额不足或已达用量上限', 'fails 应聚合 label+中文类别');
+  }
+
+  // 首选被拉黑不再调用（链首健康过滤）
+  {
+    const fr = fakeRun({ a: { ok: true, text: 'x' }, b: { ok: true, text: 'B 产出' } });
+    const rc = await aiChain.runEngineChain({ engines: [engA, engB], badEngines: new Set(['a']), run: fr.run });
+    assert.ok(rc.ok && rc.engine.id === 'b', '应跳过被拉黑的首选直接打次选');
+    assert.deepStrictEqual(fr.calls, ['b'], '被拉黑引擎不应再发起调用');
+  }
+
+  // 全链失败：fails 含各引擎中文类别，全部入黑名单，不写 lastGood
+  {
+    const fr = fakeRun({ a: { ok: false, reason: '等待引擎响应超时' }, b: { ok: false, reason: 'spawn b-cmd ENOENT' } });
+    const bad = new Set();
+    let lastGoodCalls = 0;
+    const rc = await aiChain.runEngineChain({ engines: [engA, engB], badEngines: bad, run: fr.run, onLastGood: () => { lastGoodCalls++; } });
+    assert.strictEqual(rc.ok, false, '全链失败应 ok=false');
+    assert.deepStrictEqual(rc.fails, ['引擎A：响应超时', '引擎B：引擎未安装或命令不可用'], 'fails 应含各引擎中文类别，实际: ' + JSON.stringify(rc.fails));
+    assert.ok(bad.has('a') && bad.has('b'), '全链失败应全部入黑名单');
+    assert.strictEqual(lastGoodCalls, 0, '全链失败不应写 lastGood');
+  }
+
+  // validate 失败视同引擎失败（issue #137）：拉黑 + 固定类别「输出无法解析」，不触 onFail；次选通过则 extra 为解析产物
+  {
+    const fr = fakeRun({ a: { ok: true, text: '一段散文噪音' }, b: { ok: true, text: '{"band":"hot"}' } });
+    const bad = new Set();
+    const failCalls = [];
+    const parse = (t) => (t.startsWith('{') ? JSON.parse(t) : null);
+    const rc = await aiChain.runEngineChain({ engines: [engA, engB], badEngines: bad, run: fr.run, validate: parse, onFail: (e) => failCalls.push(e.id) });
+    assert.ok(rc.ok && rc.engine.id === 'b', '首选产出不可解析应回退次选');
+    assert.deepStrictEqual(rc.extra, { band: 'hot' }, 'extra 应为 validate 的解析产物');
+    assert.deepStrictEqual(rc.fails, ['引擎A：输出无法解析'], '不可解析应聚合固定中文类别');
+    assert.ok(bad.has('a'), '产出不可解析的引擎应入黑名单');
+    assert.deepStrictEqual(failCalls, [], '产出不可解析不算调用失败，不应触 onFail');
+  }
+
+  // 全灭照旧全试（可能已恢复，issue #41）
+  {
+    const fr = fakeRun({ a: { ok: false, reason: 'x' }, b: { ok: true, text: 'B 产出' } });
+    const rc = await aiChain.runEngineChain({ engines: [engA, engB], badEngines: new Set(['a', 'b']), run: fr.run });
+    assert.deepStrictEqual(fr.calls, ['a', 'b'], '全部在黑名单时仍应逐引擎全试');
+    assert.ok(rc.ok && rc.engine.id === 'b', '黑名单引擎恢复后应能成功');
+  }
+
+  // filter 只打链首（issue #132，逻辑随链抽出）：截取在健康过滤之后；链首失败即回不向次选回退
+  {
+    const fr = fakeRun({ a: { ok: false, reason: '超时' }, b: { ok: true, text: 'x' } });
+    const rc = await aiChain.runEngineChain({ engines: [engA, engB], badEngines: new Set(), run: fr.run, firstOnly: true });
+    assert.deepStrictEqual(fr.calls, ['a'], 'firstOnly 应只调链首');
+    assert.ok(!rc.ok && rc.fails.length === 1, '链首失败应即回，不向次选回退');
+    const fr2 = fakeRun({ a: { ok: true, text: 'x' }, b: { ok: true, text: 'x' } });
+    const rc2 = await aiChain.runEngineChain({ engines: [engA, engB], badEngines: new Set(['a']), run: fr2.run, firstOnly: true });
+    assert.deepStrictEqual(fr2.calls, ['b'], '首选被拉黑时 firstOnly 应打首个健康引擎');
+    assert.ok(rc2.ok && rc2.engine.id === 'b', '首个健康引擎应成为链首');
+  }
+
+  // aiErrorCategory 归类（issue #138，随链抽出）
+  assert.strictEqual(aiChain.aiErrorCategory('Error: 401 unauthorized'), '鉴权失败（请在终端重新登录该引擎）');
+  assert.strictEqual(aiChain.aiErrorCategory('莫名其妙的原因'), '调用失败');
 
   console.log('test-ai: 全部断言通过');
 

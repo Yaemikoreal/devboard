@@ -87,8 +87,10 @@ async function exists(p) {
 }
 
 // 递归找含 .git 的目录，深度上限 MAX_DEPTH；跳过黑名单与 . 开头目录（.git 本身只探测不进入）
+// 扫描域收敛为 scope 对象（issue #12 第 8 条）：roots/blacklist/extraPaths 三键永远同行，不再拆成并列参数；
 // extraPaths 为逐项指定的补充路径，要求自身含 .git
-async function discover(roots, blacklist, extraPaths) {
+async function discover(scope) {
+  const { roots = [], blacklist = [], extraPaths } = scope;
   const skip = new Set(blacklist.map((s) => s.toLowerCase()));
   const found = new Map();
 
@@ -583,12 +585,13 @@ async function branchDetail(projectPath, branch) {
   return { lastCommitAt: lastCommitAt || null, commits: parseCommitLines(recentLog) };
 }
 
-async function scan(roots, blacklist, extraPaths, opts) {
+// scope 为扫描域对象（issue #12 第 8 条），透传给 discover
+async function scan(scope, opts) {
   const now = new Date();
   const cache = (opts && opts.cache) || { projects: {} };
   const onLate = opts && opts.onLate;
   const t0 = Date.now();
-  const paths = await discover(roots, blacklist, extraPaths);
+  const paths = await discover(scope);
   const tDiscover = Date.now();
   const timings = [];
   const late = [];

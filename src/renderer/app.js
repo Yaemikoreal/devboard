@@ -2785,6 +2785,10 @@
     silentSave();
   }
   function silentSave() {
+    // 扫描域三键（issue #12 第 8 条）：改动域检测只比较这三键，提取一处消除三数组重复
+    function scanScopeOf(o) {
+      return { roots: o.roots || [], blacklist: o.blacklist || [], extraPaths: o.extraPaths || [] };
+    }
     var prev = state.settings || {};
     var patch = {
       roots: collectPaths(rootsList),
@@ -2815,8 +2819,7 @@
     // 无可用引擎时下拉禁用：不物化 aiEngine，保留原显式偏好待工具回归（issue #134）
     if (!fAiEngine.disabled) patch.aiEngine = fAiEngine.value;
     // 改动域检测：避免每次击键都重扫 PATH / 重扫磁盘 / 重渲染
-    var pathsChanged = JSON.stringify([patch.roots, patch.extraPaths, patch.blacklist]) !==
-      JSON.stringify([prev.roots || [], prev.extraPaths || [], prev.blacklist || []]);
+    var pathsChanged = JSON.stringify(scanScopeOf(patch)) !== JSON.stringify(scanScopeOf(prev));
     var toolsChanged = JSON.stringify(patch.aiTools) !== JSON.stringify(prev.aiTools || []);
     var hotkeyChanged = patch.hotkey !== (prev.hotkey || '');
     // 编辑器/终端命令改动随停顿自动校验（issue #76），结果显示在原校验按钮旁的 res 位

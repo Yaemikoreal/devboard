@@ -13,6 +13,7 @@ const { spawn, execFile } = require('child_process');
 const scanner = require('./scanner');
 const github = require('./github');
 const ai = require('./ai');
+const { runEngineChain } = require('./ai-chain'); // 引擎链回退/拉黑/错误归类（issue-24）
 const { DEFAULT_CONFIG, DEFAULT_PREFS } = require('./store');
 const { createGitWatcher } = require('./watcher');
 
@@ -81,6 +82,17 @@ function warningRulesOf(config) {
   return {
     dirtyDays: config.warningDirtyDays || 3,
     types: { dirty: wt.dirty !== false, unpushed: wt.unpushed !== false, pr: wt.pr !== false },
+  };
+}
+
+// 扫描域（issue #12 第 8 条）：roots/blacklist/extraPaths 三键永远同行，收敛一处构造 scope 对象；
+// draft 中合法（数组）的键优先，其余回退已存配置（scan:preview 的草稿语义）
+function scanScopeOf(cfg, draft) {
+  const d = draft || {};
+  return {
+    roots: Array.isArray(d.roots) ? d.roots : cfg.roots,
+    blacklist: Array.isArray(d.blacklist) ? d.blacklist : cfg.blacklist,
+    extraPaths: Array.isArray(d.extraPaths) ? d.extraPaths : cfg.extraPaths,
   };
 }
 
@@ -220,21 +232,6 @@ function promptTplKey(template) {
 // 失败即回让渲染层安静回退关键字搜索；weekly/advice 维持 runCli 默认 90s 不变
 const FILTER_TIMEOUT_MS = 20000;
 
-// AI 引擎错误归类（issue #138）：抛给渲染层的失败原因映射为中文类别，普通用户读得懂；
-// 原始（多为英文）错误行由调用方进 console.error 供排查
-function aiErrorCategory(reason) {
-  const s = String(reason || '');
-  if (/超时|timed? ?out/i.test(s)) return '响应超时';
-  if (/401|403|unauthorized|forbidden|未授权|鉴权|invalid[-_ ]?api[-_ ]?key/i.test(s)) return '鉴权失败（请在终端重新登录该引擎）';
-  if (/429|quota|rate.?limit|insufficient|token plan|用量上限|余额不足|超限/i.test(s)) return '配额不足或已达用量上限';
-  if (/启动失败|ENOENT|not found|找不到|未安装/i.test(s)) return '引擎未安装或命令不可用';
-  if (/ECONN|ENOTFOUND|EAI_AGAIN|网络|network/i.test(s)) return '网络连接失败';
-  if (/输出无法解析/.test(s)) return '输出无法解析';
-  if (/命令行过长/.test(s)) return '提示词超出命令行长度上限';
-  if (/输出超限/.test(s)) return '输出异常（内容过长）';
-  return '调用失败';
-}
-
 // advice 事实摘要签名（issue #131）：ahead/behind/dirtyCount/警示标签哈希进缓存键——
 // git push 后 HEAD 不变但 ahead 变化即 miss，不再展出过期语境的建议
 function adviceFactsKey(p) {
@@ -360,7 +357,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     gitWatcher.setScanning(true);
     let projects;
     try {
-      projects = await scanner.scan(config.roots, config.blacklist, config.extraPaths, {
+      projects = await scanner.scan(scanScopeOf(config), {
         cache,
         warningRules: warningRulesOf(config), // 警示规则参数化（issue #73）
         onLate: (projectPath, fresh) => {
@@ -552,7 +549,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   // settings:set 变更 AI 配置（aiEngine/aiTools/aiEnabled）时清空（issue #138），修好引擎后无需重启即可恢复首选
   const sessionBadEngines = new Set();
 
-  // 记最近可用引擎（issue #41）：filter 无结果缓存，成功时单独落 lastGoodEngine（issue #137）；
+  // 记最近可用引擎（issue #41）：filter 无结果缓存，成功时经引擎链 onLastGood 回调单独落 lastGoodEngine（issue #137）；
   // weekly/advice 在缓存写回时一并落，不走这里
   function writeLastGoodEngine(engineId) {
     const cur = store.getAiCache();
@@ -633,8 +630,8 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   // AI 统一调用入口（issue #29）：prompt 组装 / 超时 / 失败降级 / 结果缓存；kind 分派走处理器表（issue #128）
   // kind: weekly（按当天缓存）| advice（按 项目+HEAD+事实摘要签名+模板哈希 缓存，issue #131）| filter（不缓存）
   // 缓存命中分支在引擎探测之前（issue #139）：纯缓存命中不再等一轮 where 探测
-  // 引擎链式回退：首选失败后自动尝试其余已安装引擎，成功则记为最近可用（issue #41）；
-  // filter 例外（issue #132）：只打链首首选引擎 + 20s 短超时，失败即回，渲染层安静回退关键字搜索
+  // 引擎链式回退（issue #41，链实现已抽 ai-chain.js 便于单测，issue-24）：首选失败后自动尝试其余已安装引擎，
+  // 成功则记为最近可用；filter 例外（issue #132）：只打链首首选引擎 + 20s 短超时，失败即回，渲染层安静回退关键字搜索
   async function doAiAsk(payload) {
     const cfg = store.getConfig();
     if (cfg.aiEnabled === false) return { ok: false, reason: 'AI 功能已在设置中关闭' };
@@ -655,11 +652,8 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     }
     if (payload.cachedOnly) return { ok: false, kind, reason: 'no-cache' };
 
-    let engines = await resolveEngines(cfg, cache.lastGoodEngine);
+    const engines = await resolveEngines(cfg, cache.lastGoodEngine);
     if (!engines.length) return { ok: false, reason: '未检测到可用的 AI 命令行工具' };
-    const healthy = engines.filter((t) => !sessionBadEngines.has(t.id));
-    if (healthy.length) engines = healthy; // 全灭时也照旧全试一遍（可能已恢复）
-    if (kind === 'filter') engines = engines.slice(0, 1); // filter 只打首选引擎（issue #132）
 
     const built = handler.buildPrompt({
       payload,
@@ -670,39 +664,36 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     });
     if (!built.ok) return { ok: false, reason: built.reason };
 
-    const fails = [];
-    for (const engine of engines) {
-      const engineInfo = { id: engine.id, label: engine.label, cmd: engine.cmd };
-      const r = await ai.runCli(engine.cmd, built.prompt, {
+    // 引擎链（issue-24 抽 ai-chain.js）：健康过滤（全灭照旧全试）、失败拉黑、中文类别聚合都在链内；
+    // filter 例外（issue #132）由 firstOnly + run 闭包的 20s 短超时实现
+    const chain = await runEngineChain({
+      engines,
+      badEngines: sessionBadEngines,
+      run: (engine) => ai.runCli(engine.cmd, built.prompt, {
         toolId: engine.id,
         timeout: kind === 'filter' ? FILTER_TIMEOUT_MS : undefined, // filter 短超时（issue #132）
-      });
-      if (!r.ok) {
-        sessionBadEngines.add(engine.id);
-        console.error('[devboard] AI 引擎调用失败（' + engine.id + '）：' + r.reason); // 原始错误行进 console（issue #138）
-        fails.push(engine.label + '：' + aiErrorCategory(r.reason)); // 上屏只给中文类别（issue #138）
-        continue;
-      }
-      if (kind === 'filter') {
-        const filter = ai.parseFilter(r.text);
-        if (!filter) {
-          // 输出无法解析视同引擎失败拉黑（issue #137）：对 filter 持续输出噪音的引擎不再被首选重试
-          sessionBadEngines.add(engine.id);
-          fails.push(engine.label + '：输出无法解析');
-          continue;
-        }
-        writeLastGoodEngine(engine.id); // filter 成功同样记最近可用引擎（issue #137）
-        return { ok: true, kind, filter, engine: engineInfo };
-      }
-      if (handler.writeEntry && keyCtx) {
-        const cur = store.getAiCache();
-        handler.writeEntry({ cache: cur, key: keyCtx, tplKey, now }, r.text, engine.id);
-        cur.lastGoodEngine = engine.id; // 成功引擎记为最近可用（issue #41）
-        store.setAiCache(cur);
-      }
-      return { ok: true, kind, text: r.text, engine: engineInfo, cached: false, at: now.toISOString() };
+      }),
+      onFail: (engine, reason) => {
+        console.error('[devboard] AI 引擎调用失败（' + engine.id + '）：' + reason); // 原始错误行进 console（issue #138）
+      },
+      validate: kind === 'filter' ? ai.parseFilter : null, // filter 产出需可解析（issue #137）
+      // filter 成功即记最近可用（issue #137）；weekly/advice 在缓存写回时一并落（issue #41），不走链回调
+      onLastGood: kind === 'filter' ? writeLastGoodEngine : null,
+      firstOnly: kind === 'filter',
+    });
+    if (!chain.ok) {
+      return { ok: false, kind, reason: chain.fails.join('；') || '所有可用 AI 引擎均调用失败' };
     }
-    return { ok: false, kind, reason: fails.join('；') || '所有可用 AI 引擎均调用失败' };
+    if (kind === 'filter') {
+      return { ok: true, kind, filter: chain.extra, engine: chain.engine };
+    }
+    if (handler.writeEntry && keyCtx) {
+      const cur = store.getAiCache();
+      handler.writeEntry({ cache: cur, key: keyCtx, tplKey, now }, chain.text, chain.engine.id);
+      cur.lastGoodEngine = chain.engine.id; // 成功引擎记为最近可用（issue #41）
+      store.setAiCache(cur);
+    }
+    return { ok: true, kind, text: chain.text, engine: chain.engine, cached: false, at: now.toISOString() };
   }
 
   ipcMain.handle('ai:ask', (_e, payload) => {
@@ -900,16 +891,13 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   // 设置页辅助：扫描预览（用未保存的草稿值跑 discover，不落盘；附带无效路径清单）
   ipcMain.handle('scan:preview', async (_e, draft) => {
     const cfg = store.getConfig();
-    const d = draft || {};
-    const roots = Array.isArray(d.roots) ? d.roots : cfg.roots;
-    const blacklist = Array.isArray(d.blacklist) ? d.blacklist : cfg.blacklist;
-    const extraPaths = Array.isArray(d.extraPaths) ? d.extraPaths : cfg.extraPaths;
-    const paths = await scanner.discover(roots, blacklist, extraPaths);
+    const scope = scanScopeOf(cfg, draft);
+    const paths = await scanner.discover(scope);
     return {
       count: paths.length,
       names: paths.map((p) => path.basename(p)).slice(0, 60),
-      invalidRoots: roots.filter((r) => r && !fs.existsSync(r)),
-      invalidExtra: extraPaths.filter((p) => p && (!fs.existsSync(p) || !fs.existsSync(path.join(p, '.git')))),
+      invalidRoots: scope.roots.filter((r) => r && !fs.existsSync(r)),
+      invalidExtra: scope.extraPaths.filter((p) => p && (!fs.existsSync(p) || !fs.existsSync(path.join(p, '.git')))),
     };
   });
 

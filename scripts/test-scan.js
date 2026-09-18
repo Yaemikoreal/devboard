@@ -8,7 +8,8 @@ const { DEFAULT_CONFIG } = require('../src/main/store');
 (async () => {
   // 缺省扫本仓的父目录（出厂 roots 已改为空，不再内置任何本机路径）
   const roots = process.argv[2] ? [process.argv[2]] : [path.join(__dirname, '..', '..')];
-  const projects = await scanner.scan(roots, DEFAULT_CONFIG.blacklist);
+  // 扫描域对象（issue #12 第 8 条）：extraPaths 缺省即不补逐项路径，与原三参调用的 undefined 一致
+  const projects = await scanner.scan({ roots, blacklist: DEFAULT_CONFIG.blacklist });
   for (const p of projects) delete p.originUrl; // 内部字段，不在契约内
 
   const attention = projects
