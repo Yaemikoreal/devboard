@@ -45,6 +45,8 @@ contextBridge.exposeInMainWorld('devboard', {
   // GitHub 账户状态卡 + 断开（issue #45）
   githubStatus: () => ipcRenderer.invoke('github:status'),
   githubDisconnect: () => ipcRenderer.invoke('github:disconnect'),
+  // 单条 issue/PR 展开详情（issue #146）：按需拉取正文/评论流/diff 统计/reviewer
+  githubItemDetail: (payload) => ipcRenderer.invoke('github:itemDetail', payload),
   // AI 工具快捷启动（issue #15）
   aiToolsList: () => ipcRenderer.invoke('aitools:list'),
   aiToolsOpen: (cmd, projectPath) => ipcRenderer.invoke('aitools:open', cmd, projectPath),

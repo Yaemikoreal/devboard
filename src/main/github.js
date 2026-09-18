@@ -174,6 +174,151 @@ async function fetchPrReviews(owner, repo, prNumbers, token) {
   return list.filter(Boolean).filter((r) => r.state || r.commentCount);
 }
 
+/* ---------- 详情面板 GitHub 深化（issue #146） ---------- */
+
+// 最新 Release + 发布节奏：releases/latest 拿 tag 与发布时间，compare(tag...HEAD) 的 ahead_by
+// 即「距上次发布 N 个提交」；无 Release 的仓库返回 null 不报错
+async function fetchReleaseInfo(owner, repo, token) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    let rel;
+    try {
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, {
+        signal: ctrl.signal, headers: apiHeaders(token),
+      });
+      if (!res.ok) return null; // 404 = 尚无 Release，按无数据处理
+      rel = await res.json();
+    } finally {
+      clearTimeout(timer);
+    }
+    const info = {
+      tag: rel.tag_name || '',
+      name: rel.name || rel.tag_name || '',
+      publishedAt: rel.published_at || null,
+      url: rel.html_url || '',
+      aheadBy: null,
+    };
+    if (info.tag) {
+      try {
+        const ctrl2 = new AbortController();
+        const timer2 = setTimeout(() => ctrl2.abort(), 12000);
+        try {
+          const cmp = await fetch(
+            `https://api.github.com/repos/${owner}/${repo}/compare/${encodeURIComponent(info.tag)}...HEAD`,
+            { signal: ctrl2.signal, headers: apiHeaders(token) }
+          );
+          if (cmp.ok) {
+            const d = await cmp.json();
+            info.aheadBy = typeof d.ahead_by === 'number' ? d.ahead_by : null;
+          }
+        } finally {
+          clearTimeout(timer2);
+        }
+      } catch { /* 节奏信号拿不到只隐藏 N 提交字样，Release 本体照展 */ }
+    }
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+// 默认分支远程 HEAD sha（issue #146 元数据交叉验证）：与本地 headSha 比对判断「另一台机器推了」；
+// 不用裸 pushed_at 是因为自己 push 后 pushed_at 也会变新（时间差 = 提交到推送的间隔），误报率高
+async function fetchRemoteHead(owner, repo, branch, token) {
+  if (!branch) return null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(branch)}?per_page=1`,
+        { signal: ctrl.signal, headers: apiHeaders(token) }
+      );
+      if (!res.ok) return null;
+      const d = await res.json();
+      return d && d.sha ? d.sha : null;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return null;
+  }
+}
+
+// 单条 issue/PR 的展开详情（issue #146，按需拉取不进缓存）：正文 + 评论流 + PR 的 diff 统计
+// 与 reviewer 指派。PR 用 /pulls/{n}（含 diff 统计），评论流统一走 issues/{n}/comments
+// （GitHub 把 PR 视作 issue）；reviewer 指派 = requested_reviewers + 已提交 review 的作者去重
+async function fetchItemDetail(owner, repo, type, number, token) {
+  const n = parseInt(number, 10);
+  if (!n || (type !== 'pr' && type !== 'issue')) throw new Error('参数不合法');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  const itemBase = `https://api.github.com/repos/${owner}/${repo}`;
+  try {
+    const [mainRes, comRes] = await Promise.all([
+      fetch(type === 'pr' ? `${itemBase}/pulls/${n}` : `${itemBase}/issues/${n}`, {
+        signal: ctrl.signal, headers: apiHeaders(token),
+      }),
+      fetch(`${itemBase}/issues/${n}/comments?per_page=50`, {
+        signal: ctrl.signal, headers: apiHeaders(token),
+      }),
+    ]);
+    if (!mainRes.ok) throw new Error(`GitHub API ${mainRes.status}`);
+    const main = await mainRes.json();
+    let comments = [];
+    if (comRes.ok) {
+      const cs = await comRes.json();
+      comments = (Array.isArray(cs) ? cs : []).slice(0, 30).map((c) => ({
+        user: (c.user && c.user.login) || '',
+        body: String(c.body || '').trim().slice(0, 400),
+        createdAt: c.created_at || null,
+      }));
+    }
+    const out = {
+      type,
+      number: n,
+      title: main.title || '',
+      body: String(main.body || '').trim().slice(0, 600),
+      state: main.state || '',
+      comments,
+    };
+    if (type === 'pr') {
+      const reviewers = [];
+      const seen = new Set();
+      ((main.requested_reviewers && main.requested_reviewers) || []).forEach((u) => {
+        if (u && u.login && !seen.has(u.login)) { seen.add(u.login); reviewers.push({ login: u.login, state: 'PENDING' }); }
+      });
+      try {
+        const revRes = await fetch(`${itemBase}/pulls/${n}/reviews?per_page=100`, {
+          signal: ctrl.signal, headers: apiHeaders(token),
+        });
+        if (revRes.ok) {
+          const revs = await revRes.json();
+          // 已提交 review 的作者取其最新决议：数组按时间升序，重复出现的后写覆盖
+          // （含覆盖 requested_reviewers 先行占位的 PENDING——指派后又有决议时以决议为准）
+          (Array.isArray(revs) ? revs : []).forEach((rv) => {
+            if (rv && rv.user && rv.user.login && rv.state && rv.state !== 'PENDING') {
+              const r = reviewers.find((x) => x.login === rv.user.login);
+              if (r) r.state = rv.state;
+              else { seen.add(rv.user.login); reviewers.push({ login: rv.user.login, state: rv.state }); }
+            }
+          });
+        }
+      } catch { /* reviewer 拿不到只少一行，不失败 */ }
+      out.pr = {
+        additions: main.additions,
+        deletions: main.deletions,
+        changedFiles: main.changed_files,
+        reviewers,
+      };
+    }
+    return out;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /* ---------- GitHub 通知中心（issue #145，首版仅本人仓库） ---------- */
 
 // 通知条数上限：未读通知按最近优先截断，防跨仓库订阅多的账号拉爆缓存
@@ -316,15 +461,23 @@ async function refreshCache(remotes, config, store) {
     uniq.map((r) =>
       fetchIssues(r.owner, r.repo, config.githubToken).then(async (data) => {
         // CI 运行并入条目（issue #143）：元数据提供默认分支名，随后查该分支最近一次运行；
-        // 元数据/CI 任一失败都只降级为无 CI 数据，不影响 issues 数据的成败与 TTL
+        // 元数据/CI 任一失败都只降级为无 CI 数据，不影响 issues 数据的成败与 TTL。
+        // remoteHeadSha（issue #146）：与本地 headSha 交叉验证「另一台机器推了」
         try {
           const meta = await fetchRepoMeta(r.owner, r.repo, config.githubToken);
+          const [ci, remoteHead] = await Promise.all([
+            fetchCiRun(r.owner, r.repo, meta.defaultBranch, config.githubToken),
+            fetchRemoteHead(r.owner, r.repo, meta.defaultBranch, config.githubToken),
+          ]);
           data.meta = meta;
-          data.ci = await fetchCiRun(r.owner, r.repo, meta.defaultBranch, config.githubToken);
+          data.meta.remoteHeadSha = remoteHead;
+          data.ci = ci;
         } catch {
           data.meta = null;
           data.ci = null;
         }
+        // 最新 Release + 发布节奏（issue #146）：失败/无 Release 降级为无数据
+        data.release = await fetchReleaseInfo(r.owner, r.repo, config.githubToken);
         // review 状态并入（issue #144）：PR 条目挂 reviewState 供徽标，全量意见存 prReviews
         // 供警示与意图路由 prompt（#142）作原料；拉取失败降级为空清单，不影响 issues 数据
         try {
@@ -510,6 +663,9 @@ module.exports = {
   fetchPrReviews,
   fetchNotifications,
   notifHtmlUrl,
+  fetchReleaseInfo,
+  fetchRemoteHead,
+  fetchItemDetail,
   attachFromCache,
   refreshCache,
   refreshNotifications,

@@ -39,14 +39,17 @@ function mockBoard() {
       ahead: 2, behind: 0, hasUpstream: true,
       activity365: yearActivity(1, true), aiSessionAt: isoDaysAgo(0, 1), memo: '迁移脚本联调中，QQ 登录 cookie 老失效',
       band: 'hot',
-      warnings: [{ type: 'ahead', label: '2 提交未推送' }],
+      warnings: [{ type: 'ahead', label: '2 提交未推送' }, { type: 'ci', label: '默认分支 CI 失败' }],
       github: {
         owner: 'me', repo: 'wyy2qqmusic', openIssues: 2, openPRs: 1,
         items: [
-          { type: 'pr', number: 7, title: 'feat: 批量导入接口', url: 'https://github.com/me/wyy2qqmusic/pull/7' },
+          { type: 'pr', number: 7, title: 'feat: 批量导入接口', url: 'https://github.com/me/wyy2qqmusic/pull/7', reviewState: 'CHANGES_REQUESTED' },
           { type: 'issue', number: 3, title: 'cookie 失效后无法自动刷新', url: 'https://github.com/me/wyy2qqmusic/issues/3' },
           { type: 'issue', number: 5, title: '支持导出 csv', url: 'https://github.com/me/wyy2qqmusic/issues/5' },
         ],
+        // CI 失败警示 + Release 节奏演示（issue #143/#146）
+        ci: { conclusion: 'failure', name: 'CI', url: '', createdAt: null },
+        release: { tag: 'v0.3.0', name: 'v0.3.0 批量导入', publishedAt: isoDaysAgo(9), url: '', aheadBy: 6 },
       },
     },
     {
@@ -64,10 +67,11 @@ function mockBoard() {
       dirtyCount: 0, dirtyFiles: [], ahead: 0, behind: 1, hasUpstream: true,
       activity365: yearActivity(3, true), aiSessionAt: isoDaysAgo(3), memo: '报告模板第二版待确认',
       band: 'active',
-      warnings: [{ type: 'pr', label: '1 个开放 PR' }],
+      warnings: [{ type: 'pr', label: '1 个开放 PR' }, { type: 'review', label: 'PR #7 有待处理 review' }],
       github: {
         owner: 'me', repo: 'chat-analysis', openIssues: 0, openPRs: 1,
-        items: [{ type: 'pr', number: 7, title: 'feat: PDF 模板 v2', url: 'https://github.com/me/chat-analysis/pull/7' }],
+        items: [{ type: 'pr', number: 7, title: 'feat: PDF 模板 v2', url: 'https://github.com/me/chat-analysis/pull/7', reviewState: 'CHANGES_REQUESTED' }],
+        prReviews: [{ number: 7, state: 'CHANGES_REQUESTED', reviewer: 'yaemikoreal', reviewBody: '分页逻辑需要处理长图溢出，其余 OK', commentCount: 2, lastCommentBody: '' }],
       },
     },
     {
@@ -146,6 +150,16 @@ function mockBoard() {
     },
     attention,
     projects,
+    // GitHub 通知快照演示（issue #145）：未读事件的跨项目注意力流
+    notifications: {
+      fetchedAt: Date.now(),
+      error: null,
+      data: [
+        { id: '1', repo: 'me/chat-analysis', title: 'feat: PDF 模板 v2', subjectType: 'PullRequest', reason: 'review_requested', reasonLabel: 'review 请求', htmlUrl: 'https://github.com/me/chat-analysis/pull/7', updatedAt: isoDaysAgo(0, 4) },
+        { id: '2', repo: 'me/wyy2qqmusic', title: 'cookie 失效后无法自动刷新', subjectType: 'Issue', reason: 'mention', reasonLabel: '提及', htmlUrl: 'https://github.com/me/wyy2qqmusic/issues/3', updatedAt: isoDaysAgo(1) },
+        { id: '3', repo: 'me/devboard', title: 'Nightly CI failed on main', subjectType: 'CheckSuite', reason: 'ci_activity', reasonLabel: 'CI 动态', htmlUrl: 'https://github.com/me/devboard/actions', updatedAt: isoDaysAgo(1, 6) },
+      ],
+    },
   };
 }
 

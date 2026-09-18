@@ -897,6 +897,15 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     return true;
   });
 
+  // 单条 issue/PR 展开详情（issue #146）：按需拉取不进缓存，展开时现拉现用；
+  // 仅本人仓库可达（渲染层只在 github 挂接成功时展出入口），这里仍校验 token 兜底
+  ipcMain.handle('github:itemDetail', async (_e, payload) => {
+    const { owner, repo, type, number } = payload || {};
+    const cfg = store.getConfig();
+    if (!cfg.githubToken) throw new Error('未配置 GitHub');
+    return github.fetchItemDetail(String(owner || ''), String(repo || ''), String(type || ''), number, cfg.githubToken);
+  });
+
   // 设置页辅助：扫描预览（用未保存的草稿值跑 discover，不落盘；附带无效路径清单）
   ipcMain.handle('scan:preview', async (_e, draft) => {
     const cfg = store.getConfig();

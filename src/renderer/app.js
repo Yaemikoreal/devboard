@@ -61,6 +61,8 @@
     attnExpanded: false, // 需要关注「还有 N 条」展开态（issue #74），不持久化
     heatMonth: {}, // path -> 详情面板月份热力图翻页偏移（0 = 当月，-1 上一月；issue #34）
     panelPath: null, // 详情面板上次渲染的项目 path：仅同项目重渲染时恢复滚动位置（issue #63）
+    ghExpandedKey: null, // 详情面板 GitHub 区当前展开的条目 'owner/repo#n'（issue #146），不持久化
+    ghDetailCache: {}, // 'owner/repo#n' -> 展开详情 | 'loading'（issue #146 按需拉取，会话内内存缓存）
   };
 
   var appEl = document.getElementById('app');
@@ -1345,6 +1347,8 @@
     parent.appendChild(box);
   }
 
+  // GitHub 区（issue #146 深化）：Release 节奏行 + 远程新提交交叉验证提示 + 可展开详情。
+  // 点击条目改为就地展开（正文/评论流/diff 统计/reviewer），行尾外链图标保留原跳转
   function renderGithub(parent, p) {
     var gh = p.github;
     if (!gh) {
@@ -1358,9 +1362,30 @@
       return;
     }
     parent.appendChild(el('div', 'gh-empty', '开放 issue ' + gh.openIssues + ' · 开放 PR ' + gh.openPRs));
+    // 最新 Release + 发布节奏（issue #146）：距上次发布的提交数来自 compare(tag...HEAD)
+    if (gh.release && gh.release.tag) {
+      var relRow = el('div', 'gh-rel');
+      relRow.appendChild(el('span', 't', '最新 Release：' + (gh.release.name || gh.release.tag)
+        + (typeof gh.release.aheadBy === 'number' ? ' · 距上次发布 ' + gh.release.aheadBy + ' 个提交' : '')
+        + (gh.release.publishedAt ? ' · ' + relTime(gh.release.publishedAt) : '')));
+      relRow.title = '在 GitHub 查看该 Release';
+      relRow.addEventListener('click', function (e) {
+        e.stopPropagation();
+        api.openExternal(gh.release.url);
+      });
+      parent.appendChild(relRow);
+    }
+    // 远程有本地没有的提交（issue #146 元数据交叉验证）：本地在默认分支且无领先提交时，
+    // 远程 HEAD sha 与本地 headSha 不同 → 另一台机器推过（裸 pushed_at 会把自己刚 push 也算进去，不用）
+    if (gh.meta && gh.meta.remoteHeadSha && p.headSha && p.branch === gh.meta.defaultBranch
+      && !p.ahead && p.headSha !== gh.meta.remoteHeadSha) {
+      parent.appendChild(el('div', 'gh-remote', '远程默认分支有本地没有的提交（另一台机器推过？）'));
+    }
     var box = el('div', 'gh');
     gh.items.forEach(function (it) {
-      var row = el('div', 'gh-item');
+      var key = gh.owner + '/' + gh.repo + '#' + it.number;
+      var open = state.ghExpandedKey === key;
+      var row = el('div', 'gh-item' + (open ? ' open' : ''));
       row.appendChild(el('span', 'tag' + (it.type === 'issue' ? ' issue' : ''), it.type === 'pr' ? 'PR' : 'ISS'));
       row.appendChild(el('span', 't', '#' + it.number + ' ' + it.title));
       // review 状态徽标（issue #144）：仅 PR 条目且拉到状态时展出
@@ -1368,13 +1393,92 @@
         var b = REVIEW_BADGE[it.reviewState];
         row.appendChild(el('span', 'rv' + b.cls, b.text));
       }
-      row.addEventListener('click', function (e) {
+      var ext = el('button', 'gh-ext', '↗');
+      ext.title = '在 GitHub 打开';
+      ext.addEventListener('click', function (e) {
         e.stopPropagation();
         api.openExternal(it.url);
       });
+      row.appendChild(ext);
+      row.addEventListener('click', function () {
+        state.ghExpandedKey = open ? null : key;
+        var cur = findProject(state.selectedPath);
+        if (cur) renderPanel(cur); // 展开态经折叠组重放保留（issue #100）
+      });
       box.appendChild(row);
+      if (open) {
+        var db = el('div', 'gh-detail');
+        box.appendChild(db);
+        fillGhDetail(db, gh, it);
+      }
     });
     parent.appendChild(box);
+  }
+
+  // 展开详情填充（issue #146）：缓存命中直接渲染；未命中现拉（按需 IPC，不进 JSON 缓存），
+  // 拉到后经面板重渲走缓存渲染路径；失败给可重试提示
+  function fillGhDetail(box, gh, it) {
+    var key = gh.owner + '/' + gh.repo + '#' + it.number;
+    var cached = state.ghDetailCache[key];
+    if (cached === 'loading') {
+      box.appendChild(el('div', 'gh-detail-note', '加载中…'));
+      return;
+    }
+    if (cached && typeof cached === 'object') {
+      renderGhDetail(box, cached);
+      return;
+    }
+    state.ghDetailCache[key] = 'loading';
+    box.appendChild(el('div', 'gh-detail-note', '加载中…'));
+    api.githubItemDetail({ owner: gh.owner, repo: gh.repo, type: it.type, number: it.number }).then(function (d) {
+      state.ghDetailCache[key] = d;
+      var cur = findProject(state.selectedPath);
+      if (cur) renderPanel(cur);
+    }).catch(function (err) {
+      delete state.ghDetailCache[key];
+      box.innerHTML = '';
+      box.appendChild(el('div', 'gh-detail-note bad', '详情获取失败：' + ((err && err.message) || err) + '（点击条目重试）'));
+    });
+  }
+
+  // 展开详情渲染（issue #146）：正文 / diff 统计（PR）/ reviewer 指派 / 评论流
+  function renderGhDetail(box, d) {
+    if (d.body) {
+      box.appendChild(el('div', 'gh-detail-body', d.body));
+    }
+    if (d.pr) {
+      var st = el('div', 'gh-detail-stats mono',
+        (d.pr.additions != null ? '+' + d.pr.additions : '')
+        + (d.pr.deletions != null ? ' −' + d.pr.deletions : '')
+        + (d.pr.changedFiles != null ? ' · ' + d.pr.changedFiles + ' 个文件' : ''));
+      box.appendChild(st);
+      var reviewers = d.pr.reviewers || [];
+      if (reviewers.length) {
+        var rv = el('div', 'gh-detail-reviewers');
+        rv.appendChild(el('span', 'k', 'reviewer：'));
+        reviewers.forEach(function (r, i) {
+          if (i) rv.appendChild(document.createTextNode('、'));
+          rv.appendChild(el('span', 'v', r.login
+            + (r.state === 'CHANGES_REQUESTED' ? '（待改）' : r.state === 'APPROVED' ? '（已批）' : r.state === 'PENDING' ? '（待审）' : '')));
+        });
+        box.appendChild(rv);
+      }
+    }
+    var comments = d.comments || [];
+    if (comments.length) {
+      var cw = el('div', 'gh-detail-comments');
+      cw.appendChild(el('div', 'k', '评论 ' + comments.length + ' 条'));
+      comments.slice(0, 8).forEach(function (c) {
+        var item = el('div', 'cmt');
+        item.appendChild(el('div', 'ch', (c.user || '匿名') + (c.createdAt ? ' · ' + relTime(c.createdAt) : '')));
+        item.appendChild(el('div', 'cb', c.body));
+        cw.appendChild(item);
+      });
+      box.appendChild(cw);
+    }
+    if (!d.body && !comments.length && !d.pr) {
+      box.appendChild(el('div', 'gh-detail-note', '无正文与评论'));
+    }
   }
 
   function autosize(ta) {
