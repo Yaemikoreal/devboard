@@ -16,7 +16,13 @@
   var SORT_LABEL = { manual: '手动', activity: '最近活跃', name: '名称' };
   var AI_TOOL_LABEL = { kimi: 'Kimi Code', claude: 'Claude Code', codex: 'Codex', grok: 'Grok' };
   // 警示类型（issue #77）：类型图形 class；未知类型回退 dirty 图形
-  var WARN_GLYPH = { dirty: 'wg-dirty', ahead: 'wg-ahead', ci: 'wg-ci', pr: 'wg-pr' };
+  var WARN_GLYPH = { dirty: 'wg-dirty', ahead: 'wg-ahead', ci: 'wg-ci', review: 'wg-review', pr: 'wg-pr' };
+  // PR 条目 review 状态徽标（issue #144）：状态 -> 文案与样式档
+  var REVIEW_BADGE = {
+    CHANGES_REQUESTED: { text: '待改', cls: ' rv-changes' },
+    APPROVED: { text: '已批', cls: ' rv-approved' },
+    COMMENTED: { text: '评论', cls: '' },
+  };
   function warnGlyphClass(type) { return WARN_GLYPH[type] || WARN_GLYPH.dirty; }
   function warnTypesOf(list) {
     var seen = {};
@@ -1320,6 +1326,11 @@
       var row = el('div', 'gh-item');
       row.appendChild(el('span', 'tag' + (it.type === 'issue' ? ' issue' : ''), it.type === 'pr' ? 'PR' : 'ISS'));
       row.appendChild(el('span', 't', '#' + it.number + ' ' + it.title));
+      // review 状态徽标（issue #144）：仅 PR 条目且拉到状态时展出
+      if (it.type === 'pr' && it.reviewState && REVIEW_BADGE[it.reviewState]) {
+        var b = REVIEW_BADGE[it.reviewState];
+        row.appendChild(el('span', 'rv' + b.cls, b.text));
+      }
       row.addEventListener('click', function (e) {
         e.stopPropagation();
         api.openExternal(it.url);
@@ -1962,6 +1973,7 @@
   var fWarnDirty = document.getElementById('fWarnDirty');
   var fWarnUnpushed = document.getElementById('fWarnUnpushed');
   var fWarnCi = document.getElementById('fWarnCi');
+  var fWarnReview = document.getElementById('fWarnReview');
   var fWarnPr = document.getElementById('fWarnPr');
   var fReduceMotion = document.getElementById('fReduceMotion'); // 降低动效（issue #82）
   var fNotifyEnabled = document.getElementById('fNotifyEnabled');
@@ -2533,6 +2545,7 @@
       fWarnDirty.checked = wt.dirty !== false;
       fWarnUnpushed.checked = wt.unpushed !== false;
       fWarnCi.checked = wt.ci !== false;
+      fWarnReview.checked = wt.review !== false;
       fWarnPr.checked = wt.pr !== false;
       fNotifyEnabled.checked = cfg.notifyEnabled !== false; // 警示摘要通知（issue #80）；先置开关再渲染时机分段（禁用态依赖它）
       renderNotifyMode(NOTIFY_MODES.indexOf(cfg.notifyMode) >= 0 ? cfg.notifyMode : 'daily');
@@ -2627,7 +2640,7 @@
       autoStart: fAutoStart.checked,
       scanIntervalMin: scanIntervalValue(), // 后台刷新间隔（issue #70）
       warningDirtyDays: warnDirtyDaysValue(), // 警示规则（issue #73）
-      warningTypes: { dirty: fWarnDirty.checked, unpushed: fWarnUnpushed.checked, ci: fWarnCi.checked, pr: fWarnPr.checked },
+      warningTypes: { dirty: fWarnDirty.checked, unpushed: fWarnUnpushed.checked, ci: fWarnCi.checked, review: fWarnReview.checked, pr: fWarnPr.checked },
       notifyEnabled: fNotifyEnabled.checked, // 通知（issue #80）：主进程读配置即时生效，无需重拉板数据
       notifyMode: notifyModeValue(),
       trayAttentionCount: fTrayCount.checked,
@@ -2655,7 +2668,7 @@
     var prevWt = prev.warningTypes || {};
     var warnChanged = patch.warningDirtyDays !== (prev.warningDirtyDays || 3) ||
       JSON.stringify(patch.warningTypes) !==
-        JSON.stringify({ dirty: prevWt.dirty !== false, unpushed: prevWt.unpushed !== false, ci: prevWt.ci !== false, pr: prevWt.pr !== false });
+        JSON.stringify({ dirty: prevWt.dirty !== false, unpushed: prevWt.unpushed !== false, ci: prevWt.ci !== false, review: prevWt.review !== false, pr: prevWt.pr !== false });
     var autoStartChanged = patch.autoStart !== !!prev.autoStart; // 自启开关变化后回读注册结果（issue #108）
     // AI 开关/引擎变化需重估能力（issue #29）；自定义工具清单变化同时影响两者；
     // aiEngine 字段被剔除时（无可用引擎）不参与比较（issue #134）
