@@ -563,7 +563,44 @@
 
     renderStream();
     renderAttn();
+    renderGhNotify();
     renderTools();
+  }
+
+  // GitHub 通知小节（issue #145）：仅本人仓库的未读事件流；警示是板上事实、通知是 GitHub 事件，
+  // 分卡展出语义即区分；未连接/无未读不占版面，同步失败给一行提示（短 TTL 自动重试）
+  var NOTIFY_TOP = 6; // 版面友好：最多展 6 条，总数在副标里交代
+  function renderGhNotify() {
+    var card = document.getElementById('ghNotifyCard');
+    var list = document.getElementById('ghNotifyList');
+    var n = state.board && state.board.notifications;
+    var connected = state.settings && (state.settings.hasGithubToken || state.settings.githubToken);
+    var items = (n && n.data) || [];
+    if (!connected || (!items.length && !(n && n.error))) { card.classList.add('hidden'); return; }
+    card.classList.remove('hidden');
+    var sub = document.getElementById('ghNotifySub');
+    sub.classList.remove('bad');
+    if (!items.length && n && n.error) {
+      sub.textContent = '同步失败：' + n.error + '（稍后自动重试）';
+      sub.classList.add('bad');
+      list.innerHTML = '';
+      return;
+    }
+    sub.textContent = items.length + ' 条未读 · 仅本人仓库';
+    list.innerHTML = '';
+    items.slice(0, NOTIFY_TOP).forEach(function (it) {
+      var row = el('div', 'ntf-item');
+      row.appendChild(el('i', 'ntf-dot'));
+      row.appendChild(el('span', 'ntf-repo mono', it.repo));
+      row.appendChild(el('span', 'ntf-reason', it.reasonLabel));
+      row.appendChild(el('span', 't', it.title));
+      row.title = it.repo + ' · ' + it.title;
+      row.addEventListener('click', function () { api.openExternal(it.htmlUrl); });
+      list.appendChild(row);
+    });
+    if (items.length > NOTIFY_TOP) {
+      list.appendChild(el('div', 'ntf-more', '其余 ' + (items.length - NOTIFY_TOP) + ' 条在 GitHub 通知页'));
+    }
   }
 
   /* ---------- 热力图悬停气泡（issue #19）：总览全年图与详情面板月份日历共用（issue #34） ---------- */

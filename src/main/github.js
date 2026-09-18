@@ -174,6 +174,97 @@ async function fetchPrReviews(owner, repo, prNumbers, token) {
   return list.filter(Boolean).filter((r) => r.state || r.commentCount);
 }
 
+/* ---------- GitHub 通知中心（issue #145，首版仅本人仓库） ---------- */
+
+// 通知条数上限：未读通知按最近优先截断，防跨仓库订阅多的账号拉爆缓存
+const NOTIFY_CAP = 20;
+
+// 通知原因中文化（展示用）；未知原因原样保留
+const NOTIFY_REASON_LABEL = {
+  mention: '提及',
+  review_requested: 'review 请求',
+  assign: '指派',
+  author: '你发起的',
+  comment: '评论',
+  ci_activity: 'CI 动态',
+  invitation: '邀请',
+  manual: '订阅',
+  subscribed: '订阅',
+  security_alert: '安全警报',
+  state_change: '状态变更',
+  team_mention: '团队提及',
+};
+
+// 通知的 subject.url 是 API 地址，机械转成浏览器可开的页面地址；
+// 未识别类型兜底仓库页（换 html_url 要多发一次详情请求，不值得）
+function notifHtmlUrl(repoFull, subject) {
+  const base = 'https://github.com/' + repoFull;
+  const u = String((subject && subject.url) || '');
+  let m = u.match(/\/pulls\/(\d+)/);
+  if (m) return base + '/pull/' + m[1];
+  m = u.match(/\/issues\/(\d+)/);
+  if (m) return base + '/issues/' + m[1];
+  m = u.match(/\/commits\/([0-9a-f]+)/);
+  if (m) return base + '/commit/' + m[1];
+  if (/\/releases/.test(u)) return base + '/releases';
+  return base;
+}
+
+async function fetchNotifications(token, me) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const res = await fetch('https://api.github.com/notifications?per_page=' + NOTIFY_CAP, {
+      signal: ctrl.signal,
+      headers: apiHeaders(token),
+    });
+    if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+    const list = await res.json();
+    // 边界（issue #145）：仅本人仓库——repository.owner.login 与登录名比对（大小写不敏感），
+    // 跨仓库通知不展出；警示是板上算出的事实，通知是 GitHub 推来的事件，语义在 UI 上分开
+    return (Array.isArray(list) ? list : [])
+      .filter((n) => n.repository && n.repository.owner
+        && String(n.repository.owner.login).toLowerCase() === String(me).toLowerCase())
+      .slice(0, NOTIFY_CAP)
+      .map((n) => ({
+        id: n.id,
+        repo: n.repository.full_name,
+        title: (n.subject && n.subject.title) || '',
+        subjectType: (n.subject && n.subject.type) || '',
+        reason: n.reason || '',
+        reasonLabel: NOTIFY_REASON_LABEL[n.reason] || (n.reason || ''),
+        htmlUrl: notifHtmlUrl(n.repository.full_name, n.subject),
+        updatedAt: n.updated_at || null,
+      }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 通知刷新：沿用 10 分钟 TTL / 失败 3 分钟短 TTL（独立于 per-repo 条目）；沿用静默保留旧数据。
+// 通知自带 GitHub 侧已读态，这里只缓存未读快照；本地不做已读标记，消音机制不接通知（issue #145）
+// 返回是否有可见变化（供落地即推补丁）
+async function refreshNotifications(config, store) {
+  const me = String(config.githubUsername || '');
+  if (!config.githubToken || !me) return false;
+  const cache = store.getGithubCache();
+  const cur = cache.notifications;
+  const now = Date.now();
+  if (cur && now - cur.fetchedAt < (cur.error ? FAIL_TTL_MS : TTL_MS)) return false;
+  let changed = !!(cur && cur.error); // 失败恢复要重推
+  try {
+    const data = await fetchNotifications(config.githubToken, me);
+    changed = changed || JSON.stringify(data) !== JSON.stringify(cur && cur.data);
+    cache.notifications = { fetchedAt: now, data, error: null };
+  } catch (err) {
+    const msg = String((err && err.message) || err || '网络请求失败');
+    changed = changed || !(cur && cur.error === msg);
+    cache.notifications = { fetchedAt: now, data: (cur && cur.data) || [], error: msg };
+  }
+  store.setGithubCache(cache);
+  return changed;
+}
+
 // 读缓存挂接 github 字段（不发网络请求）；返回需要刷新的 repo 列表
 // 同时标记 p.githubOwned（owner 是否本人，大小写不敏感），渲染层据此区分「同步中」与「非本人仓库」（issue #44）
 function attachFromCache(projects, config, store) {
@@ -417,8 +508,11 @@ module.exports = {
   fetchRepoMeta,
   fetchCiRun,
   fetchPrReviews,
+  fetchNotifications,
+  notifHtmlUrl,
   attachFromCache,
   refreshCache,
+  refreshNotifications,
   applyPrWarnings,
   applyCiWarnings,
   applyReviewWarnings,
