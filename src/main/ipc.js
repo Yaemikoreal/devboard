@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { ipcMain, shell, dialog, app } = require('electron');
+const { ipcMain, shell, dialog, app, net } = require('electron');
 const { spawn, execFile } = require('child_process');
 const scanner = require('./scanner');
 const github = require('./github');
@@ -240,6 +240,10 @@ function adviceFactsKey(p) {
 }
 
 function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoStartError, onAttentionCount }) {
+  // GitHub 网络出口换 Chromium 网络栈（issue #153）：net.fetch 读系统证书库，
+  // Watt Toolkit（Steam++）等加速工具本地自签接管 TLS 时不再被 Node 内置 CA 拒之门外。
+  // registerIpc 在 app ready 后调用，net.fetch 此时可用
+  github.setFetchImpl(net.fetch);
   // IPC handler 统一兜底（issue #97）：handler 抛错（写盘 ENOSPC/EPERM 等）时给渲染层干净的中文消息，
   // 由渲染层 ipcErrText 剥掉 Electron 的「Error invoking remote method」包装后展示
   const rawHandle = ipcMain.handle.bind(ipcMain);

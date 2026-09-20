@@ -14,12 +14,66 @@ const DEVICE_FLOW_CLIENT_ID = '';
 // GitHub OAuth 没有更细的只读 repo scope，公开仓库场景可置空。
 const DEVICE_FLOW_SCOPE = 'repo';
 
+// remote 地址解析（issue #154）：覆盖 GitHub 官方常用 remote 形态——
+// 1) scp 风格：git@github.com:owner/repo.git，含 SSH over 443 别名 git@ssh.github.com:owner/repo.git
+// 2) 显式 ssh:// URL：ssh://git@<host>[:port]/owner/repo.git（绕 SNI reset 切 SSH over 443 即此形态，端口任意）
+// 3) https：https://github.com/owner/repo.git
+// 主机白名单限 GitHub 官方两域（github.com 与 ssh.github.com），其余主机（Gitee 等）返回 null；
+// fork 上游跳过与 owner 大小写不敏感比对逻辑由调用方保持不变
+const GITHUB_HOST_RE = '(?:github\\.com|ssh\\.github\\.com)';
+const REMOTE_PATTERNS = [
+  new RegExp(`^git@${GITHUB_HOST_RE}:([^/]+)/([^/]+?)(?:\\.git)?$`),
+  new RegExp(`^ssh://git@${GITHUB_HOST_RE}(?::\\d+)?/([^/]+)/([^/]+?)(?:\\.git)?$`),
+  /^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/,
+];
+
 function parseGitHubRemote(url) {
   if (!url) return null;
-  let m = url.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (!m) m = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  if (!m) return null;
-  return { owner: m[1], repo: m[2] };
+  const s = String(url).trim();
+  for (const re of REMOTE_PATTERNS) {
+    const m = s.match(re);
+    if (m) return { owner: m[1], repo: m[2] };
+  }
+  return null;
+}
+
+/* ---------- 网络出口注入（issue #153） ---------- */
+
+// 主进程网络走 Chromium 网络栈（Electron net.fetch，读系统证书库）：浏览器能连 GitHub，devboard 就能连——
+// Watt Toolkit（Steam++）等加速工具本地自签接管 TLS 时，不再被 Node 内置 CA 拒之门外。
+// github.js 保持纯 Node 可测：缺省 globalThis.fetch，主进程注册时 setFetchImpl(net.fetch)，
+// 测试同样经此注入假 fetch。安全底线：不允许 NODE_TLS_REJECT_UNAUTHORIZED=0 一刀切关校验。
+let fetchImpl = null;
+function setFetchImpl(impl) {
+  fetchImpl = typeof impl === 'function' ? impl : null;
+}
+function httpFetch(url, opts) {
+  return (fetchImpl || globalThis.fetch)(url, opts);
+}
+
+// 证书类失败识别（issue #153）：加速工具自签证书接管 GitHub 连接时，Node 侧报
+// UNABLE_TO_VERIFY_LEAF_SIGNATURE 等 code（藏在 err.cause），Chromium 网络栈（net.fetch）
+// 报 net::ERR_CERT_* 混在 message 里。命中即给针对性中文提示，不再笼统「网络错误」。
+const CERT_ERROR_CODES = [
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'ERR_CERT_AUTHORITY_INVALID',
+  'ERR_CERT_COMMON_NAME_INVALID',
+  'ERR_CERT_DATE_INVALID',
+];
+const CERT_FAIL_HINT = '检测到本机 GitHub 加速工具（Watt Toolkit 等）的自签证书接管了 GitHub 连接：'
+  + '请在加速器中信任证书（导出后设 NODE_EXTRA_CA_CERTS）或关闭其 GitHub 加速';
+function certFailReason(err) {
+  const candidates = [
+    err && err.cause && err.cause.code, // Node fetch：真实 TLS 原因在 err.cause
+    err && err.cause && err.cause.message,
+    err && err.code,
+    (err && err.message) || '',
+  ];
+  const hit = CERT_ERROR_CODES.some((code) => candidates.some((c) => c === code || String(c).includes(code)));
+  return hit ? CERT_FAIL_HINT : null;
 }
 
 // GitHub REST 请求头工厂（issue #128）：issues 拉取与连接测试共用同一组头
@@ -45,7 +99,7 @@ async function fetchIssues(owner, repo, token) {
     try {
       const all = [];
       for (let page = 1; page <= MAX_PAGES; page++) {
-        const res = await fetch(
+        const res = await httpFetch(
           `https://api.github.com/repos/${owner}/${repo}/issues?state=open&per_page=100&page=${page}`,
           {
             signal: ctrl.signal,
@@ -85,7 +139,7 @@ async function fetchRepoMeta(owner, repo, token) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 12000);
   try {
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+    const res = await httpFetch(`https://api.github.com/repos/${owner}/${repo}`, {
       signal: ctrl.signal,
       headers: apiHeaders(token),
     });
@@ -105,7 +159,7 @@ async function fetchCiRun(owner, repo, branch, token) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12000);
     try {
-      const res = await fetch(
+      const res = await httpFetch(
         `https://api.github.com/repos/${owner}/${repo}/actions/runs?branch=${encodeURIComponent(branch)}&per_page=1`,
         { signal: ctrl.signal, headers: apiHeaders(token) }
       );
@@ -141,8 +195,8 @@ async function fetchPrReviews(owner, repo, prNumbers, token) {
     const timer = setTimeout(() => ctrl.abort(), 12000);
     try {
       const [revRes, comRes] = await Promise.all([
-        fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${n}/reviews?per_page=100`, { signal: ctrl.signal, headers: apiHeaders(token) }),
-        fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${n}/comments?per_page=100`, { signal: ctrl.signal, headers: apiHeaders(token) }),
+        httpFetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${n}/reviews?per_page=100`, { signal: ctrl.signal, headers: apiHeaders(token) }),
+        httpFetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${n}/comments?per_page=100`, { signal: ctrl.signal, headers: apiHeaders(token) }),
       ]);
       // 状态取最后一条已提交的 review（PENDING 尚未提交不算决议）
       let state = null, reviewer = '', reviewBody = '';
@@ -184,7 +238,7 @@ async function fetchReleaseInfo(owner, repo, token) {
     const timer = setTimeout(() => ctrl.abort(), 12000);
     let rel;
     try {
-      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, {
+      const res = await httpFetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, {
         signal: ctrl.signal, headers: apiHeaders(token),
       });
       if (!res.ok) return null; // 404 = 尚无 Release，按无数据处理
@@ -204,7 +258,7 @@ async function fetchReleaseInfo(owner, repo, token) {
         const ctrl2 = new AbortController();
         const timer2 = setTimeout(() => ctrl2.abort(), 12000);
         try {
-          const cmp = await fetch(
+          const cmp = await httpFetch(
             `https://api.github.com/repos/${owner}/${repo}/compare/${encodeURIComponent(info.tag)}...HEAD`,
             { signal: ctrl2.signal, headers: apiHeaders(token) }
           );
@@ -231,7 +285,7 @@ async function fetchRemoteHead(owner, repo, branch, token) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12000);
     try {
-      const res = await fetch(
+      const res = await httpFetch(
         `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(branch)}?per_page=1`,
         { signal: ctrl.signal, headers: apiHeaders(token) }
       );
@@ -257,10 +311,10 @@ async function fetchItemDetail(owner, repo, type, number, token) {
   const itemBase = `https://api.github.com/repos/${owner}/${repo}`;
   try {
     const [mainRes, comRes] = await Promise.all([
-      fetch(type === 'pr' ? `${itemBase}/pulls/${n}` : `${itemBase}/issues/${n}`, {
+      httpFetch(type === 'pr' ? `${itemBase}/pulls/${n}` : `${itemBase}/issues/${n}`, {
         signal: ctrl.signal, headers: apiHeaders(token),
       }),
-      fetch(`${itemBase}/issues/${n}/comments?per_page=50`, {
+      httpFetch(`${itemBase}/issues/${n}/comments?per_page=50`, {
         signal: ctrl.signal, headers: apiHeaders(token),
       }),
     ]);
@@ -290,7 +344,7 @@ async function fetchItemDetail(owner, repo, type, number, token) {
         if (u && u.login && !seen.has(u.login)) { seen.add(u.login); reviewers.push({ login: u.login, state: 'PENDING' }); }
       });
       try {
-        const revRes = await fetch(`${itemBase}/pulls/${n}/reviews?per_page=100`, {
+        const revRes = await httpFetch(`${itemBase}/pulls/${n}/reviews?per_page=100`, {
           signal: ctrl.signal, headers: apiHeaders(token),
         });
         if (revRes.ok) {
@@ -359,7 +413,7 @@ async function fetchNotifications(token, me) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 12000);
   try {
-    const res = await fetch('https://api.github.com/notifications?per_page=' + NOTIFY_CAP, {
+    const res = await httpFetch('https://api.github.com/notifications?per_page=' + NOTIFY_CAP, {
       signal: ctrl.signal,
       headers: apiHeaders(token),
     });
@@ -402,7 +456,7 @@ async function refreshNotifications(config, store) {
     changed = changed || JSON.stringify(data) !== JSON.stringify(cur && cur.data);
     cache.notifications = { fetchedAt: now, data, error: null };
   } catch (err) {
-    const msg = String((err && err.message) || err || '网络请求失败');
+    const msg = certFailReason(err) || String((err && err.message) || err || '网络请求失败');
     changed = changed || !(cur && cur.error === msg);
     cache.notifications = { fetchedAt: now, data: (cur && cur.data) || [], error: msg };
   }
@@ -493,7 +547,7 @@ async function refreshCache(remotes, config, store) {
           if (it.type === 'pr') it.reviewState = stateByNum[it.number] || null;
         });
         return { data };
-      }, (err) => ({ error: String((err && err.message) || err || '网络请求失败') }))
+      }, (err) => ({ error: certFailReason(err) || String((err && err.message) || err || '网络请求失败') }))
     )
   );
   const now = Date.now();
@@ -559,7 +613,7 @@ async function testConnection(token) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 10000);
     try {
-      const res = await fetch('https://api.github.com/user', {
+      const res = await httpFetch('https://api.github.com/user', {
         signal: ctrl.signal,
         headers: apiHeaders(token),
       });
@@ -568,7 +622,9 @@ async function testConnection(token) {
       const data = await res.json();
       // 顺带带回头像与显示名，设置页账户状态卡用（issue #45）
       return { ok: true, login: data.login, name: data.name || '', avatarUrl: data.avatar_url || '' };
-    } catch {
+    } catch (err) {
+      const certHint = certFailReason(err);
+      if (certHint) return { ok: false, reason: certHint }; // 证书接管是确定性失败，重试无意义（issue #153）
       if (attempt === 1) return { ok: false, reason: '网络错误，无法连接 GitHub' };
       await new Promise((r) => setTimeout(r, 1000));
     } finally {
@@ -600,7 +656,7 @@ async function deviceStart() {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 10000); // 弱网挂起不再无限等（issue #107，与 testConnection 同款）
   try {
-    const res = await fetch('https://github.com/login/device/code', {
+    const res = await httpFetch('https://github.com/login/device/code', {
       signal: ctrl.signal,
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -630,7 +686,7 @@ async function devicePoll(deviceCode) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 10000); // 单次轮询挂起不阻塞下一轮（issue #107）
   try {
-    const res = await fetch('https://github.com/login/oauth/access_token', {
+    const res = await httpFetch('https://github.com/login/oauth/access_token', {
       signal: ctrl.signal,
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -677,5 +733,6 @@ module.exports = {
   importGhToken,
   deviceStart,
   devicePoll,
+  setFetchImpl,
   DEVICE_FLOW_CLIENT_ID,
 };
