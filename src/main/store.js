@@ -54,23 +54,47 @@ class Store {
     return path.join(this.baseDir, name);
   }
 
+  // 读 JSON：内存副本优先；文件缺失（首次启动的正常路径）直接用 fallback。
+  // 文件存在但解析失败（断电/崩溃/杀软隔离导致截断）时，先把原文另存为 <name>.corrupt 再退用 fallback
+  // （issue #168 第 8 条）——否则紧随其后的任意一次写入都会用空 fallback 覆盖掉用户唯一那份数据，
+  // 且全程没有任何提示与恢复入口
   readJson(name, fallback) {
     if (this._mem.has(name)) return this._mem.get(name);
+    const file = this._file(name);
     let data = fallback;
+    let raw = null;
     try {
-      data = JSON.parse(fs.readFileSync(this._file(name), 'utf8'));
-    } catch { /* 文件缺失/损坏时用 fallback，并缓存之，后续写入即覆盖 */ }
+      raw = fs.readFileSync(file, 'utf8');
+    } catch { /* 文件缺失：走 fallback */ }
+    if (raw !== null) {
+      try {
+        data = JSON.parse(raw);
+      } catch (err) {
+        this._backupCorrupt(name, raw, err);
+      }
+    }
     this._mem.set(name, data);
     return data;
   }
 
+  // 损坏留证：写一份 <name>.corrupt（已存在则不覆盖，保留最早那份现场），并在控制台点名
+  _backupCorrupt(name, raw, err) {
+    const bak = this._file(name + '.corrupt');
+    try {
+      if (!fs.existsSync(bak)) fs.writeFileSync(bak, raw, 'utf8');
+    } catch { /* 留证失败不阻断启动 */ }
+    console.error('[devboard] ' + name + ' 解析失败，已退用默认值并保留现场副本 ' + path.basename(bak) + '：' + ((err && err.message) || err));
+  }
+
   // compact：缓存类大文件（scan/github/ai-cache）去 indent 美化（issue #93），体积缩小数倍
+  // 先落盘、后更新内存副本（issue #168 第 8 条）：写失败（ENOSPC/EPERM）时内存不再领先于磁盘，
+  // 消除「设置看着保存了、重启后回滚」的静默不一致；异常照旧上抛，由 IPC 兜底转成中文提示
   writeJson(name, data, compact) {
-    this._mem.set(name, data);
     const file = this._file(name);
     const tmp = file + '.tmp';
     fs.writeFileSync(tmp, compact ? JSON.stringify(data) : JSON.stringify(data, null, 2), 'utf8');
     fs.renameSync(tmp, file);
+    this._mem.set(name, data);
   }
 
   _canSeal() {

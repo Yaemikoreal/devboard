@@ -103,14 +103,18 @@ app.whenReady().then(() => {
     }));
     ipcMain.handle('prefs:set', () => ({}));
     ipcMain.handle('snooze:set', () => true);
-    // AI 工具（issue #15 mock）：claude / kimi 已安装，codex / grok 未安装；logo 复用真实注册表（issue #21）
-    const { AI_TOOL_ICONS } = require('../src/main/ipc');
-    ipcMain.handle('aitools:list', () => [
-      { id: 'claude', label: 'Claude Code', cmd: 'claude', installed: true, logo: AI_TOOL_ICONS.claude },
-      { id: 'codex', label: 'Codex', cmd: 'codex', installed: false, logo: AI_TOOL_ICONS.codex },
-      { id: 'kimi', label: 'Kimi Code', cmd: 'kimi', installed: true, logo: AI_TOOL_ICONS.kimi },
-      { id: 'grok', label: 'Grok', cmd: 'grok', installed: false, logo: AI_TOOL_ICONS.grok },
-    ]);
+    // AI 工具（issue #15 mock）：claude / kimi 视为已安装，其余未安装；整行由注册表派生
+    // （issue #168 第 5 条）：原先手写四个 id/label/cmd 并两跳直取 AI_TOOL_BY_ID.x.icon，
+    // 注册表改动后 mock 不跟随。现在只声明「哪些装上了」，其余从注册表同一份数据生成。
+    const { AI_TOOLS, iconFor } = require('../src/shared/ai-tools');
+    const MOCK_INSTALLED = new Set(['claude', 'kimi']);
+    ipcMain.handle('aitools:list', () => AI_TOOLS.map((t) => ({
+      id: t.id,
+      label: t.label,
+      cmd: t.cmd,
+      installed: MOCK_INSTALLED.has(t.id),
+      logo: iconFor('', t.id),
+    })));
     ipcMain.handle('aitools:open', () => true);
     // AI 功能（issue #29 mock）：引擎可用；周报/建议给罐装文本，筛选给结构化结果
     // DEVBOARD_MOCK_AI=off 时返回无引擎，验证「未装工具时入口隐藏」

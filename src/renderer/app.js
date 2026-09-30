@@ -14,7 +14,10 @@
   var localDateStr = consts.localDateStr; // AI 周报缓存的当天日期键
   var SORT_MODES = ['manual', 'activity', 'name'];
   var SORT_LABEL = { manual: '手动', activity: '最近活跃', name: '名称' };
-  var AI_TOOL_LABEL = { kimi: 'Kimi Code', claude: 'Claude Code', codex: 'Codex', grok: 'Grok' };
+  // AI 工具注册表派生（issue #123）：痕迹明细 label 与设置页图标选项由注册表经 preload 下发
+  // （preload 侧 rendererConsts 单一派生点），渲染层直用，不再手写按工具 id 键控的本地副本
+  var AI_TOOL_LABEL = consts.AI_TOOL_LABELS;
+  var AI_ICON_CHOICES = [['', '默认（终端）']].concat(consts.AI_ICON_CHOICES);
   // 警示类型（issue #77）：类型图形 class；未知类型回退 dirty 图形
   var WARN_GLYPH = { dirty: 'wg-dirty', ahead: 'wg-ahead', ci: 'wg-ci', review: 'wg-review', pr: 'wg-pr' };
   // PR 条目 review 状态徽标（issue #144）：状态 -> 文案与样式档
@@ -49,6 +52,7 @@
     awaitPatch: false,
     boardGen: 0, // 当前板的扫描代次：过期补丁丢弃依据（issue #112）
     pendingPatch: null, // 拖拽在飞时排队的补丁，dragend 后放行（issue #100）
+    pendingLoadPatch: null, // 加载在飞时排队的补丁，load 收尾后放行（issue #168 第 12 条）
     branchSel: {}, // path -> 选中分支名（issue #4，持久化在 prefs.branchSel）
     branchDetail: {}, // path + ' ' + branch -> { lastCommitAt, commits } | 'loading'
     suggestIdx: -1, // 搜索补全键盘选中项（issue #6）
@@ -608,32 +612,49 @@
   /* ---------- 热力图悬停气泡（issue #19）：总览全年图与详情面板月份日历共用（issue #34） ---------- */
   var heatTip = el('div', 'heat-tip');
   document.body.appendChild(heatTip);
+  // 定位合帧（issue #168 第 12 条）：原先每个 cell 各排一条双 rAF 链，一帧内掠过多个格子会排队多次
+  // 「写样式 → 读 getBoundingClientRect/offsetWidth → 写样式」，每次读都强制一次同步布局。
+  // 改为只保留最新目标、整帧最多一条链；回调内先读完再写，不在读写之间穿插。
+  var heatTipTarget = null;
+  var heatTipPending = 0;
+  function placeHeatTip() {
+    heatTipPending = 0;
+    var c = heatTipTarget;
+    if (!c || !c.isConnected) return;
+    var r = c.getBoundingClientRect(); // 读
+    var half = heatTip.offsetWidth / 2 + 8; // 读
+    var cx = r.left + r.width / 2;
+    // 气泡 fixed 定位跟随格子；贴窗口左右缘时钳制内收（面板滚动经 scroll 捕获隐藏）
+    if (cx + half > window.innerWidth) cx = window.innerWidth - half;
+    else if (cx < half) cx = half;
+    heatTip.style.left = cx + 'px'; // 写
+    heatTip.style.top = (r.top - 8) + 'px'; // 写
+  }
+  function scheduleHeatTip() {
+    if (heatTipPending) return;
+    heatTipPending = 1;
+    // 宽度读取延迟两帧（issue #104）：写内容后立即读 offsetWidth 会强制同步布局；
+    // 双 rAF 让本帧布局先落地再读（免强制）。定位晚一帧（~16ms）无感
+    requestAnimationFrame(function () {
+      requestAnimationFrame(placeHeatTip);
+    });
+  }
   document.addEventListener('mouseover', function (e) {
     var c = e.target && e.target.closest ? e.target.closest('.cell') : null;
     if (!c || c.classList.contains('blank') || !c.dataset.tip || !c.closest('.gheat,.p-heat,.mheat')) {
+      heatTipTarget = null;
       heatTip.style.opacity = 0;
       return;
     }
     heatTip.textContent = c.dataset.tip;
     heatTip.style.opacity = 1;
-    // 宽度读取延迟两帧（issue #104）：写内容后立即读 offsetWidth 会强制同步布局；
-    // 双 rAF 让本帧布局先落地再读（免强制）。定位晚一帧（~16ms）无感
-    requestAnimationFrame(function () {
-      requestAnimationFrame(function () {
-        if (!c.isConnected) return;
-        // 气泡 fixed 定位跟随格子；贴窗口左右缘时钳制内收（面板滚动经 scroll 捕获隐藏）
-        var r = c.getBoundingClientRect();
-        var cx = r.left + r.width / 2;
-        var half = heatTip.offsetWidth / 2 + 8;
-        if (cx + half > window.innerWidth) cx = window.innerWidth - half;
-        else if (cx < half) cx = half;
-        heatTip.style.left = cx + 'px';
-        heatTip.style.top = (r.top - 8) + 'px';
-      });
-    });
+    heatTipTarget = c;
+    scheduleHeatTip();
   });
   document.addEventListener('mouseleave', function () { heatTip.style.opacity = 0; }, true);
-  document.addEventListener('scroll', function () { heatTip.style.opacity = 0; }, true);
+  // passive（issue #168 第 12 条）：捕获相滚动监听会在应用内每个滚动容器上逐次触发，
+  // 只写一次样式，声明 passive 让浏览器不必等处理器返回即可继续滚动
+  document.addEventListener('scroll', function () { heatTip.style.opacity = 0; }, { capture: true, passive: true });
 
   /* ---------- 工作台 · AI 工具（issue #15） ---------- */
   function installedTools() {
@@ -914,7 +935,11 @@
     // 定时器只在「曾挂载后被移除」时自清（issue #40 实测 bug）
     var line = el('div', 'ai-err', '');
     var makeText = function () {
-      return '正在总结…（本机 ' + state.aiCaps.engine.label + '，已等待 ' +
+      // 引擎可能中途消失（issue #168 第 12 条）：ai:caps 失败或设置里关掉 AI 都会把
+      // state.aiCaps 置成 { enabled:false, engine:null }，而本函数跑在 1s setInterval 里——
+      // 无保护地取 .engine.label 会每秒抛一次未捕获异常，秒数文案随之冻结
+      var eng = state.aiCaps && state.aiCaps.engine;
+      return '正在总结…（本机 ' + (eng ? eng.label : 'AI 引擎') + '，已等待 ' +
         Math.max(0, Math.round((Date.now() - job.startAt) / 1000)) + ' 秒；可切换到别处，完成后回来查看）';
     };
     line.textContent = makeText();
@@ -1402,6 +1427,9 @@
       row.appendChild(ext);
       row.addEventListener('click', function () {
         state.ghExpandedKey = open ? null : key;
+        // 失败态在再次展开时清掉，让「点击条目重试」真的会重试（issue #168 第 5 条）
+        var c = state.ghDetailCache[key];
+        if (c && c.error) delete state.ghDetailCache[key];
         var cur = findProject(state.selectedPath);
         if (cur) renderPanel(cur); // 展开态经折叠组重放保留（issue #100）
       });
@@ -1416,12 +1444,16 @@
   }
 
   // 展开详情填充（issue #146）：缓存命中直接渲染；未命中现拉（按需 IPC，不进 JSON 缓存），
-  // 拉到后经面板重渲走缓存渲染路径；失败给可重试提示
+  // 拉到后经面板重渲走缓存渲染路径；失败落进共享缓存并重渲，给出可重试提示
   function fillGhDetail(box, gh, it) {
     var key = gh.owner + '/' + gh.repo + '#' + it.number;
     var cached = state.ghDetailCache[key];
     if (cached === 'loading') {
       box.appendChild(el('div', 'gh-detail-note', '加载中…'));
+      return;
+    }
+    if (cached && cached.error) {
+      box.appendChild(el('div', 'gh-detail-note bad', '详情获取失败：' + cached.error + '（点击条目重试）'));
       return;
     }
     if (cached && typeof cached === 'object') {
@@ -1435,9 +1467,12 @@
       var cur = findProject(state.selectedPath);
       if (cur) renderPanel(cur);
     }).catch(function (err) {
-      delete state.ghDetailCache[key];
-      box.innerHTML = '';
-      box.appendChild(el('div', 'gh-detail-note bad', '详情获取失败：' + ((err && err.message) || err) + '（点击条目重试）'));
+      // 失败经共享缓存 + 重渲落地（issue #168 第 5 条）：原实现把错误写进「请求发起时」捕获的 box 节点，
+      // 若期间发生过任意一次重渲（补丁很频繁），错误就写进了已脱离 DOM 的节点——可见框永远停在
+      // 「加载中…」，既没有错误也没有重试入口。落到共享缓存后，任何一次重渲都会重新展出失败态。
+      state.ghDetailCache[key] = { error: (err && err.message) || String(err) };
+      var cur = findProject(state.selectedPath);
+      if (cur) renderPanel(cur);
     });
   }
 
@@ -1484,6 +1519,19 @@
   function autosize(ta) {
     ta.style.height = 'auto';
     ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+  }
+
+  // 自适应高度合帧（issue #168 第 12 条）：autosize 写 height 再读 scrollHeight 会强制一次整文档布局，
+  // 每击键各来一次没必要——合并到下一帧只做一次，输入观感不变
+  var autosizeRaf = 0;
+  var autosizeTarget = null;
+  function scheduleAutosize(ta) {
+    autosizeTarget = ta;
+    if (autosizeRaf) return;
+    autosizeRaf = requestAnimationFrame(function () {
+      autosizeRaf = 0;
+      if (autosizeTarget && autosizeTarget.isConnected) autosize(autosizeTarget);
+    });
   }
 
   function renderPanel(p) {
@@ -1544,13 +1592,16 @@
     ta.value = origMemo;
     ta.placeholder = '写点备忘…';
     ta.rows = 1;
+    var rowSub = null; // 行上备忘节点缓存（issue #168 第 12 条）：原先每击键 querySelector 全表重匹配
     ta.addEventListener('input', function () {
-      autosize(ta);
+      scheduleAutosize(ta);
       p.memo = ta.value; // 行上备忘随输入即时回填
-      var rowEl = rowsEl.querySelector('.row[data-path="' + CSS.escape(p.path) + '"] .r-sub');
-      if (rowEl) {
-        rowEl.textContent = ta.value || '无备忘';
-        rowEl.classList.toggle('empty', !ta.value);
+      if (!rowSub || !rowSub.isConnected) {
+        rowSub = rowsEl.querySelector('.row[data-path="' + CSS.escape(p.path) + '"] .r-sub');
+      }
+      if (rowSub) {
+        rowSub.textContent = ta.value || '无备忘';
+        rowSub.classList.toggle('empty', !ta.value);
       }
     });
     ta.addEventListener('keydown', function (ev) {
@@ -1562,6 +1613,12 @@
       p.memo = ta.value.replace(/\s+$/, '');
       saveMemo(p.path, p.memo);
       renderRows();
+      // 编辑期间被推迟的面板重建在此补上（issue #168 第 12 条）：此刻已失焦，不会自激
+      if (pendingPanelPath) {
+        pendingPanelPath = null;
+        var cur = findProject(state.selectedPath);
+        if (cur) renderPanel(cur);
+      }
     });
     panelIn.appendChild(ta);
     if (memoVal !== null) {
@@ -1747,6 +1804,7 @@
     });
     viewOverview.classList.toggle('hidden', view !== 'overview');
     viewProjects.classList.toggle('hidden', view !== 'projects');
+    renderViewIfNeeded(view); // 补丁期间被标脏的隐藏视图在此补渲（issue #168 第 11 条）
     hideSettings();
     syncTbName();
     syncScrolled(); // 切换视图后按当前视图滚动位置重算过渡带状态（issue #28）
@@ -1978,6 +2036,7 @@
       state.loading = false;
       state.loadPromise = null;
       if (!state.awaitPatch) setScanning(false);
+      flushPendingLoadPatch(); // 加载期间到达的补丁在此落地（issue #168 第 12 条）
     });
     state.loadPromise = p;
     return p;
@@ -1987,7 +2046,10 @@
   // 增量形态（issue #94）：watcher 推 {project, stats, attention}，只就地替换该项目与全局聚合。
   // 拖拽在飞时排队到 dragend 后应用（issue #100），避免整板重渲打断拖拽
   function handleBoardPatch(patch) {
-    if (state.loading) return;
+    // 加载在飞时的补丁排队而非丢弃（issue #168 第 12 条）：原实现直接 return。走缓存路径时
+    // state.awaitPatch=true，而「扫描中」指示要等补丁（或 scanfail）才熄灭；丢掉唯一那个补丁
+    // 会让数据停在旧值、指示器挂到下一个 tick（默认 20 分钟）
+    if (state.loading) { state.pendingLoadPatch = patch; return; }
     if (patch && typeof patch.scanGeneration === 'number' && state.board) {
       // 过期补丁丢弃（issue #112）：手动刷新落地后，旧代次的迟到补丁不再盖回旧数据
       if (patch.scanGeneration < state.boardGen) return;
@@ -2014,11 +2076,57 @@
       state.board = patch;
       if (typeof patch.scanGeneration === 'number') state.boardGen = patch.scanGeneration;
     }
-    renderAll();
+    renderPatched(patch);
     setScanning(false);
     console.log('[devboard] patched'); // 供 scripts/screenshot.js 等待（DEVBOARD_WAIT_PATCH=1）
   }
   api.onBoardPatch(handleBoardPatch);
+
+  // 补丁落地的最小重绘（issue #168 第 11 条）：原实现无条件 renderAll()——即使用户停在「项目」页，
+  // 也会重建 365 格全年热力图、活动流与需要关注清单，并连带重建详情面板，让「增量补丁」退化成
+  // 整 UI 重建；它同时放大了备忘 IME 丢失、详情永久「加载中」、引擎下拉死控件三个缺陷。
+  // 现在只刷可见/受影响的区域：隐藏视图标脏，切回时补渲（switchView 里消费）。
+  var staleViews = { overview: false, projects: false };
+  var pendingPanelPath = null; // 备忘编辑期间被推迟的面板重建目标（失焦后补渲）
+
+  function panelMemoEditing() {
+    var a = document.activeElement;
+    return !!(a && a.classList && a.classList.contains('memo-input') && panelIn.contains(a));
+  }
+
+  // 切到某视图时若有攒下的脏标记则补渲（顶栏 scanTime 始终已更新，其余统计都在总览容器内）
+  function renderViewIfNeeded(view) {
+    if (!staleViews[view]) return;
+    staleViews[view] = false;
+    if (view === 'overview') renderOverview();
+    else renderRows();
+  }
+
+  function renderPatched(patch) {
+    if (!state.board) return;
+    document.getElementById('scanTime').textContent = hhmm(state.board.scannedAt);
+    var patchedPath = patch && patch.project ? patch.project.path : null;
+    if (state.view === 'overview') renderOverview();
+    else staleViews.overview = true;
+    if (state.view === 'projects') renderRows();
+    else staleViews.projects = true;
+    if (!state.selectedPath) return;
+    var p = findProject(state.selectedPath);
+    if (!p || (state.band !== 'all' && p.band !== state.band)) { selectProject(null); return; }
+    if (patchedPath && patchedPath !== state.selectedPath) return; // 与他项目无关：面板不动
+    // 备忘编辑中推迟重建（issue #168 第 12 条）：renderPanel 会清空重建面板，
+    // 正在输入的 textarea 节点被换掉会丢掉进行中的 IME 组合缓冲
+    if (panelMemoEditing()) { pendingPanelPath = p.path; return; }
+    renderPanel(p);
+  }
+
+  // 加载收尾放行排队中的补丁（issue #168 第 12 条）
+  function flushPendingLoadPatch() {
+    if (!state.pendingLoadPatch) return;
+    var p = state.pendingLoadPatch;
+    state.pendingLoadPatch = null;
+    handleBoardPatch(p);
+  }
 
   // 拖拽结束后放行排队中的补丁（issue #100）
   function flushPendingPatch() {
@@ -2413,7 +2521,8 @@
     var browse = el('button', 'browse', '浏览…');
     browse.type = 'button';
     browse.addEventListener('click', function () {
-      api.pickPath('directory').then(function (p) { if (p) { input.value = p; scheduleSave(); } });
+      api.pickPath('directory').then(function (p) { if (p) { input.value = p; scheduleSave(); } })
+        .catch(function (err) { showHint('选择目录失败：' + ipcErrText(err), true); });
     });
     row.appendChild(browse);
     var del = el('button', 'del', '删除');
@@ -2423,8 +2532,7 @@
     listEl.appendChild(row);
   }
 
-  // AI 工具自定义清单行（label + cmd + 图标选择，issue #15/#21，存 config.aiTools）
-  var AI_ICON_CHOICES = [['', '默认（终端）'], ['claude', 'Claude'], ['codex', 'Codex'], ['kimi', 'Kimi'], ['grok', 'Grok']];
+  // AI 工具自定义清单行（label + cmd + 图标选择，issue #15/#21，存 config.aiTools）；图标选项见文件头注册表派生
   function aiToolRow(label, cmd, logoKey) {
     var row = el('div', 'path-row');
     var l = el('input');
@@ -2483,7 +2591,8 @@
       o.value = '';
       fAiEngine.appendChild(o);
       fAiEngine.disabled = true;
-      hint.textContent = '安装并登录 claude / codex / kimi / grok 任一工具后，AI 功能入口才会出现';
+      // 提示文案随注册表派生（issue #168 第 5 条）：新登记的工具自动出现在这里，不再手写四个工具名
+      hint.textContent = '安装并登录 ' + Object.keys(AI_TOOL_LABEL).map(function (k) { return AI_TOOL_LABEL[k]; }).join(' / ') + ' 任一工具后，AI 功能入口才会出现';
       return;
     }
     fAiEngine.disabled = false;
@@ -2653,6 +2762,11 @@
       document.getElementById('dcOpen').onclick = function () { api.openExternal(r.verificationUri); };
       api.openExternal(r.verificationUri);
       pollDevice(r.deviceCode, r.interval + 1, Date.now() + r.expiresIn * 1000);
+    }).catch(function (err) {
+      // 补 catch（issue #168 第 12 条）：原链路无失败处理，请求被拒时状态行会永远停在「请求设备码…」，
+      // 只能靠用户再点一次；这里把失败落到结果位
+      if (gen !== deviceGen) return;
+      ghAuthResult(false, ipcErrText(err) || '设备码请求失败');
     });
   }
 
@@ -2728,6 +2842,9 @@
         document.getElementById('ghDeviceBtn').style.display = caps.deviceFlow ? '' : 'none';
         document.getElementById('ghImportBtn').style.display = caps.ghCli ? '' : 'none';
       });
+    }).catch(function (err) {
+      // 设置读取失败不再静默留空面板（issue #168 第 12 条）：给出可行动的提示
+      showHint('设置读取失败：' + ipcErrText(err), true);
     });
   }
 
@@ -2845,7 +2962,14 @@
       }
       if (editorChanged) runCheck(patch.editorCmd, document.getElementById('checkEditorRes'));
       if (terminalChanged) checkTerminalCmd();
-      if (toolsChanged) loadAiTools(); // 自定义工具清单已变，重扫 PATH
+      // 工具清单变化后重扫 PATH 并重建引擎下拉（issue #168 第 3 条）：原实现只调 loadAiTools()，
+      // 而 renderAiEngineSelect 只在打开设置页时调用一次——新增工具后下拉仍显示
+      // 「未检测到已安装的 AI 工具」且一直禁用，要关掉再打开设置才恢复
+      if (toolsChanged) {
+        loadAiTools().then(function () {
+          if (state.settings) renderAiEngineSelect(state.settings);
+        });
+      }
       if (aiChanged || toolsChanged) loadAiCaps(); // AI 引擎/开关或可用工具集已变（issue #29）
       // 模板已改（issue #78）：复位周报自动生成标记；缓存键含模板哈希，旧结果已不会展出。
       // 设置页开着时不主动重生成（避免编辑途中反复起 AI 生成）；已关闭（hideSettings 触发 flushSave 的回调）则立即重估
@@ -2888,7 +3012,8 @@
     renderStream();
   });
   document.getElementById('browseEditor').addEventListener('click', function () {
-    api.pickPath('file').then(function (p) { if (p) { fEditor.value = p; scheduleSave(); } });
+    api.pickPath('file').then(function (p) { if (p) { fEditor.value = p; scheduleSave(); } })
+      .catch(function (err) { showHint('选择文件失败：' + ipcErrText(err), true); });
   });
   document.getElementById('previewBtn').addEventListener('click', function () {
     var res = document.getElementById('previewRes');
@@ -3228,6 +3353,14 @@
   api.onShowSettings(function () { showSettings(); });
 
   /* ---------- 启动 ---------- */
+  // AI 工具说明文案随注册表派生（issue #168 第 5 条）：注册表加了工具，设置页说明同步跟上
+  (function () {
+    var desc = document.getElementById('aiToolsDesc');
+    if (!desc) return;
+    desc.textContent = '总览页工作台按本机 PATH 探测 ' +
+      Object.keys(AI_TOOL_LABEL).map(function (k) { return AI_TOOL_LABEL[k]; }).join(' / ') +
+      '；下方可增删自定义命令（名称 + 命令），与默认清单一并探测';
+  })();
   renderSkeleton();
   api.getSettings().then(function (cfg) {
     state.settings = cfg;
@@ -3243,6 +3376,12 @@
     applyMotion();
     renderLanding(LANDINGS.indexOf(cfg.landingView) >= 0 ? cfg.landingView : 'overview'); // 着陆视图 seg（issue #86）
     if (state.prefs) applyLanding(); // 着陆视图需 settings+prefs 都就绪（issue #86）
+  }).catch(function (err) {
+    // 补 catch（issue #168 第 12 条）：原来 IPC 一次性失败会静默跳过主题/密度/动效初始化，
+    // 界面留在未应用偏好的状态且毫无提示。退到默认外观照常起界面。
+    console.error('设置读取失败', err);
+    applyCurrentTheme();
+    applyMotion();
   });
   api.getPrefs().then(function (p) {
     state.prefs = p;
@@ -3258,6 +3397,12 @@
       showSettings();
     }
     if (state.board) renderAll();
+  }).catch(function (err) {
+    // 补 catch（issue #168 第 12 条）：偏好读取失败原来会静默跳过排序/着陆/首启引导初始化，
+    // 且留下一条未处理的 rejection。这里退到空偏好继续起界面。
+    console.error('偏好读取失败', err);
+    state.prefs = state.prefs || {};
+    if (state.settings) applyLanding();
   });
   loadAiTools();
   loadAiCaps(); // AI 入口显隐（issue #29）

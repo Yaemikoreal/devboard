@@ -282,7 +282,9 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 /* 全局全年热力图：默认降饱和降噪，从主角退为质感背景；hover 恢复全彩（issue #74） */
 .heat-card .gheat,.heat-card .heat-axis{
   filter:saturate(.45);opacity:.75;
-  transition:filter .25s ease,opacity .25s ease;
+  /* 只过渡 opacity（合成层属性，issue #168 第 12 条）：filter 过渡会在 250ms 内逐帧重栅格化
+     整个 365 格热力子树，而该子树每次补丁都会被重建；filter 改为瞬时切换，hover 恢复全彩的意图不变 */
+  transition:opacity .25s ease;
 }
 .heat-card:hover .gheat,.heat-card:hover .heat-axis{filter:none;opacity:1}
 .heat-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}

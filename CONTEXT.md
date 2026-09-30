@@ -13,7 +13,7 @@ _Avoid_: 仓库（repo 是实现细节）、工作区
 _Avoid_: 状态（status，过于模糊）、指标
 
 **AI 会话痕迹（AI Session Trace）**:
-各 AI 工具（claude / codex / kimi / grok）在该项目下的最近会话时间，用于标记「最近有 AI 会话但可能未提交」的项目。探测位同时覆盖用户目录会话位（`~/.claude/projects/<路径转义>`、`~/.kimi-code/sessions/wd_*` 按 cwd 精确匹配、`~/.codex/sessions` rollout 首行 cwd、`~/.grok/sessions/<路径编码>`）与旧版项目本地目录（`.kimi-code`/`.claude`/`.codex`/`.grok`），取较新者（issue #35）。
+各已登记 AI 工具在该项目下的最近会话时间，用于标记「最近有 AI 会话但可能未提交」的项目。工具清单由 AI 工具注册表（`src/shared/ai-tools.js`，issue #123）驱动：每个工具登记显示名、命令、引擎调用规格、品牌图标与项目本地会话目录（兼容旧布局），用户目录会话位（claude `~/.claude/projects/<路径转义>`、kimi `~/.kimi-code/sessions/wd_*` 按 cwd 精确匹配、codex `~/.codex/sessions` rollout 首行 cwd、grok `~/.grok/sessions/<路径编码>`）由 scanner 的探测登记按 id 提供；痕迹取两者较新者（issue #35）。新增工具只需注册表登记一行 + 探测登记一处，两者一致性有回归断言把守——漏登记会打红测试而非静默降级。
 _Avoid_: AI 记录、会话日志
 
 **备忘（Memo）**:

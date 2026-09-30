@@ -8,6 +8,8 @@
 const assert = require('assert');
 const ai = require('../src/main/ai');
 const aiChain = require('../src/main/ai-chain');
+const registry = require('../src/shared/ai-tools'); // AI 工具单一注册表（issue #123）
+const scanner = require('../src/main/scanner'); // 探测登记一致性断言用（issue #123）
 
 const NOW = new Date('2026-09-09T12:00:00');
 const PROJECTS = [
@@ -66,6 +68,103 @@ async function main() {
   assert.strictEqual(ai.parseFilter('无法解析'), null, '无 JSON 应返回 null');
   assert.strictEqual(ai.parseFilter('{"band":"nope"}'), null, '非法 band 且无其他条件应返回 null');
 
+  // --- 工具注册表一致性（issue #123）：登记一处，消费方全派生，防平行登记回归 ---
+  const ids = registry.AI_TOOLS.map((t) => t.id);
+  assert.ok(ids.length >= 4, '注册表应登记默认工具');
+  assert.strictEqual(new Set(ids).size, ids.length, '注册表 id 不得重复');
+  for (const t of registry.AI_TOOLS) {
+    assert.ok(t.id && t.label && t.cmd, '工具行应含 id/label/cmd: ' + t.id);
+    assert.ok(t.spec && Array.isArray(t.spec.args) && typeof t.spec.stdin === 'boolean' && typeof t.spec.shell === 'boolean',
+      'spec 形状（args/stdin/shell）应完整: ' + t.id);
+    assert.ok(t.icon && t.icon.bg && typeof t.icon.svg === 'string' && t.icon.svg, 'icon 形状（bg/svg）应完整: ' + t.id);
+  }
+  // 引擎规格查找与登记同源；未知工具返回 null（ai.js 落 CUSTOM_SPEC 通用规格）
+  assert.deepStrictEqual(registry.AI_TOOLS.map((t) => registry.specFor(t.id)), registry.AI_TOOLS.map((t) => t.spec),
+    'specFor 应与注册表登记一致');
+  assert.strictEqual(registry.specFor('不存在的工具'), null, '未知工具 spec 应返回 null');
+  // 默认清单 / 痕迹 label / 图标下拉三个派生面覆盖注册表全量 id
+  assert.deepStrictEqual(registry.defaultToolList().map((t) => t.id), ids, '默认清单 id 集应与注册表一致');
+  assert.deepStrictEqual(registry.defaultToolList().map((t) => t.label), registry.AI_TOOLS.map((t) => t.label),
+    '默认清单 label 应与注册表一致');
+  assert.deepStrictEqual(Object.keys(registry.aiToolLabels()), ids, '痕迹 label 映射应覆盖注册表全量 id');
+  assert.deepStrictEqual(registry.iconChoices().map((p) => p[0]), ids, '图标下拉应覆盖注册表全量 id');
+  // 图标回落链：未知 logo key + 未知 id → 终端兜底；命中登记 id → 品牌图标
+  assert.strictEqual(registry.iconFor('unknown-key', 'unknown-id').bg, registry.FALLBACK_ICON.bg, '未知图标应回落终端兜底');
+  assert.strictEqual(registry.iconFor(null, 'claude').bg, registry.toolById('claude').icon.bg, '按工具 id 应命中品牌图标');
+  assert.strictEqual(registry.iconFor('kimi', 'custom-0').bg, registry.toolById('kimi').icon.bg, '自定义工具 logo key 应命中登记图标');
+  // 逐次查表而非加载时快照（issue #168 第 14 条）：注册表运行期增行后，引擎规格/图标查找必须与
+  // 清单/label 派生看到同一份数据，不允许一边派生一边回落（#141 运行时注册工具的前提）
+  assert.strictEqual(registry.toolById('不存在'), null, '未知 id 应返回 null');
+  assert.deepStrictEqual(registry.AI_TOOLS.map((t) => registry.toolById(t.id)), registry.AI_TOOLS,
+    'toolById 应逐次命中同一批登记行');
+  // scanner 探测登记与注册表 id 一致：无孤儿探测（有探测函数的工具必须已登记）
+  assert.deepStrictEqual(scanner.sessionProbeIds(), ids.slice().sort(),
+    '会话探测登记应与注册表 id 一致，不得有孤儿探测');
+  // 桥载荷（真实下发面，issue #168 第 15 条）：断言 preload 实际暴露的两个派生结果，
+  // 而不是只比注册表内部 helper——将来谁再手写一份映射，这里会红
+  const bridge = registry.rendererConsts();
+  assert.deepStrictEqual(Object.keys(bridge), ['AI_TOOL_LABELS', 'AI_ICON_CHOICES'], '桥载荷只含两个派生面');
+  assert.deepStrictEqual(Object.keys(bridge.AI_TOOL_LABELS), ids, '桥载荷 label 映射应覆盖注册表全量 id');
+  assert.deepStrictEqual(bridge.AI_TOOL_LABELS, registry.aiToolLabels(), '桥载荷 label 应与派生同源');
+  assert.deepStrictEqual(bridge.AI_ICON_CHOICES, registry.iconChoices(), '桥载荷图标选项应与派生同源');
+  assert.deepStrictEqual(bridge.AI_ICON_CHOICES.map((p) => p[0]), ids, '图标下拉应覆盖注册表全量 id');
+  // 注册表为纯数据 / 桥载荷不含函数（preload 经 contextBridge 下发，函数会被丢弃或代理失败）
+  for (const t of registry.AI_TOOLS) {
+    for (const [k, v] of Object.entries(t)) {
+      assert.notStrictEqual(typeof v, 'function', `注册表字段 ${t.id}.${k} 不得是函数（纯数据边界）`);
+    }
+  }
+  for (const v of Object.values(bridge.AI_TOOL_LABELS)) {
+    assert.notStrictEqual(typeof v, 'function', '桥载荷 label 不得是函数');
+  }
+  bridge.AI_ICON_CHOICES.forEach((pair) => {
+    assert.ok(Array.isArray(pair) && typeof pair[0] === 'string' && typeof pair[1] === 'string', '桥载荷图标选项应为 [id, 名称] 字符串对');
+  });
+
+  // --- 假工具 id 全链路（issue #123 验收项，issue #168 第 15 条补齐）---
+  // 不真装 CLI：在注册表登记一行假工具，验证 清单/图标/spec/痕迹 四条派生面同时看到它。
+  // 会话痕迹部分用真实临时目录走 projectDetail → aiSessionTraces（注册表 localDir 驱动的那一层）。
+  {
+    const os = require('os');
+    const fsx = require('fs');
+    const pathx = require('path');
+    const FAKE = {
+      id: 'zz-fake-tool', label: 'Fake Tool', shortLabel: 'Fake', cmd: 'zz-fake-cmd',
+      localDir: '.zz-fake', spec: { args: ['--fake'], stdin: false, shell: false },
+      icon: { bg: '#123456', svg: '<path d="M0 0h1v1H0z" fill="#fff"/>' },
+    };
+    const before = registry.AI_TOOLS.length;
+    registry.AI_TOOLS.push(FAKE);
+    try {
+      // 1) 清单可见
+      assert.ok(registry.defaultToolList().some((t) => t.id === FAKE.id), '假工具应出现在默认清单');
+      // 2) 图标可选、可挑品牌图标
+      assert.ok(registry.iconChoices().some((p) => p[0] === FAKE.id && p[1] === 'Fake'), '假工具应出现在图标下拉');
+      assert.strictEqual(registry.iconFor(FAKE.id, 'other').bg, FAKE.icon.bg, '假工具应能取到自己的品牌图标');
+      assert.strictEqual(registry.rendererConsts().AI_TOOL_LABELS[FAKE.id], 'Fake Tool', '假工具 label 应随桥下发');
+      // 3) 引擎按登记 spec 调用（查找逐次进行，加载时快照的写法在这里会回落成 null）
+      assert.deepStrictEqual(registry.specFor(FAKE.id), FAKE.spec, '假工具 spec 应按登记下发');
+      // 4) 会话痕迹可展出：注册表 localDir 层自动纳入遍历
+      const dir = fsx.mkdtempSync(pathx.join(os.tmpdir(), 'dsh-faketool-'));
+      try {
+        fsx.mkdirSync(pathx.join(dir, '.git'));
+        fsx.mkdirSync(pathx.join(dir, FAKE.localDir));
+        fsx.writeFileSync(pathx.join(dir, FAKE.localDir, 'session.json'), '{}');
+        const detail = await scanner.projectDetail(dir);
+        assert.ok(detail.aiSessions.some((s) => s.tool === FAKE.id),
+          '假工具的项目本地会话位应经注册表 localDir 自动纳入痕迹，实际: ' + JSON.stringify(detail.aiSessions));
+        assert.strictEqual(registry.rendererConsts().AI_TOOL_LABELS[FAKE.id], FAKE.label,
+          '痕迹明细 label 应能从桥载荷取到假工具');
+      } finally {
+        fsx.rmSync(dir, { recursive: true, force: true });
+      }
+      // 5) 未登记探测函数的工具：id 集一致性断言必须当场失败（把静默降级变成响亮失败）
+      assert.notDeepStrictEqual(scanner.sessionProbeIds(), registry.AI_TOOLS.map((t) => t.id).sort(),
+        '未登记探测的假工具应被一致性断言发现（防止「能启动但无会话痕迹」的静默降级回归）');
+    } finally {
+      registry.AI_TOOLS.length = before; // 还原注册表，避免影响后续断言
+    }
+  }
   // --- cleanOutput ---
   const streamJson = [
     '{"role":"meta","type":"system.version"}',
@@ -132,22 +231,34 @@ async function main() {
   assert.ok(!r.ok && r.reason.includes('401'), 'exit 0 的引擎错误输出应判失败，实际: ' + JSON.stringify(r));
 
   // --- runCli：超时但已有有效输出 → 采用部分输出（进程输出完毕却不退出的兜底）---
+  // 预算 8s 而非 500ms（issue #168 第 16 条）：本机实测 node 冷启动到首字节 stdout 为 259–1658ms，
+  // 500ms 会让这条断言随机失败（实测 HEAD 上已红），而断言的目标是「超时采用部分输出」这一行为，
+  // 不是进程启动速度；被测子进程本身仍是 500ms 级的短命进程
   r = await ai.runCli(process.execPath, 'x', {
     spec: { args: ['-e', 'console.log("- 已产出的建议内容"); setTimeout(()=>{},60000)'], stdin: false, shell: false },
-    timeout: 500,
+    timeout: 8000,
   });
   assert.ok(r.ok && r.text.includes('已产出的建议内容'), '超时应采用已产出的部分输出，实际: ' + JSON.stringify(r));
 
-  // --- issue #115 回归：codex 跳过目录信任检查 ---
-  assert.ok(ai.TOOL_SPECS.codex.args.includes('--skip-git-repo-check'), 'codex args 应含 --skip-git-repo-check');
+  // --- issue #115 回归：codex 跳过目录信任检查（规格已收敛进注册表，issue #123）---
+  assert.ok(registry.specFor('codex').args.includes('--skip-git-repo-check'), 'codex args 应含 --skip-git-repo-check');
 
   // --- issue #115 回归：claude 良性警告（unrecognized_model）不被流式误杀 ---
   assert.strictEqual(ai.engineErrorLine('unrecognized_model: foo is not a known model'), '', '良性模型名警告不应判为引擎错误');
   r = await ai.runCli(process.execPath, 'x', {
     spec: { args: ['-e', 'process.stderr.write("unrecognized_model: foo\\n"); console.log("- 正常产出内容"); setTimeout(()=>{},60000)'], stdin: false, shell: false },
-    timeout: 500,
+    timeout: 8000, // 同上一处的预算说明（issue #168 第 16 条）：8s 覆盖本机 node 冷启动抖动
   });
   assert.ok(r.ok && r.text.includes('正常产出内容'), '良性警告不应秒杀进程，超时应采用已有产出，实际: ' + JSON.stringify(r));
+
+  // --- issue #168 第 1 条回归：超长单行不得让引擎错误正则退化成灾难性回溯 ---
+  // 原式（前瞻 + [^\n]* 组合）实测单行 40K 字符 ≈4s、90K ≈21s，而 kimi stream-json 下整条
+  // assistant 消息就是一个物理行——一次长回答即可冻死主进程。这里钉住 O(n) 线性行为。
+  const longBenign = '这是一段正常的模型输出内容，用于验证长单行下的正则性能表现。'.repeat(3500); // ≈90K 字符
+  const tRe = Date.now();
+  assert.strictEqual(ai.engineErrorLine(longBenign), '', '超长良性单行不应误判为引擎错误');
+  const reMs = Date.now() - tRe;
+  assert.ok(reMs < 2000, '超长单行的引擎错误检测必须保持线性（实测 ' + reMs + 'ms，重构前同尺寸约 21s）');
 
   // --- issue #115 回归：模型名后缀 [1m] 不被 ANSI 清洗吃掉，真 ANSI 序列仍被清除 ---
   assert.ok(ai.cleanOutput('使用 claude[1m] 模型回答', {}).includes('[1m]'), '裸 [1m] 后缀应保留');

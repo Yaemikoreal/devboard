@@ -499,6 +499,25 @@ function attachFromCache(projects, config, store) {
 // 后台刷新缓存：成功条目覆盖写；失败时若已有旧数据则静默保留，
 // 否则落一条失败记录（渲染层据此展示「同步失败，稍后自动重试」而非永远停在同步中，issue #46）
 // 返回是否有可见变化（供主进程补推整板补丁，issue #44）
+// 受限并发 map（issue #168 第 9 条）：单仓最多约 45 个请求（issues 分页 ≤5 + 元数据 + CI + remote HEAD
+// + release + compare + ≤20 个 PR × 2 次 review）。二三十个仓库同时 TTL 到期就是数百个并发 HTTPS，
+// 既容易触发 GitHub 二级限流（403 → 条目转 error，短 TTL 3 分钟），也让整轮刷新长时间占着
+// refreshInFlight（期间新的刷新请求全被挡）。这里把仓库级并发压到 4，其余排队。
+const REPO_CONCURRENCY = 4;
+async function mapLimited(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(new Array(Math.min(limit, items.length)).fill(0).map(worker));
+  return out;
+}
+
 async function refreshCache(remotes, config, store) {
   if (!remotes.length || !config.githubToken) return false;
   // 按 owner/repo 去重：多项目指向同一仓库时只拉一次（stale 列表与强制刷新清单都可能带重复项）
@@ -511,8 +530,10 @@ async function refreshCache(remotes, config, store) {
     uniq.push(r);
   }
   const cache = store.getGithubCache();
-  const results = await Promise.all(
-    uniq.map((r) =>
+  const results = await mapLimited(
+    uniq,
+    REPO_CONCURRENCY,
+    (r) =>
       fetchIssues(r.owner, r.repo, config.githubToken).then(async (data) => {
         // CI 运行并入条目（issue #143）：元数据提供默认分支名，随后查该分支最近一次运行；
         // 元数据/CI 任一失败都只降级为无 CI 数据，不影响 issues 数据的成败与 TTL。
@@ -548,7 +569,6 @@ async function refreshCache(remotes, config, store) {
         });
         return { data };
       }, (err) => ({ error: certFailReason(err) || String((err && err.message) || err || '网络请求失败') }))
-    )
   );
   const now = Date.now();
   let changed = false; // 有可见变化（新数据 / 新失败态）→ 需要推补丁

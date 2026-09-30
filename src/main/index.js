@@ -69,34 +69,40 @@ function createWindow() {
     opts.x = b.x;
     opts.y = b.y;
   }
-  win = new BrowserWindow(opts);
-  win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  win.once('ready-to-show', () => win.show());
+  // 本窗口的闭包一律引用局部 w，不引用模块级 win（issue #168 第 11 条）：
+  // 旧写法里 ready-to-show/close/closed/resize 都读模块级 win，一旦出现两个窗口共存，
+  // 旧窗口的 closed 会把 win 置空，getWindow() 随即返回 null —— 所有后台推送（board:patch /
+  // board:scanfail / board:tick / win:shown / nav:settings）被静默丢弃，UI 再也不更新
+  const w = new BrowserWindow(opts);
+  win = w;
+  w.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  w.once('ready-to-show', () => w.show());
 
   const saveBounds = debounce(() => {
-    if (win && !win.isMaximized() && !win.isMinimized()) {
-      store.setPrefs({ windowBounds: win.getBounds() });
+    if (!w.isDestroyed() && !w.isMaximized() && !w.isMinimized()) {
+      store.setPrefs({ windowBounds: w.getBounds() });
     }
   }, 500);
-  win.on('resize', saveBounds);
-  win.on('move', saveBounds);
+  w.on('resize', saveBounds);
+  w.on('move', saveBounds);
 
   // 唤出即主动重扫（渲染层自己也做了防重入）；延迟一拍让窗口先绘制，避免托盘左键卡顿（issue #9）
-  win.on('show', () => {
+  w.on('show', () => {
     setTimeout(() => {
-      if (win) win.webContents.send('board:tick');
-      if (win) win.webContents.send('win:shown'); // 唤出着陆视图（issue #86）：渲染层按偏好切视图
+      if (w.isDestroyed()) return;
+      w.webContents.send('board:tick');
+      w.webContents.send('win:shown'); // 唤出着陆视图（issue #86）：渲染层按偏好切视图
     }, 120);
     maybeNotify();
   });
 
-  win.on('close', (e) => {
+  w.on('close', (e) => {
     if (!quitting) {
       e.preventDefault(); // 关闭即隐藏到托盘
-      win.hide();
+      w.hide();
     }
   });
-  win.on('closed', () => { win = null; });
+  w.on('closed', () => { if (win === w) win = null; });
 }
 
 function toggleWindow() {

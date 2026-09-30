@@ -6,6 +6,7 @@ const fsp = fs.promises;
 const path = require('path');
 const { execFile } = require('child_process');
 const { localDateStr, bandOf } = require('../shared/constants'); // 共享常量（issue-11 / #127）
+const { AI_TOOLS } = require('../shared/ai-tools'); // AI 工具单一注册表（issue #123）
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_DEPTH = 4;
@@ -15,8 +16,7 @@ const MAX_DEPTH = 4;
 //   kimi:   ~/.kimi-code/sessions/wd_<目录名小写>_<hash>/session_*/state.json（cwd 精确匹配，取 updatedAt）
 //   codex:  ~/.codex/sessions/年/月/日/rollout-*.jsonl 首行 session_meta.cwd（60s TTL 全量映射缓存）
 //   grok:   ~/.grok/sessions/<encodeURIComponent(路径)>（mtime）
-//   兼容旧布局：项目本地 .kimi-code/.claude/.codex/.grok 目录
-const AI_LOCAL_DIRS = [['.kimi-code', 'kimi'], ['.claude', 'claude'], ['.codex', 'codex'], ['.grok', 'grok']];
+//   兼容旧布局：项目本地目录名按工具登记在 AI 工具注册表 localDir（issue #123）
 const HOME = require('os').homedir();
 const MAX_BRANCHES = 50;
 // 扫描总耗时超过该阈值时在控制台输出 breakdown（issue #8）
@@ -62,6 +62,24 @@ async function fsSlot(fn) {
   }
 }
 
+// 目录发现的两道护栏（issue #168 第 2/3 条）：readdir 并发上限 + 总时长兜底。
+// 并发：原来每层对所有子目录同时铺开（深度 4 → 最坏 B⁴ 个在飞 readdir），实测中等目录树
+// C:/Program Files 峰值 902 个 readdir 在飞，扫描期整机发卡；同文件 git=6 / FS=8 都限了流，这里补齐。
+// 时长：readdir 本身没有超时，掉线映射盘 / 休眠 NAS 上可挂几十秒到几分钟不返回，
+// 而 discover → scan → board:get 是首屏唯一通路，挂住即骨架永久停留 + 刷新按钮短路（只能重启应用）。
+const DIR_CONCURRENCY = 16;
+const dirLim = makeSlot(DIR_CONCURRENCY);
+async function dirSlot(fn) {
+  await dirLim.acquire();
+  try {
+    return await fn();
+  } finally {
+    dirLim.release();
+  }
+}
+// 发现总预算：到点返回已发现的部分结果（宁少不挂），并在控制台留痕
+const DISCOVER_BUDGET_MS = 20000;
+
 // 单项目扫描预算：超时降级为缓存数据（issue #24）
 const PROJECT_SCAN_BUDGET_MS = 3000;
 
@@ -94,14 +112,20 @@ async function discover(scope) {
   const { roots = [], blacklist = [], extraPaths } = scope;
   const skip = new Set(blacklist.map((s) => s.toLowerCase()));
   const found = new Map();
+  const deadline = Date.now() + DISCOVER_BUDGET_MS;
+  let timedOut = false;
+  const outOfTime = () => timedOut || Date.now() > deadline;
 
   const walk = async (dir, depth) => {
+    if (outOfTime()) return;
     let entries;
     try {
-      entries = await fsp.readdir(dir, { withFileTypes: true });
+      // readdir 过并发槽（issue #168 第 3 条）：避免每层全量铺开，最坏 B⁴ 个在飞
+      entries = await dirSlot(() => fsp.readdir(dir, { withFileTypes: true }));
     } catch {
       return;
     }
+    if (outOfTime()) return;
     const hasGit = entries.some((e) => e.name === '.git');
     if (hasGit) {
       found.set(path.resolve(dir).toLowerCase(), path.resolve(dir));
@@ -115,10 +139,22 @@ async function discover(scope) {
     );
   };
 
-  await Promise.all(roots.filter(Boolean).map((root) => walk(path.resolve(root), 0).catch(() => {})));
-  // 补充路径：逐项指定、含 .git 才收，不再深入
+  const walkAll = Promise.all(roots.filter(Boolean).map((root) => walk(path.resolve(root), 0).catch(() => {})));
+  // 总时长兜底（issue #168 第 2 条）：readdir 永不返回时 walkAll 永不 settle，
+  // 到点置 timedOut 放行已发现的部分结果，让 scan → board:get 照常落地（宁少不挂）
+  let timer = null;
+  const budget = new Promise((resolve) => {
+    timer = setTimeout(() => { timedOut = true; resolve(); }, DISCOVER_BUDGET_MS);
+    if (timer.unref) timer.unref();
+  });
+  await Promise.race([walkAll, budget]);
+  clearTimeout(timer);
+  if (timedOut) {
+    console.warn('[devboard] 目录发现超时（' + DISCOVER_BUDGET_MS + 'ms），本次仅返回已发现的部分项目；请检查扫描根目录是否有不可达的网络盘');
+  }
+  // 补充路径：逐项指定、含 .git 才收，不再深入；同样受总预算约束
   for (const extra of extraPaths || []) {
-    if (!extra) continue;
+    if (!extra || outOfTime()) continue;
     if (!(await exists(path.join(extra, '.git')))) continue;
     found.set(path.resolve(extra).toLowerCase(), path.resolve(extra));
   }
@@ -332,18 +368,42 @@ async function buildCodexSessionMap(now) {
   return map;
 }
 
-// AI 会话痕迹明细（issue #35）：每个工具取 项目本地目录 与 用户目录会话位 的较新者，按时间倒序
+// 用户目录会话探测登记（issue #123）：id → 探测函数（返回该工具用户目录会话位的最新时间 ms，无会话 0）。
+// 探测是 fs 行为，故按 id 在此登记而非进纯数据注册表（#123 待确认项认可的「数据表 + 主进程探测注册」两层）；
+// 新工具在 shared/ai-tools.js 登记数据行 + 此处加一个探测函数。
+// 漏登记的后果：项目本地目录仍按注册表 localDir 探测，只缺用户目录痕迹。
+// 本登记与注册表 id 的一致性由 test-ai 的 sessionProbeIds() 断言强制——漏登记会当场打红，
+// 不再是 #123 立案时那种「能启动但无会话痕迹」的静默降级。
+// kimi/codex 的全量映射缓存与 fsSlot 闸门沿用本模块既有实现
+const SESSION_PROBES = {
+  claude: (p) => dirLatestMtime(claudeSessionDir(p), { n: 300 }),
+  kimi: async (p) => (await kimiSessionMap()).get(normPath(p)) || 0,
+  codex: async (p) => (await codexSessionMap()).get(normPath(p)) || 0,
+  grok: (p) => dirLatestMtime(grokSessionDir(p), { n: 300 }),
+};
+
+// 探测登记的 id 清单（升序）：仅暴露「有哪些 id 登记了探测」，
+// 探测函数本身不出模块（issue #12 第 6 条导出收窄），供注册表一致性断言使用
+function sessionProbeIds() {
+  return Object.keys(SESSION_PROBES).sort();
+}
+
+// AI 会话痕迹明细（issue #35；遍历注册表化 issue #123）：遍历注册表工具，
+// 每个工具取 项目本地目录（注册表 localDir）与 用户目录会话位（SESSION_PROBES 登记）的较新者，按时间倒序
 async function aiSessionTraces(projectPath) {
-  const latest = { kimi: 0, claude: 0, codex: 0, grok: 0 };
+  const latest = {};
+  for (const t of AI_TOOLS) latest[t.id] = 0;
   const bump = (tool, t) => { if (t > latest[tool]) latest[tool] = t; };
-  const jobs = AI_LOCAL_DIRS.map((pair) => (async () => {
-    const dir = path.join(projectPath, pair[0]);
-    if (await exists(dir)) bump(pair[1], await dirLatestMtime(dir, { n: 300 }));
-  })());
-  jobs.push(dirLatestMtime(claudeSessionDir(projectPath), { n: 300 }).then((t) => bump('claude', t)));
-  jobs.push(kimiSessionMap().then((map) => bump('kimi', map.get(normPath(projectPath)) || 0))); // kimiSessionAt 已内联（issue #12 第 5 条）
-  jobs.push(codexSessionMap().then((map) => bump('codex', map.get(normPath(projectPath)) || 0)));
-  jobs.push(dirLatestMtime(grokSessionDir(projectPath), { n: 300 }).then((t) => bump('grok', t)));
+  const jobs = [];
+  for (const t of AI_TOOLS) {
+    if (t.localDir) {
+      jobs.push((async () => {
+        const dir = path.join(projectPath, t.localDir);
+        if (await exists(dir)) bump(t.id, await dirLatestMtime(dir, { n: 300 }));
+      })());
+    }
+    if (SESSION_PROBES[t.id]) jobs.push(SESSION_PROBES[t.id](projectPath).then((ms) => bump(t.id, ms)));
+  }
   await Promise.all(jobs);
   return Object.keys(latest)
     .filter((k) => latest[k] > 0)
@@ -624,5 +684,6 @@ async function scan(scope, opts) {
 }
 
 // 导出收窄（issue #12 第 6 条）：emptyProject 全仓无消费方（仅模块内自用），不再导出；
-// bandOf 已迁往共享常量模块（issue-11 / #127），同样不再转发导出
-module.exports = { scan, discover, localWarnings, branchDetail, projectDetail, scanProject };
+// bandOf 已迁往共享常量模块（issue-11 / #127），同样不再转发导出；
+// SESSION_PROBES 探测表本身仍留在模块内，只导出 id 清单（sessionProbeIds）供 #123 一致性断言
+module.exports = { scan, discover, localWarnings, branchDetail, projectDetail, scanProject, sessionProbeIds };

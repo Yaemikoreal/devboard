@@ -26,12 +26,18 @@ function createGitWatcher({ scanProject, getCached, onUpdate }) {
   const watchers = new Map(); // resolvedPath -> fs.FSWatcher[]
   const timers = new Map(); // resolvedPath -> timeoutId
   const cooldownUntil = new Map(); // resolvedPath -> ts
-  let scanning = false; // 全量扫描在飞时跳过（全量会覆盖变化）
+  const pendingDuringScan = new Set(); // 全量扫描期间发生变化的项目：扫描结束后重放（issue #168 第 6 条）
+  let scanning = false; // 全量扫描在飞时改为记录待重放（全量会覆盖变化）
 
   function close(projectPath) {
     const ws = watchers.get(projectPath);
     if (ws) for (const w of ws) { try { w.close(); } catch { /* 已关闭 */ } }
     watchers.delete(projectPath);
+    // 一并撤销在飞去抖（issue #168 第 6 条）：只关 watcher 不清定时器时，定时器到点仍会 rescan，
+    // 对已删除目录产出一个全 0 空壳并经 onUpdate 写回缓存，把项目「复活」成僵尸卡片
+    const t = timers.get(projectPath);
+    if (t) { clearTimeout(t); timers.delete(projectPath); }
+    pendingDuringScan.delete(path.resolve(projectPath));
   }
 
   async function rescan(projectPath) {
@@ -43,7 +49,9 @@ function createGitWatcher({ scanProject, getCached, onUpdate }) {
   }
 
   function onChange(projectPath) {
-    if (scanning) return;
+    // 全量扫描在飞时的变化不再丢弃（issue #168 第 6 条）：记下来，扫描结束后重放，
+    // 否则「扫描期间提交的代码」既不会被这次扫描看到（快照更早）、事件也没了，最坏要等下一个周期
+    if (scanning) { pendingDuringScan.add(path.resolve(projectPath)); return; }
     if (Date.now() < (cooldownUntil.get(projectPath) || 0)) return;
     clearTimeout(timers.get(projectPath));
     timers.set(projectPath, setTimeout(() => rescan(projectPath), DEBOUNCE_MS));
@@ -80,7 +88,18 @@ function createGitWatcher({ scanProject, getCached, onUpdate }) {
   return {
     syncWatchers,
     closeAll,
-    setScanning: (v) => { scanning = !!v; },
+    // 扫描收尾放行时重放扫描期间攒下的变化（issue #168 第 6 条）：变化重新走 800ms 去抖，
+    // 落在全量扫描落盘之后，从而不会被扫描快照盖回旧状态
+    setScanning: (v) => {
+      scanning = !!v;
+      if (scanning || pendingDuringScan.size === 0) return;
+      const replay = [...pendingDuringScan];
+      pendingDuringScan.clear();
+      for (const p of replay) {
+        cooldownUntil.delete(p);
+        onChange(p);
+      }
+    },
     watchedCount: () => watchers.size,
   };
 }

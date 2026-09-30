@@ -12,7 +12,13 @@ contextBridge.exposeInMainWorld('devboardBoot', { theme: bootTheme });
 
 // 共享领域常量（issue-11 / #127）：分带定义/警示严重度/热力色阶/日期键与主进程同源，
 // 渲染层经 window.devboardConsts 消费，不再手写本地副本
-contextBridge.exposeInMainWorld('devboardConsts', require('./shared/constants'));
+// AI 工具注册表派生（issue #123）：痕迹 label 映射与设置页图标选项由注册表 rendererConsts()
+// 一次算好随桥下发，渲染层直用，不再手写按工具 id 键控的本地副本，也不重复实现派生规则
+contextBridge.exposeInMainWorld('devboardConsts', Object.assign(
+  {},
+  require('./shared/constants'),
+  require('./shared/ai-tools').rendererConsts(),
+));
 
 // 主题 token 单一事实源（issue #122）：七套主题全量 token + 颜色工具，渲染层 app.js 经
 // window.devboardThemes 消费；冷启动四色与 :root 暖阳默认值亦从该模块派生

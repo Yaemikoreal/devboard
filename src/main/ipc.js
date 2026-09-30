@@ -6,6 +6,7 @@
 'use strict';
 
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
 const { ipcMain, shell, dialog, app, net } = require('electron');
@@ -16,9 +17,9 @@ const ai = require('./ai');
 const { runEngineChain } = require('./ai-chain'); // 引擎链回退/拉黑/错误归类（issue-24）
 const { DEFAULT_CONFIG, DEFAULT_PREFS } = require('./store');
 const { localDateStr, WARN_SEVERITY } = require('../shared/constants'); // 共享常量（issue-11 / #127）
+const { iconFor, defaultToolList } = require('../shared/ai-tools'); // AI 工具单一注册表（issue #123）
 const { createGitWatcher } = require('./watcher');
 
-// 启动子进程并给出真实结果：立即非零退出视为失败，存活超过 800ms 视为成功
 // shell:true 时 Node 把 [cmd].concat(args).join(' ') 交给 cmd.exe 且不逐个加引号，
 // 含空格路径会被拆碎、& | " 等元字符有注入面；这里对含空白/元字符的参数自行加引号并转义内嵌引号，
 // 裸 token（如 start 后的 cmd）保持原样——start 会把首个带引号参数当作窗口标题
@@ -27,6 +28,11 @@ function quoteShellArg(a) {
   const s = String(a);
   return !s || SHELL_ARG_NEEDS_QUOTE.test(s) ? '"' + s.replace(/"/g, '\\"') + '"' : s;
 }
+// 启动子进程并给出真实结果：立即非零退出视为失败，存活超过 SPAWN_ALIVE_MS 视为成功。
+// 存活窗口按本机实测放宽到 3s（issue #168 第 4 条）：杀软扫描下进程创建就要 1-3s（见下方 checkCommand 注释），
+// 40 并发坏命令实测 33/40 要超过 800ms 才退出——800ms 窗口会把「命令不存在」判成「已打开」的误导性成功。
+// 代价是真正失败时提示晚 3s，优于报成功却什么都没发生。
+const SPAWN_ALIVE_MS = 3000;
 function spawnResult(cmd, args, opts) {
   return new Promise((resolve) => {
     let child;
@@ -37,15 +43,17 @@ function spawnResult(cmd, args, opts) {
       return;
     }
     let settled = false;
+    let aliveTimer = null;
     const done = (ok) => {
-      if (!settled) {
-        settled = true;
-        resolve(ok);
-      }
+      if (settled) return;
+      settled = true;
+      if (aliveTimer) clearTimeout(aliveTimer); // 定案即撤定时器，不留游离 timer
+      resolve(ok);
     };
     child.on('error', () => done(false));
     child.on('exit', (code) => done(code === 0));
-    setTimeout(() => done(true), 800);
+    aliveTimer = setTimeout(() => done(true), SPAWN_ALIVE_MS);
+    if (aliveTimer.unref) aliveTimer.unref();
     child.unref();
   });
 }
@@ -99,14 +107,15 @@ function scanScopeOf(cfg, draft) {
 
 // 命令可用性校验：含路径的查文件存在，否则用 where 查 PATH。
 // 杀软扫描下本机进程创建可能需 1-3s，超时放宽到 10s 避免启动负载期误报未安装（issue #29 实测）
-function checkCommand(cmd) {
+async function checkCommand(cmd) {
   // 首 token 先匹配引号段："C:\Program Files\...\Code.exe" --flag 不应被解析成 C:\Program
   const m = String(cmd || '').trim().match(/^"([^"]+)"|^(\S+)/);
   const first = m ? m[1] || m[2] : '';
-  if (!first) return Promise.resolve({ ok: false, reason: '命令为空' });
+  if (!first) return { ok: false, reason: '命令为空' };
   if (/[\\/]/.test(first) || /\.(exe|cmd|bat)$/i.test(first)) {
-    const exists = fs.existsSync(first);
-    return Promise.resolve({ ok: exists, reason: exists ? '' : '文件不存在' });
+    // 用户可在此填任意路径（含 UNC）：异步探测，别让掉线网络盘把主线程钉住（issue #168 第 5 条）
+    const exists = await pathExists(first);
+    return { ok: exists, reason: exists ? '' : '文件不存在' };
   }
   return new Promise((resolve) => {
     execFile('where', [first], { timeout: 10000 }, (err, stdout) => {
@@ -116,40 +125,8 @@ function checkCommand(cmd) {
   });
 }
 
-// AI 工具品牌图标（issue #21）：内联单色 SVG 标识 + 品牌底色方块
-// 来源：claude=simple-icons anthropic / codex=simple-icons openai(v13，新版已下架) / grok=simple-icons x；
-// kimi 无官方条目（simple-icons 未收录 Moonshot），沿用 demos/demo-f-overview.html 的近似标（K 字）；
-// terminal 为自定义工具的通用兜底图标
-const AI_TOOL_ICONS = {
-  claude: {
-    bg: '#d97757',
-    svg: '<path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z" fill="#fff"/>',
-  },
-  codex: {
-    bg: '#202020',
-    svg: '<path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" fill="#fff"/>',
-  },
-  kimi: {
-    bg: '#101010',
-    svg: '<text x="12" y="17" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">K</text>',
-  },
-  grok: {
-    bg: '#000000',
-    svg: '<path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z" fill="#fff"/>',
-  },
-  terminal: {
-    bg: '#322e27',
-    svg: '<path d="M5.5 7l4.5 4-4.5 4M11.5 15H18" stroke="#f5d90a" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
-  },
-};
-
-// 默认 AI 工具清单；设置页可增删自定义项（config.aiTools）与之合并（issue #15）
-const DEFAULT_AI_TOOLS = [
-  { id: 'claude', label: 'Claude Code', cmd: 'claude' },
-  { id: 'codex', label: 'Codex', cmd: 'codex' },
-  { id: 'kimi', label: 'Kimi Code', cmd: 'kimi' },
-  { id: 'grok', label: 'Grok', cmd: 'grok' },
-];
+// 默认 AI 工具清单与品牌图标已收敛进 AI 工具注册表（issue #123）：
+// defaultToolList() 出清单、iconFor(logoKey, id) 出图标，本文件不再持有按工具 id 键控的平行常量表
 
 // 合并默认与自定义工具并逐项 where 探测；随发品牌图标（issue #21）。aitools:list 与 ai 引擎解析共用。
 // 结果缓存 60s：启动负载期（扫描 + 探测并发）进程创建很慢，重复 spawn 会互相拖超时（issue #29 实测）；
@@ -186,10 +163,10 @@ async function probeAiTools(cfg) {
       logoKey: typeof t.logo === 'string' ? t.logo : '',
     }))
     .filter((t) => t.cmd);
-  const tools = DEFAULT_AI_TOOLS.concat(custom);
+  const tools = defaultToolList().concat(custom);
   return Promise.all(
     tools.map(async (t) => {
-      const icon = AI_TOOL_ICONS[t.logoKey] || AI_TOOL_ICONS[t.id] || AI_TOOL_ICONS.terminal;
+      const icon = iconFor(t.logoKey, t.id);
       return {
         id: t.id,
         label: t.label,
@@ -239,6 +216,18 @@ function adviceFactsKey(p) {
   return crypto.createHash('sha1').update(sig).digest('hex').slice(0, 10);
 }
 
+// 异步存在性检查（issue #168 第 5 条）：设置页预览原先用 fs.existsSync 同步探路径，
+// 指向掉线网络盘/休眠 NAS 时会阻塞主线程到 SMB 超时（可达数十秒），期间窗口不重绘、托盘与全局热键全哑；
+// scanner 对同一件事用的是 async 版本，这里对齐，把等待交回事件循环
+async function pathExists(p) {
+  try {
+    await fsp.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoStartError, onAttentionCount }) {
   // GitHub 网络出口换 Chromium 网络栈（issue #153）：net.fetch 读系统证书库，
   // Watt Toolkit（Steam++）等加速工具本地自签接管 TLS 时不再被 Node 内置 CA 拒之门外。
@@ -256,9 +245,13 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   });
 
   let refreshInFlight = false;
+  let refreshQueued = false; // 在飞期间的强制刷新请求：本轮收尾后补跑一次（issue #168 第 10 条）
   let scanInFlight = false;
   let scanPromise = null; // 在飞全量扫描：并发触发复用同一 Promise，避免重复双扫
   let scanGeneration = 0; // 扫描代次号：新扫描落地后，旧扫描迟到的最终补丁直接丢弃
+  // 全量扫描期间发生变化的项目（issue #168 第 7 条）：这次扫描的 git 快照读取早于该变化，
+  // 收尾整体覆盖缓存时会把真实变化盖回旧数据。记下来，落盘后逐项重扫回补。
+  const changedDuringScan = new Set();
 
   // .git 文件监听：项目有提交/暂存变化时自动增量重扫该项目并推补丁（issue #25）
   // 补丁载荷为单项目增量（issue #94）：拼板在内存里完成只为拿全局聚合与该项目装饰结果，
@@ -271,7 +264,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
       cur.projects[projectPath] = fresh;
       cur.scannedAt = new Date().toISOString();
       store.setScanCache(cur);
-      if (scanInFlight) return; // 全量扫描在飞，最终补丁由它统一发
+      if (scanInFlight) { changedDuringScan.add(projectPath); return; } // 全量扫描在飞：记下待回补，最终补丁由它统一发
       const config = store.getConfig();
       const { board } = assembleBoard(Object.values(cur.projects), config, false);
       const decorated = board.projects.find((p) => p.path === projectPath);
@@ -383,6 +376,26 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
       next.projects[p.path] = p.degraded && cache.projects[p.path] ? cache.projects[p.path] : p;
     }
     store.setScanCache(next);
+    // 扫描期间变化的项目重扫回补（issue #168 第 7 条）：上面这次整体覆盖用的是扫描开始时的快照，
+    // 会把 watcher 期间写入的真实变化盖回旧状态，且全程无补丁发出；这里逐项重扫并把结果同时写回
+    // 缓存与返回给调用方的 projects 数组，让本次拼板就能反映变化
+    if (changedDuringScan.size) {
+      // 只回补本次扫描仍然发现的项目：扫描期间被删除/移出的项目若也重扫，会产出一个全 0 空壳
+      // 并被写回缓存，等于把已删除的项目「复活」成僵尸卡片（与 issue #168 第 6 条同源）
+      const touched = [...changedDuringScan].filter((p) => next.projects[p]);
+      changedDuringScan.clear();
+      await Promise.all(touched.map(async (p) => {
+        try {
+          const fresh = await scanner.scanProject(p, new Date(), { cached: store.getScanCache().projects[p] || null });
+          const cur = store.getScanCache();
+          cur.projects[p] = fresh;
+          store.setScanCache(cur);
+          const i = projects.findIndex((x) => x.path === p);
+          if (i >= 0) projects[i] = fresh;
+          else projects.push(fresh);
+        } catch { /* 单项目失败静默，等下次变化或手动刷新 */ }
+      }));
+    }
     // advice 缓存尸体裁剪（issue #139）：按现存项目集删掉已消失项目的缓存键，
     // 项目删除/改根目录后 ai-cache.json 不再永久累积尸体条目
     const aiCache = store.getAiCache();
@@ -431,7 +444,14 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   }
 
   function maybeRefreshGithub(forceGithubRefresh, stale, projects, config) {
-    if (!(forceGithubRefresh || stale.length > 0) || refreshInFlight) return;
+    if (!forceGithubRefresh && stale.length === 0) return;
+    if (refreshInFlight) {
+      // 在飞刷新不能吞掉「连接/导入后立即拉一轮」（issue #168 第 10 条）：那次在飞刷新是在 token
+      // 写入之前发起的，其 remotes/鉴权都基于旧状态；直接 return 会让刚连上的用户最长等一个刷新
+      // 周期（默认 20 分钟）才看到 GitHub 数据。改为记一个待办，本轮收尾后补跑。
+      if (forceGithubRefresh) refreshQueued = true;
+      return;
+    }
     refreshInFlight = true;
     const me = String(config.githubUsername || '').toLowerCase();
     const remotes = forceGithubRefresh
@@ -455,7 +475,14 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
       const win = getWindow && getWindow();
       if (win && !win.isDestroyed()) win.webContents.send('board:patch', board);
     }).catch((err) => console.error('[devboard] GitHub 缓存刷新失败', err))
-      .finally(() => { refreshInFlight = false; });
+      .finally(() => {
+        refreshInFlight = false;
+        // 补跑在飞期间被挡下的强制刷新（issue #168 第 10 条）：此刻 token/remotes 已是新状态
+        if (refreshQueued) {
+          refreshQueued = false;
+          maybeRefreshGithub(true, [], Object.values(store.getScanCache().projects), store.getConfig());
+        }
+      });
   }
 
   // GitHub 连接/导入/断开后的即时处理（issue #118）：不再等下一个刷新触发点（后台定时默认最长 20 分钟）。
@@ -516,9 +543,10 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   ipcMain.handle('board:rescan', () => buildBoard(true));
 
   // 分支详情懒取：切分支时才跑 git log，不进全量扫描（issue #4）
-  ipcMain.handle('branch:commits', (_e, projectPath, branch) => {
+  ipcMain.handle('branch:commits', async (_e, projectPath, branch) => {
     const p = String(projectPath || '');
-    if (!p || !fs.existsSync(path.join(p, '.git'))) return null;
+    // 项目路径可能落在已掉线的网络盘上：异步探 .git，避免主线程同步等待（issue #168 第 5 条）
+    if (!p || !(await pathExists(path.join(p, '.git')))) return null;
     return scanner.branchDetail(p, branch);
   });
 
@@ -538,7 +566,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   ipcMain.handle('aitools:open', async (_e, cmd, projectPath) => {
     const c = String(cmd || '').trim();
     const p = String(projectPath || '');
-    if (!c || !p || !fs.existsSync(p)) return false;
+    if (!c || !p || !(await pathExists(p))) return false; // 异步探盘（issue #168 第 5 条）
     const ok = await spawnResult('wt', ['-d', p, 'cmd', '/k', c]);
     if (ok) return true;
     return spawnResult('cmd', ['/c', 'start', 'cmd', '/k', c], { cwd: p });
@@ -759,9 +787,10 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   });
 
   // 详情面板深区数据：README 首段摘要 + AI 会话痕迹明细（issue #17）
-  ipcMain.handle('project:detail', (_e, projectPath) => {
+  ipcMain.handle('project:detail', async (_e, projectPath) => {
     const p = String(projectPath || '');
-    if (!p || !fs.existsSync(p)) return { readme: '', aiSessions: [] };
+    // 异步探盘（issue #168 第 5 条）：详情面板打开时不因掉线网络盘冻结主线程
+    if (!p || !(await pathExists(p))) return { readme: '', aiSessions: [] };
     return scanner.projectDetail(p);
   });
 
@@ -911,15 +940,25 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   });
 
   // 设置页辅助：扫描预览（用未保存的草稿值跑 discover，不落盘；附带无效路径清单）
+  // 无效路径一律经异步 pathExists 探测（issue #168 第 5 条），不再在主线程同步 existsSync
   ipcMain.handle('scan:preview', async (_e, draft) => {
     const cfg = store.getConfig();
     const scope = scanScopeOf(cfg, draft);
     const paths = await scanner.discover(scope);
+    const invalidRoots = (await Promise.all(
+      scope.roots.map(async (r) => (r && !(await pathExists(r)) ? r : null))
+    )).filter(Boolean);
+    const invalidExtra = (await Promise.all(
+      scope.extraPaths.map(async (p) => {
+        if (!p) return null;
+        return (!(await pathExists(p)) || !(await pathExists(path.join(p, '.git')))) ? p : null;
+      })
+    )).filter(Boolean);
     return {
       count: paths.length,
       names: paths.map((p) => path.basename(p)).slice(0, 60),
-      invalidRoots: scope.roots.filter((r) => r && !fs.existsSync(r)),
-      invalidExtra: scope.extraPaths.filter((p) => p && (!fs.existsSync(p) || !fs.existsSync(path.join(p, '.git')))),
+      invalidRoots,
+      invalidExtra,
     };
   });
 
@@ -1033,4 +1072,4 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   return { buildBoard, gitWatcher };
 }
 
-module.exports = { registerIpc, AI_TOOL_ICONS };
+module.exports = { registerIpc };

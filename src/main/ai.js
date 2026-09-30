@@ -5,6 +5,7 @@
 
 const { spawn } = require('child_process');
 const { BAND_DEFS, BAND_IDS } = require('../shared/constants'); // 分带枚举/释义与 scanner、渲染层同源（issue-11 / #127）
+const { specFor } = require('../shared/ai-tools'); // 引擎调用规格单一来源（issue #123）
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // 单次调用上限：30s 对周报/建议类长 prompt 太紧（实测 kimi 简单 filter 已需 16s），放宽到 90s（issue #41）
@@ -20,14 +21,27 @@ const ARGV_PROMPT_CAP = 24000;
 // 数字错误码（401/403/429）要求同行伴随错误语义词才判定：AI 正常中文输出也会提到这些数字，裸匹配会误伤引擎。
 // 注意 unrecognized_model 不在其中：claude 对第三方模型名只输出良性警告、进程仍正常产出，
 // 列入会被流式检测秒杀整个调用（issue #115）
-const ENGINE_ERROR_RE = /API Error|(?=[^\n]*(?:error|unauthorized|forbidden|rate.?limit|错误|未授权|超限))[^\n]*\b(?:401|403|429)\b|unauthorized|invalid[-_ ]?api[-_ ]?key|quota|insufficient|token plan|用量上限|余额不足/i;
+// 引擎错误特征（issue #41）：判定语义与原单条大正则逐条对齐，但拆成三条**线性**匹配。
+// 原式含前瞻 + [^\n]* 的组合，在超长单行上会灾难性回溯（实测单行 40K 字符 ≈ 4s、90K ≈ 21s 卡死主进程）；
+// 而扫描对象正是「两个换行之间的整段」，kimi streamJson 的整条 assistant 消息恰恰是一个物理行，
+// 上限又是 STREAM_CAP 的 1MB——即一次长回答就能把主进程冻住（test-ai 注释里记的既有隐患）。
+// 拆开后每步都是无嵌套量词的字面量匹配，O(n) 无回溯。
+// 语义：词表命中即成立；数字错误码 401/403/429 必须同行伴随错误语义词才成立
+// （AI 正常中文输出也会提到这些数字，裸匹配会误伤引擎）。
+// 注意 unrecognized_model 不在其中：claude 对第三方模型名只输出良性警告、进程仍正常产出，
+// 列入会被流式检测秒杀整个调用（issue #115）
+const ENGINE_ERROR_WORD_RE = /API Error|unauthorized|invalid[-_ ]?api[-_ ]?key|quota|insufficient|token plan|用量上限|余额不足/i;
+const ENGINE_ERROR_HINT_RE = /error|unauthorized|forbidden|rate.?limit|错误|未授权|超限/i;
+const ENGINE_ERROR_CODE_RE = /\b(?:401|403|429)\b/;
 
 // 从原始输出中提取第一条引擎错误行（无则返回空串）
 function engineErrorLine(raw) {
   const lines = stripAnsi(raw).split('\n');
   for (const l of lines) {
     const t = l.trim();
-    if (t && ENGINE_ERROR_RE.test(t)) return t.slice(0, 120);
+    if (!t) continue;
+    if (ENGINE_ERROR_WORD_RE.test(t)) return t.slice(0, 120);
+    if (ENGINE_ERROR_CODE_RE.test(t) && ENGINE_ERROR_HINT_RE.test(t)) return t.slice(0, 120);
   }
   return '';
 }
@@ -44,19 +58,9 @@ function stderrFailReason(errText) {
   return '';
 }
 
-// 各 CLI 的一次性打印模式调用规格。
-// shell: claude 是 npm .cmd shim，Windows 下必须经 shell 启动（Node 对 .cmd 的 CVE 限制）；
-// 原生 exe（kimi/codex/grok）直接 spawn，参数转义由 libuv 保证，中文与换行安全。
-// stdin: prompt 经 stdin 传入；否则作为最后一个参数传入。
-// streamJson: 输出为 JSON 行，取 role=assistant 的 content 作为正文（kimi 文本模式会混入过程 bullet，故用 stream-json）
-const TOOL_SPECS = {
-  claude: { args: ['-p'], stdin: true, shell: true },
-  // --skip-git-repo-check：开机自启等场景 cwd 不是受信 git 仓库时 codex exec 会直接拒绝执行（issue #115）
-  codex: { args: ['exec', '--skip-git-repo-check'], stdin: false, shell: false },
-  kimi: { args: ['-p'], stdin: false, shell: false, streamJson: true },
-  grok: { args: ['--single'], stdin: false, shell: false },
-};
-// 自定义命令无法预知参数形态，按最通行的 stdin 方式喂入
+// 各 CLI 的一次性打印模式调用规格已收敛进 AI 工具注册表（issue #123）：
+// spec 形状为 { args, stdin, shell, streamJson? }，按 toolId 经 specFor 查找，
+// 未知工具（自定义命令无法预知参数形态）按最通行的 stdin 方式喂入
 const CUSTOM_SPEC = { args: [], stdin: true, shell: true };
 
 // 两个分支都必须带 ESC(\x1B) 前缀：裸的「[数字m」是模型名等正常文本后缀（如 [1m]），
@@ -108,7 +112,7 @@ function killChild(child) {
 // 调用本机 CLI：返回 { ok, text, reason }；超时/启动失败/空输出均降级为 ok:false
 function runCli(cmd, prompt, opts) {
   const o = opts || {};
-  const spec = o.spec || TOOL_SPECS[o.toolId] || CUSTOM_SPEC;
+  const spec = o.spec || specFor(o.toolId) || CUSTOM_SPEC;
   const timeout = o.timeout || AI_TIMEOUT_MS;
   // argv 长度护栏（issue #133）：非 stdin 引擎把整段 prompt 作单个 argv，逼近 Windows 命令行上限时
   // spawn 直接失败且原因晦涩；预留余量做中段省略截断，启动失败原因给出「命令行过长」归类
@@ -344,9 +348,7 @@ function parseFilter(text) {
 }
 
 module.exports = {
-  TOOL_SPECS,
   AI_TIMEOUT_MS,
-  ENGINE_ERROR_RE,
   engineErrorLine,
   runCli,
   cleanOutput,
