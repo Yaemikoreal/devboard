@@ -66,6 +66,9 @@ contextBridge.exposeInMainWorld('devboard', {
   exportData: () => ipcRenderer.invoke('data:export'),
   importData: () => ipcRenderer.invoke('data:import'),
   resetData: (scope) => ipcRenderer.invoke('data:reset', scope),
+  // 交接（issue #147）：全量懒取 + 标记接力完成；写入入口在 MCP（#149）与调试门闩
+  handoffList: (projectPath) => ipcRenderer.invoke('handoff:list', projectPath),
+  handoffMarkDone: (projectPath, id) => ipcRenderer.invoke('handoff:markDone', projectPath, id),
   // 详情面板深区数据（issue #17）
   projectDetail: (projectPath) => ipcRenderer.invoke('project:detail', projectPath),
   winMin: () => ipcRenderer.invoke('win:min'),

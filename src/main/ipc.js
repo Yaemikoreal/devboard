@@ -16,6 +16,7 @@ const ai = require('./ai');
 const registerGithub = require('./ipc-github'); // GitHub 鉴权/账号域 handler（issue #124 第一刀）
 const registerAi = require('./ipc-ai'); // AI 调度域 handler（issue #124 第二刀）
 const registerData = require('./ipc-data'); // 数据/系统辅助域 handler（issue #124 第三刀）
+const handoffs = require('./handoffs'); // 交接领域服务（issue #147，#148/#149 复用写入口）
 const { DEFAULT_CONFIG } = require('./store');
 const { WARN_SEVERITY } = require('../shared/constants'); // 共享常量（issue-11 / #127）
 const { createGitWatcher } = require('./watcher');
@@ -206,10 +207,17 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     },
   });
 
-  // 拼装 board：memos + 警示按当前规则重算 + GitHub 缓存挂接 + 警示消音 + 统计（缓存路径与新鲜扫描共用）
+  // 拼装 board：memos + 交接摘要 + 警示按当前规则重算 + GitHub 缓存挂接 + 警示消音 + 统计（缓存路径与新鲜扫描共用）
   function assembleBoard(projects, config, fromCache) {
     const memos = store.getMemos();
     for (const p of projects) p.memo = memos[p.path] || '';
+
+    // 交接并入（issue #147）：latest + 未读数下发，agent 写入时间计入最后活动时间并重算分带——
+    // userData 侧时间不进只读扫描器，全板产出（缓存拼板/重扫补丁/GitHub 刷新补丁）唯一汇聚点在此
+    handoffs.applyToProjects(projects, {
+      handoffsAll: store.getHandoffs(),
+      handoffReadAt: store.getPrefs().handoffReadAt,
+    }, new Date());
 
     // 警示按当前规则重算（issue #73）：缓存/降级条目里的 warnings 是旧规则产物，
     // 依赖的事实字段（dirtyCount/lastCommitAt/ahead/github.openPRs）都在，重算零 IO，
@@ -544,6 +552,16 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
 
   ipcMain.handle('prefs:get', () => store.getPrefs());
   ipcMain.handle('prefs:set', (_e, patch) => store.setPrefs(patch || {}));
+
+  // 交接读取（issue #147）：详情面板按需拉取；MCP 未落地前的读入口，#148 get_handoffs 复用同数据面
+  ipcMain.handle('handoff:list', (_e, projectPath) => handoffs.listHandoffs(store, projectPath));
+  // 标记接力完成（issue #147）：详情面板条目按钮；写入口经 handoffs.markDone，#149 handoff_complete 复用
+  ipcMain.handle('handoff:markDone', (_e, projectPath, id) => handoffs.markDone(store, projectPath, id));
+  // 交接写入调试入口（issue #147）：MCP（#149）落地前的自测口，环境变量门闩——
+  // DEVBOARD_DEBUG_HANDOFF=1 时注册，验收「写一条 → 行内未读点亮 → 读后消 → 分带重算」全链路
+  if (process.env.DEVBOARD_DEBUG_HANDOFF === '1') {
+    ipcMain.handle('handoff:debugAdd', (_e, projectPath, payload) => handoffs.writeHandoff(store, projectPath, payload || {}));
+  }
 
   ipcMain.handle('snooze:set', (_e, projectPath, type, label) => {
     const prefs = store.getPrefs();

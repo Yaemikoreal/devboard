@@ -172,6 +172,8 @@ let releaseSettings = null; // #165 时序：在 require 前挂 gate，test 主�
 let boardPayload = null;
 let showSettingsCb = null; // #124 设置域拆分：捕获 onShowSettings 回调，供测试真实开合设置页
 let lastSettingsPatch = null; // 捕获最近一次自动保存补丁（settings.js 保存链断言用）
+let lastPrefsPatch = null; // 捕获最近一次 prefs 写盘（#147 交接已读游标断言用）
+let winShownCb = null; // 捕获 win:shown 回调（applyLanding 真实入口，供测试恢复着陆视图）
 const patchHandlers = [];
 const itemDetailCalls = [];
 const apiCalls = { getSettings: 0, getBoard: 0 };
@@ -199,14 +201,14 @@ const api = {
   setSettings: (p) => { lastSettingsPatch = p; return Promise.resolve(Object.assign({}, SETTINGS, p)); },
   getHotkeyError: () => Promise.resolve(''),
   getAutoStartError: () => Promise.resolve(''),
-  getPrefs: () => Promise.resolve({ sortMode: 'manual', branchSel: {}, pins: [], snoozes: [], theme: null, landingView: null, onboarded: true }),
-  setPrefs: () => Promise.resolve({}),
+  getPrefs: () => Promise.resolve({ sortMode: 'manual', branchSel: {}, pins: [], snoozes: [], theme: null, landingView: null, onboarded: true, handoffReadAt: {} }),
+  setPrefs: (p) => { lastPrefsPatch = p; return Promise.resolve({}); },
   getBoard: () => { apiCalls.getBoard++; return Promise.resolve(boardPayload); },
   rescan: () => Promise.resolve(boardPayload),
   onBoardPatch: (cb) => patchHandlers.push(cb),
   onBoardScanfail() {},
   onTick() {},
-  onWinShown() {},
+  onWinShown(cb) { winShownCb = cb; },
   onShowSettings(cb) { showSettingsCb = cb; },
   aiToolsList: () => Promise.resolve([]),
   aiToolsOpen: () => Promise.resolve(true),
@@ -234,6 +236,8 @@ const api = {
   exportData: () => Promise.resolve({ ok: true }),
   importData: () => Promise.resolve({ ok: true }),
   resetData: () => Promise.resolve(true),
+  handoffList: () => Promise.resolve([]),
+  handoffMarkDone: () => Promise.resolve(true),
   testGithub: () => Promise.resolve({ ok: false }),
 };
 
@@ -263,6 +267,7 @@ global.localStorage = global.window.localStorage;
 global.getComputedStyle = global.window.getComputedStyle;
 global.HTMLElement = function HTMLElement() {};
 global.Node = function Node() {};
+global.CSS = { escape: (s) => String(s) }; // jumpToProject 定位行用；转义细节与本测试无关
 global.MutationObserver = function () { return { observe() {}, disconnect() {} }; };
 global.ResizeObserver = function () { return { observe() {}, disconnect() {} }; };
 global.IntersectionObserver = function () { return { observe() {}, disconnect() {} }; };
@@ -274,7 +279,7 @@ const makeBoard = (opts) => {
     path: 'E:\\p\\alpha', name: 'alpha', branch: 'main', commits7d: 3,
     recentCommits: [{ msg: 'x', rel: '1 天前' }],
     dirtyCount: 0, dirtyAt: null, dirtyFiles: [], ahead: 0, behind: 0,
-    lastCommitAt: new Date().toISOString(), headSha: 'abc123',
+    lastCommitAt: new Date().toISOString(), lastActivityAt: new Date().toISOString(), headSha: 'abc123',
     activity365: new Array(365).fill(0), warnings: [],
     githubOwned: true, githubError: null,
     github: {
@@ -284,6 +289,7 @@ const makeBoard = (opts) => {
       prReviews: [], meta: null, ci: null, release: null,
     },
     memo: '', aiSessionAt: null, band: 'active',
+    handoffs: opts.handoffs !== undefined ? opts.handoffs : null,
   };
   const notif = {
     fetchedAt: Date.now(), fetchedFor: 'me', error: null,
@@ -364,10 +370,60 @@ async function main() {
     assert.ok(!byId.app.classList.contains('show-settings'), 'settingsBtn 再次点击应隐藏设置视图');
   }
 
+  /* ========== #147 交接：进详情即已读 + 行内未读点亮/消 + 面板交接区 ========== */
+  {
+    const mkHandoffs = () => ({ latest: { id: 'h9', agent: 'claude', text: '登录模块已重构', createdAt: new Date().toISOString(), doneAt: null }, unreadCount: 2 });
+    const b = makeBoard({ handoffs: mkHandoffs() });
+    b.scanGeneration = 1; // 初始 boardGen=0（issue #112）；本段用 1/2，#163 段代次起点已让到 10
+    patchHandlers.forEach((cb) => cb(b));
+    await sleep(30);
+    // 经「需要关注」平静态锚点跳项目页：jumpToProject 自动选中该项目——
+    // 「进详情 = 人已读」语义即生效：已读游标写 prefs + 行列表重渲后未读点消 + 面板交接区展出
+    const anchor = byId.attnList.querySelector('.calm-proj');
+    assert.ok(anchor, '平静态应给出最近活跃锚点');
+    anchor.dispatch('click', { stopPropagation() {}, preventDefault() {} });
+    await sleep(30);
+    assert.ok(lastPrefsPatch && lastPrefsPatch.handoffReadAt
+      && lastPrefsPatch.handoffReadAt['E:\\p\\alpha'], '进详情应把交接已读游标写进 prefs（issue #147）');
+    assert.ok(!byId.rows.children[0].querySelector('.r-handoff'), '已读后行列表重渲不再亮未读点');
+    const hoItem = byId.panelIn.querySelector('.ho-item');
+    assert.ok(hoItem, '详情面板应渲染交接区');
+    assert.ok(hoItem.querySelector('.ho-agent') && hoItem.querySelector('.ho-agent').textContent === 'claude', '交接条目应显示 agent 名');
+    assert.ok(hoItem.querySelector('.ho-text') && hoItem.querySelector('.ho-text').textContent === '登录模块已重构', '交接条目应显示正文');
+
+    // 新整板补丁落地（view 已在项目页 → renderRows）：行内未读徽标应按板快照点亮
+    const b2 = makeBoard({ handoffs: mkHandoffs() });
+    b2.scanGeneration = 2;
+    patchHandlers.forEach((cb) => cb(b2));
+    await sleep(30);
+    const badge = byId.rows.children[0].querySelector('.r-handoff');
+    assert.ok(badge && badge.textContent === '✉ 2', '有未读交接的行应亮「✉ 2」未读徽标');
+    // 行点击是切换语义（选中 ↔ 取消）：先点一下取消选中（无已读写入），再点一下选中 = 人已读
+    byId.rows.children[0].dispatch('click', { stopPropagation() {}, preventDefault() {} });
+    await sleep(30);
+    const stillThere = byId.rows.children[0].querySelector('.r-handoff');
+    assert.ok(stillThere, '取消选中不写已读游标，未读点保留');
+    byId.rows.children[0].dispatch('click', { stopPropagation() {}, preventDefault() {} });
+    await sleep(30);
+    assert.ok(lastPrefsPatch.handoffReadAt['E:\\p\\alpha'], '选中（进详情）应写已读游标');
+    assert.ok(!byId.rows.children[0].querySelector('.r-handoff'), '选中后未读点应就地消（不等下一轮拼板）');
+    // 收回选中态（面板关闭钮 → selectProject(null)）：把干净的未选中状态交还给后续用例
+    var panelClose = byId.panelIn.querySelector('.p-close');
+    assert.ok(panelClose, '详情面板应有关闭钮');
+    panelClose.dispatch('click', { stopPropagation() {}, preventDefault() {} });
+    await sleep(20);
+    // 恢复着陆视图（win:shown 真实入口 → applyLanding → switchView('overview')）：
+    // 本段把 view 留在了项目页，#163 的通知副标断言依赖总览渲染（renderGhNotify 在 renderOverview 内）
+    winShownCb();
+    await sleep(30);
+    assert.ok(byId.viewOverview.classList.contains('hidden') === false, 'win:shown 后应回到着陆视图（总览）');
+  }
+
   /* ========== #163：旧数据 + error 并存，副标追加失败提示 ========== */
   {
     // handleBoardPatch 对「同代次整板补丁」去重——补丁须带新 scanGeneration 才会落地
-    let gen = 2;
+    // （起点 10：#147 交接段已用到 gen 1/2，给后续段留出间距）
+    let gen = 10;
     const pushPatch = (opts) => {
       const b = makeBoard(opts);
       b.scanGeneration = gen++;

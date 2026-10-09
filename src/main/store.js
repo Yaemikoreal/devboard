@@ -37,6 +37,8 @@ const DEFAULT_PREFS = {
   sortMode: 'manual', // 排序方式：manual（可拖拽）/ activity / name（issue #18）
   snoozes: {}, // 警示消音：path -> { warningType: label 签名 }
   branchSel: {}, // 详情面板分支下拉选择：path -> 分支名（issue #4）
+  handoffReadAt: {}, // 交接未读游标（issue #147）：path -> ISO 时间；未读 = 存在 createdAt > 游标的条目。
+  // 人的行为数据放 prefs 而非交接本体：随导出迁移（换机不丢已读位），agent 经 MCP 写交接物理碰不到游标
   windowBounds: null,
 };
 
@@ -200,6 +202,7 @@ class Store {
     if (!Array.isArray(prefs.cardOrder)) prefs.cardOrder = [];
     if (!prefs.snoozes || typeof prefs.snoozes !== 'object') prefs.snoozes = {};
     if (!prefs.branchSel || typeof prefs.branchSel !== 'object') prefs.branchSel = {};
+    if (!prefs.handoffReadAt || typeof prefs.handoffReadAt !== 'object') prefs.handoffReadAt = {};
     return prefs;
   }
 
@@ -220,6 +223,20 @@ class Store {
     else delete memos[key];
     this.writeJson('memos.json', memos);
     return memos;
+  }
+
+  // 交接（Handoff，issue #147）：path -> 条目数组 [{id, agent, text, createdAt, doneAt?}]。
+  // 与 memos.json 同构的 Store 封装（损坏留证/内存副本由 readJson/writeJson 自动继承）
+  getHandoffs() {
+    const h = this.readJson('handoffs.json', {});
+    if (!h || typeof h !== 'object' || Array.isArray(h)) return {};
+    return h;
+  }
+
+  setHandoffs(handoffs) {
+    if (!handoffs || typeof handoffs !== 'object' || Array.isArray(handoffs)) throw new Error('交接数据结构不符');
+    this.writeJson('handoffs.json', handoffs);
+    return handoffs;
   }
 
   getGithubCache() {

@@ -717,8 +717,16 @@
     var main = el('div', 'r-main');
     var top = el('div', 'r-top');
     var name = el('span', 'r-name mono', p.name);
-    name.title = p.name;
+    if (p.handoffs && p.handoffs.unreadCount > 0) {
+      // 交接未读点（issue #147）：新交接行内可见，进详情读后即消（与警示消音语义无关）
+      name.classList.add('has-handoff');
+      name.title = '有 ' + p.handoffs.unreadCount + ' 条未读交接';
+    }
+    name.title = name.title || p.name;
     top.appendChild(name);
+    if (p.handoffs && p.handoffs.unreadCount > 0) {
+      top.appendChild(el('span', 'r-handoff', '✉ ' + p.handoffs.unreadCount));
+    }
     if (p.branch) top.appendChild(el('span', 'r-branch mono', p.branch));
     main.appendChild(top);
     main.appendChild(el('div', 'r-sub' + (p.memo ? '' : ' empty'), p.memo || '无备忘'));
@@ -876,6 +884,19 @@
     splitEl.classList.toggle('open', !!state.selectedPath);
   }
 
+  // 交接已读游标（issue #147）：进详情即把游标推到该仓最新交接时间，未读点行内即消。
+  // 只在确有未读时写 prefs，避免每次选中项目都落盘
+  function markHandoffsRead(p) {
+    if (!p.handoffs || !(p.handoffs.unreadCount > 0)) return;
+    var prefs = state.prefs || {};
+    var cur = prefs.handoffReadAt || {};
+    cur[p.path] = new Date().toISOString();
+    prefs.handoffReadAt = cur;
+    savePrefs({ handoffReadAt: cur });
+    p.handoffs.unreadCount = 0; // 本地即时消点，不等下一轮拼板；行列表就地重渲（选中态经 projectRow 自恢复）
+    renderRows();
+  }
+
   function selectProject(path) {
     state.selectedPath = path || null;
     updateSplit();
@@ -889,6 +910,7 @@
       updateSplit();
       return;
     }
+    markHandoffsRead(p);
     renderPanel(p);
     ensureDetail(p);
   }
@@ -1226,6 +1248,58 @@
       if (memoSel) ta.setSelectionRange(memoSel[0], memoSel[1]);
     }
     autosize(ta);
+
+    // 交接区（issue #147）：与备忘并列，视觉上明确区分「agent 写 / 人写」——
+    // agent 名 + 时间 + 正文 +「接力完成」标记；数据经按需 IPC（与 branch:commits 同款懒取不进板）
+    if (p.handoffs && p.handoffs.latest) {
+      var hoSec = sec('交接');
+      var hoList = el('div', 'ho-list');
+      var entries = p.handoffs.latest; // 摘要只带最新一条，全量经 handoff:list 懒取
+      var renderHo = function (e) {
+        var item = el('div', 'ho-item' + (e.doneAt ? ' done' : ''));
+        var head = el('div', 'ho-head');
+        head.appendChild(el('i', 'ho-ic'));
+        head.appendChild(el('span', 'ho-agent mono', e.agent));
+        head.appendChild(el('span', 'ho-time', relTime(e.createdAt)));
+        if (e.doneAt) head.appendChild(el('span', 'ho-done', '已接力'));
+        item.appendChild(head);
+        item.appendChild(el('div', 'ho-text', e.text));
+        if (!e.doneAt) {
+          var done = el('button', 'ho-btn', '接力完成');
+          done.type = 'button';
+          done.title = '标记这条交接已被接力（仅标记，不改动任何项目文件）';
+          done.addEventListener('click', function () {
+            api.handoffMarkDone(p.path, e.id).then(function () {
+              done.classList.add('ok');
+              done.textContent = '已标记';
+              done.disabled = true;
+              refresh(false);
+            }).catch(function (err) { toast('标记接力失败：' + ipcErrText(err)); });
+          });
+          item.appendChild(done);
+        }
+        return item;
+      };
+      hoList.appendChild(renderHo(entries));
+      hoSec.appendChild(hoList);
+      var more = el('button', 'ho-more', '查看全部交接');
+      more.type = 'button';
+      more.addEventListener('click', function () {
+        more.disabled = true;
+        api.handoffList(p.path).then(function (list) {
+          more.remove();
+          (list || []).slice(1).forEach(function (e) { hoList.appendChild(renderHo(e)); });
+          if (hoList.children.length <= 1) {
+            hoList.appendChild(el('div', 'ho-empty', '没有更多交接'));
+          }
+        }).catch(function (err) {
+          more.disabled = false;
+          toast('读取交接失败：' + ipcErrText(err));
+        });
+      });
+      hoSec.appendChild(more);
+      panelIn.appendChild(hoSec);
+    }
 
     // 快捷打开（issue #36：高频操作上移至头部区；AI 工具启动并入本节，issue #39）
     var qSec = sec('快捷打开');

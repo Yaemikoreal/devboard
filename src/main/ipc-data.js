@@ -54,6 +54,7 @@ module.exports = function registerData({ store, getWindow, applySettings, checkC
       memos: store.getMemos(),
       prefs: store.getPrefs(),
       config: cfgOut,
+      handoffs: store.getHandoffs(), // 交接随包迁移（issue #147/#79）；旧版导入会忽略该可选字段
     };
     try {
       fs.writeFileSync(r.filePath, JSON.stringify(payload, null, 2), 'utf8');
@@ -84,9 +85,10 @@ module.exports = function registerData({ store, getWindow, applySettings, checkC
     const memos = data.memos;
     const prefs = data.prefs;
     const config = data.config;
+    const handoffs = data.handoffs; // 交接（issue #147）：结构校验后整包写回
     const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
-    if (!isObj(memos) && !isObj(prefs) && !isObj(config)) {
-      return { ok: false, reason: '文件中找不到可导入的数据（需要 memos/prefs/config 字段）' };
+    if (!isObj(memos) && !isObj(prefs) && !isObj(config) && !isObj(handoffs)) {
+      return { ok: false, reason: '文件中找不到可导入的数据（需要 memos/prefs/config/handoffs 字段）' };
     }
     if (isObj(memos)) {
       // 备忘：path -> 纯文本，过滤非字符串脏值
@@ -97,6 +99,16 @@ module.exports = function registerData({ store, getWindow, applySettings, checkC
       store.writeJson('memos.json', clean);
     }
     if (isObj(prefs)) store.writeJson('prefs.json', prefs); // 读取时 getPrefs 归一化兜底
+    if (isObj(handoffs)) {
+      // 交接：path -> 条目数组，丢弃形状不符的条目与非数组键（issue #147）
+      const clean = {};
+      for (const k of Object.keys(handoffs)) {
+        if (!Array.isArray(handoffs[k])) continue;
+        clean[k] = handoffs[k].filter((e) => e && typeof e === 'object'
+          && typeof e.id === 'string' && typeof e.text === 'string' && typeof e.createdAt === 'string');
+      }
+      store.setHandoffs(clean);
+    }
     if (isObj(config)) {
       const patch = Object.assign({}, config);
       delete patch.githubToken; // 防御：即使导出文件被手工塞入 token 也不接收
@@ -114,7 +126,7 @@ module.exports = function registerData({ store, getWindow, applySettings, checkC
       return { ok: true };
     }
     if (scope === 'all') {
-      const files = ['memos.json', 'prefs.json', 'config.json', 'ai-cache.json', 'scan-cache.json', 'github-cache.json', 'meta.json'];
+      const files = ['memos.json', 'prefs.json', 'config.json', 'ai-cache.json', 'scan-cache.json', 'github-cache.json', 'handoffs.json', 'meta.json'];
       for (const f of files) {
         try { fs.unlinkSync(path.join(store.baseDir, f)); } catch { /* 不存在则跳过 */ }
       }
