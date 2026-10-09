@@ -86,14 +86,8 @@ function applySnoozes(projects, snoozes) {
   }
 }
 
-// 警示规则（issue #73）：config 已过 getConfig 归一化（天数限 1/3/7、开关补齐 true），这里只整形
-function warningRulesOf(config) {
-  const wt = config.warningTypes || {};
-  return {
-    dirtyDays: config.warningDirtyDays || 3,
-    types: { dirty: wt.dirty !== false, unpushed: wt.unpushed !== false, ci: wt.ci !== false, review: wt.review !== false, pr: wt.pr !== false },
-  };
-}
+// 警示规则整形已收敛到 scanner.warningRulesOf（issue #148）：MCP 工具响应侧重算警示时
+// 必须与拼板同口径（防「板说没警示、agent 查到警示」的漂移），单一来源在 localWarnings 旁
 
 // 扫描域（issue #12 第 8 条）：roots/blacklist/extraPaths 三键永远同行，收敛一处构造 scope 对象；
 // draft 中合法（数组）的键优先，其余回退已存配置（scan:preview 的草稿语义）
@@ -222,7 +216,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     // 警示按当前规则重算（issue #73）：缓存/降级条目里的 warnings 是旧规则产物，
     // 依赖的事实字段（dirtyCount/lastCommitAt/ahead/github.openPRs）都在，重算零 IO，
     // 设置改动后无需等重扫即反映到需要关注清单与行内警示点；消音签名按新 label 照常匹配
-    const rules = warningRulesOf(config);
+    const rules = scanner.warningRulesOf(config);
     const now = new Date();
     for (const p of projects) p.warnings = scanner.localWarnings(p, now, rules);
 
@@ -292,7 +286,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     try {
       projects = await scanner.scan(scanScopeOf(config), {
         cache,
-        warningRules: warningRulesOf(config), // 警示规则参数化（issue #73）
+        warningRules: scanner.warningRulesOf(config), // 警示规则参数化（issue #73）
         onLate: (projectPath, fresh) => {
           const cur = store.getScanCache();
           cur.projects[projectPath] = fresh;

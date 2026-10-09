@@ -108,6 +108,20 @@ npm start     # 启动：托盘常驻，Ctrl+Shift+D 唤出/隐藏
 
 全部数据在 Electron userData 目录（`%APPDATA%/SignalBoard/`），不出本机：设置、备忘、位序与偏好、GitHub/扫描/AI 缓存分文件存放。GitHub token 加密存储；AI 只发送统计事实与提交信息文本。备忘与偏好可导出/导入为单个 JSON（token 不随包迁移）。
 
+## MCP（实验性）
+
+SignalBoard 可作为 MCP server 供本机 Agent CLI 查询跨项目事实（只读）：项目列表、单项目近况、需要关注清单、备忘、交接。独立 stdio 进程，直接读 userData 缓存，应用不在运行也能答；响应携带 `scannedAt` 与数据龄，由 agent 自判新鲜度。
+
+```bash
+# 注册进 Claude Code（键名 signalboard；codex 同理：codex mcp add signalboard -- …）
+claude mcp add signalboard -- node <仓库路径>/bin/signalboard-mcp.js --user-data "%APPDATA%/SignalBoard"
+
+# 或直接手动起进程试工具面（JSON-RPC 2.0 over stdio，每行一条消息）
+node bin/signalboard-mcp.js
+```
+
+数据目录不存在时进程会报错退出（不会静默建目录）。一键注册进已探测 CLI 属后续版本（设置页入口）。
+
 ## 开发
 
 ```bash
@@ -197,6 +211,20 @@ Open via the gear in the top bar; changes apply instantly and autosave:
 ## Data & privacy
 
 Everything lives in the Electron userData directory (`%APPDATA%/SignalBoard/`) and never leaves your machine: settings, memos, order & preferences, and GitHub/scan/AI caches in separate files. The GitHub token is stored encrypted; AI features send only statistical facts and commit text. Memos and preferences can be exported/imported as a single JSON file (the token does not travel with it).
+
+## MCP (experimental)
+
+SignalBoard can run as an MCP server so local agent CLIs can query cross-project facts (read-only): project list, per-project signals, attention list, memos, handoffs. It is an independent stdio process reading the userData caches — it answers even when the app is not running; responses carry `scannedAt` and a data-age so the agent can judge freshness.
+
+```bash
+# Register with Claude Code (key name "signalboard"; codex works the same: codex mcp add signalboard -- …)
+claude mcp add signalboard -- node <repo>/bin/signalboard-mcp.js --user-data "%APPDATA%/SignalBoard"
+
+# Or start it manually to try the tool surface (JSON-RPC 2.0 over stdio, one message per line)
+node bin/signalboard-mcp.js
+```
+
+The process exits with an error if the data directory does not exist (it never creates one silently). One-click registration into detected CLIs is planned for a later version.
 
 ## Development
 

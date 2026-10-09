@@ -4,12 +4,16 @@
   "description": "本地桌面端项目概况板",
   "productName": "SignalBoard",
   "main": "src/main/index.js",
+  "bin": {
+    "signalboard-mcp": "bin/signalboard-mcp.js"
+  },
   "scripts": {
     "start": "electron .",
     "test:scan": "node scripts/test-scan.js",
     "test:ai": "node scripts/test-ai.js",
     "test:github": "node scripts/test-github.js",
     "test:handoffs": "node scripts/test-handoffs.js",
+    "test:mcp": "node scripts/test-mcp.js",
     "test:renderer": "node scripts/test-renderer.js",
     "theme:sync": "node scripts/sync-theme-root.js",
     "shot": "electron scripts/screenshot.js",

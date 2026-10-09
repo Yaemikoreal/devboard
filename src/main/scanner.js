@@ -520,6 +520,17 @@ async function dirtyMtime(projectPath, dirtyLines) {
   return latest > 0 ? new Date(latest).toISOString() : null;
 }
 
+// 警示规则整形（issue #73，issue #148 收敛到本文件）：config 已过 getConfig 归一化
+// （天数限 1/3/7、开关补齐 true），这里只整形。与 localWarnings 同文件登记——
+// 拼板（ipc.js）与 MCP 工具响应侧（mcp/tools.js）重算警示共用同一口径，防两套真相漂移
+function warningRulesOf(config) {
+  const wt = config.warningTypes || {};
+  return {
+    dirtyDays: config.warningDirtyDays || 3,
+    types: { dirty: wt.dirty !== false, unpushed: wt.unpushed !== false, ci: wt.ci !== false, review: wt.review !== false, pr: wt.pr !== false },
+  };
+}
+
 // 警示标记。github 数据在扫描后由 github.js 挂接，PR 警示由调用方补充。
 // 规则可调（issue #73）：rules.dirtyDays = 未提交超期天数预设（1/3/7），rules.types = 三类开关
 // （开关键 unpushed 对应本地警示类型 ahead）；调用方不传 rules 时按默认规则，保持脚本与旧调用行为不变
@@ -686,4 +697,4 @@ async function scan(scope, opts) {
 // 导出收窄（issue #12 第 6 条）：emptyProject 全仓无消费方（仅模块内自用），不再导出；
 // bandOf 已迁往共享常量模块（issue-11 / #127），同样不再转发导出；
 // SESSION_PROBES 探测表本身仍留在模块内，只导出 id 清单（sessionProbeIds）供 #123 一致性断言
-module.exports = { scan, discover, localWarnings, branchDetail, projectDetail, scanProject, sessionProbeIds };
+module.exports = { scan, discover, localWarnings, warningRulesOf, branchDetail, projectDetail, scanProject, sessionProbeIds };
