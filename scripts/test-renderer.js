@@ -309,6 +309,7 @@ boardPayload = makeBoard();
 settingsGate = new Promise((r) => { releaseSettings = r; });
 
 const APP = path.join(__dirname, '..', 'src', 'renderer', 'app.js');
+require(path.join(__dirname, '..', 'src', 'renderer', 'ai.js')); // AI 域工厂先挂 window（issue #124 渲染层拆分）
 require(path.join(__dirname, '..', 'src', 'renderer', 'settings.js')); // 设置域工厂先挂 window（issue #124 渲染层拆分）
 require(APP);
 
