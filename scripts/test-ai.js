@@ -260,6 +260,35 @@ async function main() {
   const reMs = Date.now() - tRe;
   assert.ok(reMs < 2000, '超长单行的引擎错误检测必须保持线性（实测 ' + reMs + 'ms，重构前同尺寸约 21s）');
 
+  // --- issue #150 回归：单条超巨行洪泛——兜底路径（超时/超限/close）不得卡死主进程 ---
+  // 现有洪泛用例（issue #24）用 50 字符短行绕开了单行路径；引擎错误检测/清洗对超巨单行
+  // （kimi stream-json 整条 assistant 消息、失控输出）必须保持线性：超时定时器如期生效
+  const giant = 'z'.repeat(3 * 1024 * 1024); // 3MB 单行
+  const tGiant = Date.now();
+  assert.strictEqual(ai.engineErrorLine(giant), '', '3MB 良性单行不应误判为引擎错误');
+  assert.ok(Date.now() - tGiant < 2000, '超巨单行的引擎错误检测必须快速返回（实测 ' + (Date.now() - tGiant) + 'ms）');
+  // 巨行头部带错误特征的仍要能命中（截断只裁掉尾部，不丢行首信号）
+  assert.ok(ai.engineErrorLine('API Error: 429 · ' + giant).includes('API Error'),
+    '超巨行行首的引擎错误仍应被识别');
+  // 真实路径 A：进程输出 600KB 单行后挂起 → 超时判负如期生效（不被长匹配饿死）。
+  // streamJson 下非 JSON 巨行清洗后无正文 → 走超时失败分支，engineErrorLine 在超时兜底里
+  // 拿全量缓冲（600KB 单行）做检测——这正是 issue #150 担心的饿死路径
+  const tSlow = Date.now();
+  r = await ai.runCli(process.execPath, 'x', {
+    spec: { args: ['-e', 'process.stdout.write("z".repeat(600*1024)); setTimeout(()=>{},60000)'], stdin: false, shell: false, streamJson: true },
+    timeout: 1200,
+  });
+  assert.ok(!r.ok && r.reason.includes('超时'), '超巨单行输出下超时判负应如期生效，实际: ' + JSON.stringify(r).slice(0, 200));
+  assert.ok(Date.now() - tSlow < 6000, '超巨单行下的超时兜底不应明显延迟（实测 ' + (Date.now() - tSlow) + 'ms）');
+  // 真实路径 B：3MB 单行触发 STREAM_CAP 超限终止 → 按已有输出裁决并快速返回
+  const tCap = Date.now();
+  r = await ai.runCli(process.execPath, 'x', {
+    spec: { args: ['-e', 'process.stdout.write("z".repeat(3*1024*1024))'], stdin: false, shell: false },
+    timeout: 30000,
+  });
+  assert.ok(Date.now() - tCap < 10000, '超限路径的超巨行裁决不应卡死（实测 ' + (Date.now() - tCap) + 'ms）');
+  assert.ok(r.ok || (r.reason || '').includes('超限'), '超巨行超限应按已有输出裁决，实际: ' + JSON.stringify(r).slice(0, 200));
+
   // --- issue #115 回归：模型名后缀 [1m] 不被 ANSI 清洗吃掉，真 ANSI 序列仍被清除 ---
   assert.ok(ai.cleanOutput('使用 claude[1m] 模型回答', {}).includes('[1m]'), '裸 [1m] 后缀应保留');
   assert.strictEqual(ai.cleanOutput('[31m红字[0m 正常', {}), '红字 正常', '真 ANSI 序列应被清除');

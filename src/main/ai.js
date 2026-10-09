@@ -34,11 +34,18 @@ const ENGINE_ERROR_WORD_RE = /API Error|unauthorized|invalid[-_ ]?api[-_ ]?key|q
 const ENGINE_ERROR_HINT_RE = /error|unauthorized|forbidden|rate.?limit|错误|未授权|超限/i;
 const ENGINE_ERROR_CODE_RE = /\b(?:401|403|429)\b/;
 
+// 单行参与匹配的长度护栏（issue #150）：错误特征是行首附近的短文案，kimi stream-json 整条
+// assistant 消息、洪泛输出的单条超巨行只取头部参与匹配，免掉对 1MB 单行做全量 trim/正则扫描。
+// #168 已把正则拆成线性字面量，本截断是纵深防御——兜底路径（超限/超时/close）拿全量缓冲
+// 调 engineErrorLine 时不再随缓冲尺寸线性放大常数，超时定时器不被长匹配饿死
+const LINE_SCAN_THRESHOLD = 8 * 1024; // 超过此长度的行只扫描头部
+const LINE_SCAN_HEAD = 1024; // 参与正则匹配的头部长度
+
 // 从原始输出中提取第一条引擎错误行（无则返回空串）
 function engineErrorLine(raw) {
   const lines = stripAnsi(raw).split('\n');
   for (const l of lines) {
-    const t = l.trim();
+    const t = l.length > LINE_SCAN_THRESHOLD ? l.slice(0, LINE_SCAN_HEAD).trim() : l.trim();
     if (!t) continue;
     if (ENGINE_ERROR_WORD_RE.test(t)) return t.slice(0, 120);
     if (ENGINE_ERROR_CODE_RE.test(t) && ENGINE_ERROR_HINT_RE.test(t)) return t.slice(0, 120);

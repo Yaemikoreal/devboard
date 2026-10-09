@@ -979,10 +979,10 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .tc-preview i{position:absolute;display:block}
 .tc-card{left:6px;top:7px;width:26px;height:20px;border-radius:4px}
 .tc-dot{right:6px;bottom:7px;width:9px;height:9px;border-radius:50%}
-/* 跟随系统（issue #81）：「自动」卡半明半暗预览；浅/深主题对选择行 */
-.tc-preview.tc-split{background:linear-gradient(105deg,#f5f2e8 50%,#1b1915 50%)}
-.tc-preview.tc-split .tc-card{background:#fdfcf8;box-shadow:0 0 0 1px rgba(24,24,24,.12)}
-.tc-preview.tc-split .tc-dot{background:#f5d90a}
+/* 跟随系统（issue #81）：「自动」卡半明半暗预览；浅/深主题对选择行。
+   预览的四个色值（浅底/深底/浅卡片/浅强调点）不再静态写死（issue #151）——那是暖阳/暗夜 token
+   的第四处拷贝，调主题不会跟随；由 app.js 按当前浅/深主题对生成 inline style，此处只留结构样式 */
+.tc-preview.tc-split .tc-card{box-shadow:0 0 0 1px rgba(24,24,24,.12)}
 .theme-auto-pair{display:flex;align-items:center;gap:16px;margin:10px 0 6px}
 .theme-auto-pair label{display:flex;align-items:center;gap:7px;font-size:var(--fs-aux);color:var(--ink-2);margin:0}
 .theme-auto-pair select{width:auto;min-width:96px;padding:5px 8px}

@@ -500,6 +500,16 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     maybeRefreshGithub(true, [], projs, store.getConfig());
   }
 
+  // 通知快照随账号失效（issue #158）：断开/换号/新 token 落盘时清掉 github-cache 的 notifications，
+  // 未读快照属于拉它的账号，TTL 内残留会被新账号看到（refreshNotifications 的 fetchedFor 兜底之外的主清理口）
+  function clearGithubNotifyCache() {
+    const cache = store.getGithubCache();
+    if (cache.notifications) {
+      delete cache.notifications;
+      store.setGithubCache(cache);
+    }
+  }
+
   // 历史安装自愈：token 已配置但 username 为空（旧版导入不落登录名，issue #44）时，
   // 用 token 反查登录名落盘，GitHub 数据挂接随之恢复
   let ghHealTried = false;
@@ -899,6 +909,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     const t = await github.testConnection(r.token);
     if (!t.ok) return { status: 'error', reason: t.reason };
     store.setConfig({ githubToken: r.token, githubUsername: t.login });
+    clearGithubNotifyCache(); // 新 token 落盘即弃旧账号通知快照（issue #158），随后的强制拉取立即补新
     refreshGithubNow(true); // 授权成功立即拉一轮并走「落地即推补丁」链路（issue #118），不等下一个刷新触发点
     return { status: 'success', login: t.login };
   });
@@ -910,6 +921,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     const t = await github.testConnection(token);
     if (!t.ok) return { ok: false, reason: t.reason };
     store.setConfig({ githubToken: token, githubUsername: t.login });
+    clearGithubNotifyCache(); // 同 devicePoll：旧账号未读不得在 TTL 内冒充新账号的（issue #158）
     refreshGithubNow(true); // 导入成功立即拉一轮并走「落地即推补丁」链路（issue #118）
     return { ok: true, login: t.login };
   });
@@ -926,6 +938,7 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   // 断开连接：清除 token 与登录名（GitHub 数据挂接随之停止）
   ipcMain.handle('github:disconnect', () => {
     store.setConfig({ githubToken: '', githubUsername: '' });
+    clearGithubNotifyCache(); // 通知快照随账号失效（issue #158）：断开后残留未读会被下一账号在 TTL 内看到
     refreshGithubNow(false); // 立即重推一次拼板，渲染层即时清掉 GitHub 区块（issue #118）
     return true;
   });

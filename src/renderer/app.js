@@ -67,6 +67,7 @@
     panelPath: null, // 详情面板上次渲染的项目 path：仅同项目重渲染时恢复滚动位置（issue #63）
     ghExpandedKey: null, // 详情面板 GitHub 区当前展开的条目 'owner/repo#n'（issue #146），不持久化
     ghDetailCache: {}, // 'owner/repo#n' -> 展开详情 | 'loading'（issue #146 按需拉取，会话内内存缓存）
+    ghDetailAt: {}, // 'owner/repo#n' -> 缓存写入时间戳：ghDetailCache 的会话 TTL 用（issue #161）
   };
 
   var appEl = document.getElementById('app');
@@ -592,7 +593,11 @@
       list.innerHTML = '';
       return;
     }
-    sub.textContent = items.length + ' 条未读 · 仅本人仓库';
+    // 旧数据 + 刷新失败（issue #163）：error 存在时不能静默照常展出旧未读数——过期的数字
+    // 毫无提示会误导。副标追加失败说明（旧数据照展），与 per-repo 区旧数据旁展示 githubError 同口径
+    sub.textContent = items.length + ' 条未读 · 仅本人仓库'
+      + (n && n.error ? ' · 同步失败，数据可能过期' : '');
+    if (n && n.error) sub.classList.add('bad');
     list.innerHTML = '';
     items.slice(0, NOTIFY_TOP).forEach(function (it) {
       var row = el('div', 'ntf-item');
@@ -1426,10 +1431,22 @@
       });
       row.appendChild(ext);
       row.addEventListener('click', function () {
+        var c = state.ghDetailCache[key];
+        // 错误态原地重试（issue #160）：展开中带错误行的条目，点击语义是「重试」而非「折叠」——
+        // 原实现先折叠再展开要点两次才真正重拉。清掉错误缓存并保持展开，面板重渲即重新发起拉取
+        if (open && c && c.error) {
+          delete state.ghDetailCache[key];
+          delete state.ghDetailAt[key];
+          var errCur = findProject(state.selectedPath);
+          if (errCur) renderPanel(errCur);
+          return;
+        }
         state.ghExpandedKey = open ? null : key;
         // 失败态在再次展开时清掉，让「点击条目重试」真的会重试（issue #168 第 5 条）
-        var c = state.ghDetailCache[key];
-        if (c && c.error) delete state.ghDetailCache[key];
+        if (c && c.error) {
+          delete state.ghDetailCache[key];
+          delete state.ghDetailAt[key];
+        }
         var cur = findProject(state.selectedPath);
         if (cur) renderPanel(cur); // 展开态经折叠组重放保留（issue #100）
       });
@@ -1445,9 +1462,24 @@
 
   // 展开详情填充（issue #146）：缓存命中直接渲染；未命中现拉（按需 IPC，不进 JSON 缓存），
   // 拉到后经面板重渲走缓存渲染路径；失败落进共享缓存并重渲，给出可重试提示
+  // 会话 TTL（issue #161）：板数据感知不到纯 GitHub 侧的变化（issue 新评论不改板上任何字段），
+  // 条目对齐 GitHub 缓存的 10 分钟周期过期，到期展开即重拉；板侧失效见 invalidateDetailCaches
+  var GH_DETAIL_TTL_MS = 10 * 60 * 1000;
+  function ghDetailFresh(key) {
+    var at = state.ghDetailAt[key];
+    if (!at || Date.now() - at > GH_DETAIL_TTL_MS) {
+      delete state.ghDetailCache[key];
+      delete state.ghDetailAt[key];
+      return false;
+    }
+    return true;
+  }
   function fillGhDetail(box, gh, it) {
     var key = gh.owner + '/' + gh.repo + '#' + it.number;
     var cached = state.ghDetailCache[key];
+    // TTL 到期的条目（含错误态）按未缓存处理，展开即重拉——纯 GitHub 侧的变化
+    // （issue 新评论）板数据感知不到，靠周期性过期兜底（issue #161）
+    if (cached && cached !== 'loading' && !ghDetailFresh(key)) cached = null;
     if (cached === 'loading') {
       box.appendChild(el('div', 'gh-detail-note', '加载中…'));
       return;
@@ -1464,6 +1496,7 @@
     box.appendChild(el('div', 'gh-detail-note', '加载中…'));
     api.githubItemDetail({ owner: gh.owner, repo: gh.repo, type: it.type, number: it.number }).then(function (d) {
       state.ghDetailCache[key] = d;
+      state.ghDetailAt[key] = Date.now();
       var cur = findProject(state.selectedPath);
       if (cur) renderPanel(cur);
     }).catch(function (err) {
@@ -1471,6 +1504,7 @@
       // 若期间发生过任意一次重渲（补丁很频繁），错误就写进了已脱离 DOM 的节点——可见框永远停在
       // 「加载中…」，既没有错误也没有重试入口。落到共享缓存后，任何一次重渲都会重新展出失败态。
       state.ghDetailCache[key] = { error: (err && err.message) || String(err) };
+      state.ghDetailAt[key] = Date.now();
       var cur = findProject(state.selectedPath);
       if (cur) renderPanel(cur);
     });
@@ -1505,7 +1539,10 @@
       cw.appendChild(el('div', 'k', '评论 ' + comments.length + ' 条'));
       comments.slice(0, 8).forEach(function (c) {
         var item = el('div', 'cmt');
-        item.appendChild(el('div', 'ch', (c.user || '匿名') + (c.createdAt ? ' · ' + relTime(c.createdAt) : '')));
+        // 来源标注（issue #164）：行级 review 评论与对话评论合并展出，行级标注所评文件路径
+        var head = (c.user || '匿名') + (c.createdAt ? ' · ' + relTime(c.createdAt) : '');
+        if (c.source === 'line') head += ' · 行级' + (c.path ? ' · ' + c.path : '');
+        item.appendChild(el('div', 'ch', head));
         item.appendChild(el('div', 'cb', c.body));
         cw.appendChild(item);
       });
@@ -1961,17 +1998,36 @@
 
   // 缓存失效：新板数据到达时，HEAD 已变的项目清掉 README 摘要/AI 会话明细与分支提交缓存，
   // 否则旧内容会一直展到重启；面板正开在被清项目上时随即重新懒取
+  // GitHub 展开详情缓存（issue #161）：新板落地时该项目 GitHub 数据若已变化（新评论/review 会改
+  // prReviews 或 items），该仓的展开详情缓存一并失效——原实现只清 details/branchDetail，
+  // ghDetailCache 整会话不失效，展开条目直到重启都停留旧评论
   function invalidateDetailCaches(board) {
     if (!state.board || !board) return;
-    var prevHead = {};
-    state.board.projects.forEach(function (p) { prevHead[p.path] = p.headSha; });
+    var prevProj = {};
+    state.board.projects.forEach(function (p) { prevProj[p.path] = p; });
     board.projects.forEach(function (p) {
-      if (!(p.path in prevHead) || prevHead[p.path] === p.headSha) return;
-      delete state.details[p.path];
-      Object.keys(state.branchDetail).forEach(function (k) {
-        if (k.indexOf(p.path + ' ') === 0) delete state.branchDetail[k];
-      });
-      if (state.selectedPath === p.path) {
+      var old = prevProj[p.path];
+      var headChanged = !old || old.headSha !== p.headSha;
+      var ghChanged = JSON.stringify(old && old.github) !== JSON.stringify(p.github);
+      if (!headChanged && !ghChanged) return;
+      if (headChanged) {
+        delete state.details[p.path];
+        Object.keys(state.branchDetail).forEach(function (k) {
+          if (k.indexOf(p.path + ' ') === 0) delete state.branchDetail[k];
+        });
+      }
+      if (ghChanged) {
+        // github 数据有变：失效该仓的展开详情（键形如 owner/repo#n）；
+        // 无 github 数据可定位（断开/非本人仓库）时全清，宁多重拉不展旧账号内容
+        var prefix = p.github && p.github.owner && p.github.repo ? p.github.owner + '/' + p.github.repo + '#' : null;
+        Object.keys(state.ghDetailCache).forEach(function (k) {
+          if (!prefix || k.indexOf(prefix) === 0) {
+            delete state.ghDetailCache[k];
+            delete state.ghDetailAt[k];
+          }
+        });
+      }
+      if (headChanged && state.selectedPath === p.path) {
         ensureDetail(p);
         ensureBranchDetail(p, selBranch(p));
       }
@@ -2435,6 +2491,21 @@
         box.appendChild(b);
       });
     }
+    // 「自动」卡预览按当前浅/深主题对实时着色（issue #151）：原先 tc-split 的四个色值硬编码在
+    // styles.css（暖阳/暗夜的第四处拷贝），调主题 token 不会跟随；改由 themes.js token 生成
+    // inline style，每次渲染都按 lightId/darkId 现算——调整暖阳或暗夜底色后预览同步变化
+    Array.prototype.forEach.call(box.children, function (b) {
+      if (b.dataset.theme !== 'auto') return;
+      var prev = b.querySelector('.tc-preview');
+      if (!prev) return;
+      var light = THEMES[themeLightId] || THEMES.warm;
+      var dark = THEMES[themeDarkId] || THEMES.dark;
+      prev.style.background = 'linear-gradient(105deg,' + light.vars['--bg'] + ' 50%,' + dark.vars['--bg'] + ' 50%)';
+      var card = prev.querySelector('.tc-card');
+      if (card) card.style.background = light.vars['--card'];
+      var dot = prev.querySelector('.tc-dot');
+      if (dot) dot.style.background = light.accentDefault;
+    });
     Array.prototype.forEach.call(box.children, function (b) {
       b.classList.toggle('active', b.dataset.theme === (themeMode === 'auto' ? 'auto' : themeId));
     });
@@ -3376,6 +3447,10 @@
     applyMotion();
     renderLanding(LANDINGS.indexOf(cfg.landingView) >= 0 ? cfg.landingView : 'overview'); // 着陆视图 seg（issue #86）
     if (state.prefs) applyLanding(); // 着陆视图需 settings+prefs 都就绪（issue #86）
+    // 启动时序（issue #165）：getSettings 与首板并发，settings 晚于首板 resolve 时首屏
+    // renderAll 在 state.settings=null 下跑过——renderGhNotify 判「未连接」把通知卡藏掉了，
+    // 此后无任何重渲机会。settings 到位即补一次通知卡渲染（板未到则由首板渲染兜底）
+    if (state.board) renderGhNotify();
   }).catch(function (err) {
     // 补 catch（issue #168 第 12 条）：原来 IPC 一次性失败会静默跳过主题/密度/动效初始化，
     // 界面留在未应用偏好的状态且毫无提示。退到默认外观照常起界面。

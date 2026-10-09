@@ -151,34 +151,34 @@ async function fetchRepoMeta(owner, repo, token) {
   }
 }
 
-// 默认分支最近一次 workflow 运行（issue #143）。无 Actions 的仓库按无数据处理：
-// 404/403（Actions 禁用）等非 200 与网络失败一律返回 null 不报错，不产生失败条目
+// 默认分支最近一次 workflow 运行（issue #143）。null 只表达 API 事实（无分支 / Actions 禁用 404、
+// 403 无权限 / 无运行记录）；网络失败、超时与 5xx 一律抛错，由调用方沿旧缓存值——
+// 原实现把一切失败吞成 null，网络抖动会把既有 CI 警示静默清空一个 TTL（issue #155）
 async function fetchCiRun(owner, repo, branch, token) {
   if (!branch) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 12000);
-    try {
-      const res = await httpFetch(
-        `https://api.github.com/repos/${owner}/${repo}/actions/runs?branch=${encodeURIComponent(branch)}&per_page=1`,
-        { signal: ctrl.signal, headers: apiHeaders(token) }
-      );
-      if (!res.ok) return null;
-      const d = await res.json();
-      const run = d && d.workflow_runs && d.workflow_runs[0];
-      if (!run) return null;
-      return {
-        conclusion: run.conclusion || null, // null = 运行中，不算失败
-        status: run.status || '',
-        name: run.name || '',
-        url: run.html_url || '',
-        createdAt: run.created_at || null,
-      };
-    } finally {
-      clearTimeout(timer);
+    const res = await httpFetch(
+      `https://api.github.com/repos/${owner}/${repo}/actions/runs?branch=${encodeURIComponent(branch)}&per_page=1`,
+      { signal: ctrl.signal, headers: apiHeaders(token) }
+    );
+    if (!res.ok) {
+      if (res.status >= 500) throw new Error(`GitHub API ${res.status}`);
+      return null;
     }
-  } catch {
-    return null; // CI 状态是锦上添花，单点失败不拖垮整仓数据
+    const d = await res.json();
+    const run = d && d.workflow_runs && d.workflow_runs[0];
+    if (!run) return null;
+    return {
+      conclusion: run.conclusion || null, // null = 运行中，不算失败
+      status: run.status || '',
+      name: run.name || '',
+      url: run.html_url || '',
+      createdAt: run.created_at || null,
+    };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -188,35 +188,58 @@ async function fetchCiRun(owner, repo, branch, token) {
 const MAX_REVIEW_PRS = 20;
 const REVIEW_BODY_CAP = 240;
 const COMMENT_BODY_CAP = 160;
+// 分页封顶（issue #156）：reviews/comments 原来只拉一页（100 条），超 100 条 review 的 PR
+// 会取到截断清单——「最后一条」根本不是最后一条。跟页到不足整页为止，封顶防失控
+const REVIEW_MAX_PAGES = 3;
+
+// 数组类端点分页小助手：跟到不足整页为止、封顶 maxPages；首页失败返回 null（调用方按无数据处理），
+// 后续页失败沿用已到数据。全部请求共用调用方传入的 AbortController
+async function fetchListPaged(urlBase, ctrl, token, maxPages) {
+  const all = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const res = await httpFetch(`${urlBase}?per_page=100&page=${page}`, {
+      signal: ctrl.signal, headers: apiHeaders(token),
+    });
+    if (!res.ok) return all.length ? all : null;
+    const list = await res.json();
+    if (!Array.isArray(list)) return all.length ? all : null;
+    all.push.apply(all, list);
+    if (list.length < 100) break;
+  }
+  return all;
+}
+
 async function fetchPrReviews(owner, repo, prNumbers, token) {
   const targets = (prNumbers || []).slice(0, MAX_REVIEW_PRS);
-  const list = await Promise.all(targets.map(async (n) => {
-    const ctrl = new AbortController();
+  const list = await Promise.all(targets.map(async (n) => {    const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12000);
     try {
-      const [revRes, comRes] = await Promise.all([
-        httpFetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${n}/reviews?per_page=100`, { signal: ctrl.signal, headers: apiHeaders(token) }),
-        httpFetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${n}/comments?per_page=100`, { signal: ctrl.signal, headers: apiHeaders(token) }),
+      const [revs, cs] = await Promise.all([
+        fetchListPaged(`https://api.github.com/repos/${owner}/${repo}/pulls/${n}/reviews`, ctrl, token, REVIEW_MAX_PAGES),
+        fetchListPaged(`https://api.github.com/repos/${owner}/${repo}/pulls/${n}/comments`, ctrl, token, REVIEW_MAX_PAGES),
       ]);
-      // 状态取最后一条已提交的 review（PENDING 尚未提交不算决议）
+      // 决议聚合（issue #156）：GitHub 语义下 PR 决议不是「最后一条 review」——审查者 A 的
+      // CHANGES_REQUESTED 未被 dismiss 时，后来者 B 提交的 COMMENTED 不解除阻塞；裸取最后
+      // 一条会把待处理态误判成「评论」，警示凭空消失。聚合规则：每位审查者取其最新非 PENDING
+      // 决议（后写覆盖；dismiss 会以 DISMISSED 条目落在其后，自然解除该审查者的阻塞），
+      // 任一人最新决议为 CHANGES_REQUESTED → 整体 CHANGES_REQUESTED；否则取最后一条非 PENDING
       let state = null, reviewer = '', reviewBody = '';
-      if (revRes.ok) {
-        const revs = await revRes.json();
-        const done = (Array.isArray(revs) ? revs : []).filter((x) => x.state && x.state !== 'PENDING');
-        const last = done.length ? done[done.length - 1] : null;
-        if (last) {
-          state = last.state;
-          reviewer = (last.user && last.user.login) || '';
-          reviewBody = String(last.body || '').trim().slice(0, REVIEW_BODY_CAP);
+      if (Array.isArray(revs)) {
+        const done = revs.filter((x) => x.state && x.state !== 'PENDING');
+        if (done.length) {
+          const latestByReviewer = new Map();
+          done.forEach((x) => { latestByReviewer.set((x.user && x.user.login) || '', x); });
+          const blocking = [...latestByReviewer.values()].find((x) => x.state === 'CHANGES_REQUESTED');
+          const pick = blocking || done[done.length - 1];
+          state = pick.state;
+          reviewer = (pick.user && pick.user.login) || '';
+          reviewBody = String(pick.body || '').trim().slice(0, REVIEW_BODY_CAP);
         }
       }
       let commentCount = 0, lastCommentBody = '';
-      if (comRes.ok) {
-        const cs = await comRes.json();
-        if (Array.isArray(cs)) {
-          commentCount = cs.length;
-          if (cs.length) lastCommentBody = String(cs[cs.length - 1].body || '').trim().slice(0, COMMENT_BODY_CAP);
-        }
+      if (Array.isArray(cs)) {
+        commentCount = cs.length;
+        if (cs.length) lastCommentBody = String(cs[cs.length - 1].body || '').trim().slice(0, COMMENT_BODY_CAP);
       }
       return { number: n, state, reviewer, reviewBody, commentCount, lastCommentBody };
     } catch {
@@ -225,84 +248,155 @@ async function fetchPrReviews(owner, repo, prNumbers, token) {
       clearTimeout(timer);
     }
   }));
-  return list.filter(Boolean).filter((r) => r.state || r.commentCount);
+  const ok = list.filter(Boolean).filter((r) => r.state || r.commentCount);
+  // 整轮失败信号（issue #155）：有目标但全部拉取失败时返回 null（区别于「拉到了但为空」的 []），
+  // 让 refreshCache 能沿旧缓存值而不是用空清单覆盖掉既有的 review 警示
+  if (!ok.length && list.length && list.every((x) => !x)) return null;
+  return ok;
 }
 
 /* ---------- 详情面板 GitHub 深化（issue #146） ---------- */
 
-// 最新 Release + 发布节奏：releases/latest 拿 tag 与发布时间，compare(tag...HEAD) 的 ahead_by
-// 即「距上次发布 N 个提交」；无 Release 的仓库返回 null 不报错
-async function fetchReleaseInfo(owner, repo, token) {
+// 发布节奏信号可信上限（issue #167）：ahead_by 统计 tag 到默认分支 HEAD 的整条分叉——
+// release 分支打 tag 的主干合流型工作流下，该数字是自分叉以来的全部提交（数百起），
+// 面板展示「距上次发布 N 个提交」严重失真。超过阈值按不可信处理（aheadBy 置 null，
+// 渲染层隐藏该段，Release 本体照常展出）。口径以「tag 打在默认分支」的工作流为前提（README 已注明）
+const AHEAD_BY_TRUST_CAP = 500;
+
+// compare(base...HEAD) 的 ahead_by 拉取：失败返回 null 不抛（节奏信号拿不到只隐藏，issue #166 现状回落）
+async function compareAheadBy(owner, repo, encodedRef, token) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
   try {
+    const res = await httpFetch(
+      `https://api.github.com/repos/${owner}/${repo}/compare/${encodedRef}...HEAD`,
+      { signal: ctrl.signal, headers: apiHeaders(token) }
+    );
+    if (!res.ok) return null;
+    const d = await res.json();
+    return typeof d.ahead_by === 'number' ? d.ahead_by : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 斜杠 tag 的 sha 解析（issue #166）：含 / 的 tag（release/v1.2）内联进 compare 路径段会 404。
+// 先试 git/ref/tags/{tag}（%2F 编码形式），再回落 matching-refs 前缀匹配——查询段取 tag 首段
+// （不含斜杠，路径一定干净），在返回清单里按全名精确匹配嵌套 tag。带注释 tag 的 object.type
+// 是 'tag'，其 sha 非提交，需解引用到 commit sha 供 compare 使用
+async function resolveTagSha(owner, repo, tag, token) {
+  const attempts = [
+    `https://api.github.com/repos/${owner}/${repo}/git/ref/tags/${encodeURIComponent(tag)}`,
+  ];
+  const firstSeg = String(tag || '').split('/')[0];
+  if (firstSeg && firstSeg !== tag) {
+    attempts.push(`https://api.github.com/repos/${owner}/${repo}/git/matching-refs/tags/${encodeURIComponent(firstSeg)}`);
+  }
+  for (const url of attempts) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12000);
-    let rel;
     try {
-      const res = await httpFetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, {
-        signal: ctrl.signal, headers: apiHeaders(token),
-      });
-      if (!res.ok) return null; // 404 = 尚无 Release，按无数据处理
-      rel = await res.json();
+      const res = await httpFetch(url, { signal: ctrl.signal, headers: apiHeaders(token) });
+      if (!res.ok) continue;
+      const d = await res.json();
+      const arr = Array.isArray(d) ? d : [d];
+      const hit = arr.find((x) => x && x.ref === `refs/tags/${tag}` && x.object && x.object.sha);
+      if (!hit) continue;
+      // 带注释 tag 解引用到 commit sha（object.url 是 API 地址可直接取）
+      if (hit.object.type === 'tag' && hit.object.url) {
+        try {
+          const r2 = await httpFetch(hit.object.url, { signal: ctrl.signal, headers: apiHeaders(token) });
+          if (r2.ok) {
+            const d2 = await r2.json();
+            if (d2 && d2.sha) return d2.sha;
+          }
+        } catch { /* 解引用失败回落 tag 对象 sha，compare 对其通常仍可解析 */ }
+      }
+      return hit.object.sha;
+    } catch {
+      continue;
     } finally {
       clearTimeout(timer);
     }
-    const info = {
-      tag: rel.tag_name || '',
-      name: rel.name || rel.tag_name || '',
-      publishedAt: rel.published_at || null,
-      url: rel.html_url || '',
-      aheadBy: null,
-    };
-    if (info.tag) {
-      try {
-        const ctrl2 = new AbortController();
-        const timer2 = setTimeout(() => ctrl2.abort(), 12000);
-        try {
-          const cmp = await httpFetch(
-            `https://api.github.com/repos/${owner}/${repo}/compare/${encodeURIComponent(info.tag)}...HEAD`,
-            { signal: ctrl2.signal, headers: apiHeaders(token) }
-          );
-          if (cmp.ok) {
-            const d = await cmp.json();
-            info.aheadBy = typeof d.ahead_by === 'number' ? d.ahead_by : null;
-          }
-        } finally {
-          clearTimeout(timer2);
-        }
-      } catch { /* 节奏信号拿不到只隐藏 N 提交字样，Release 本体照展 */ }
-    }
-    return info;
-  } catch {
-    return null;
   }
+  return null;
+}
+
+// 最新 Release + 发布节奏：releases/latest 拿 tag 与发布时间，compare(tag...HEAD) 的 ahead_by
+// 即「距上次发布 N 个提交」；无 Release 的仓库返回 null。网络/API 失败抛错（区别于「无 Release」
+// 的 null），调用方沿旧缓存值（issue #155）；compare 失败仍静默回落（只隐藏 N 提交字样）
+async function fetchReleaseInfo(owner, repo, token) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  let rel;
+  try {
+    const res = await httpFetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, {
+      signal: ctrl.signal, headers: apiHeaders(token),
+    });
+    if (res.status === 404) return null; // 404 = 尚无 Release，按无数据处理（非失败）
+    if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+    rel = await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+  const info = {
+    tag: rel.tag_name || '',
+    name: rel.name || rel.tag_name || '',
+    publishedAt: rel.published_at || null,
+    url: rel.html_url || '',
+    aheadBy: null,
+  };
+  if (info.tag) {
+    // 斜杠 tag 回落链（issue #166）：常规内联形式 404 时先解析 tag 的 commit sha 再比较
+    let ahead = await compareAheadBy(owner, repo, encodeURIComponent(info.tag), token);
+    if (ahead === null && info.tag.indexOf('/') >= 0) {
+      const sha = await resolveTagSha(owner, repo, info.tag, token);
+      if (sha) ahead = await compareAheadBy(owner, repo, sha, token);
+    }
+    // 超阈值降级（issue #167）：ahead_by 失真（release 分支打 tag 的分叉计数）按不可信隐藏
+    info.aheadBy = ahead !== null && ahead <= AHEAD_BY_TRUST_CAP ? ahead : null;
+  }
+  return info;
 }
 
 // 默认分支远程 HEAD sha（issue #146 元数据交叉验证）：与本地 headSha 比对判断「另一台机器推了」；
-// 不用裸 pushed_at 是因为自己 push 后 pushed_at 也会变新（时间差 = 提交到推送的间隔），误报率高
+// 不用裸 pushed_at 是因为自己 push 后 pushed_at 也会变新（时间差 = 提交到推送的间隔），误报率高。
+// 含斜杠的分支名（release/1.x）编码进路径段可能 404（issue #166 同款形态）：回落裸斜杠形式再试一次，
+// 仍失败返回 null 静默隐藏提示
 async function fetchRemoteHead(owner, repo, branch, token) {
   if (!branch) return null;
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 12000);
+  const forms = [encodeURIComponent(branch)];
+  if (String(branch).indexOf('/') >= 0) forms.push(branch);
+  for (const form of forms) {
     try {
-      const res = await httpFetch(
-        `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(branch)}?per_page=1`,
-        { signal: ctrl.signal, headers: apiHeaders(token) }
-      );
-      if (!res.ok) return null;
-      const d = await res.json();
-      return d && d.sha ? d.sha : null;
-    } finally {
-      clearTimeout(timer);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12000);
+      try {
+        const res = await httpFetch(
+          `https://api.github.com/repos/${owner}/${repo}/commits/${form}?per_page=1`,
+          { signal: ctrl.signal, headers: apiHeaders(token) }
+        );
+        if (!res.ok) continue;
+        const d = await res.json();
+        if (d && d.sha) return d.sha;
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      continue;
     }
-  } catch {
-    return null;
   }
+  return null;
 }
 
 // 单条 issue/PR 的展开详情（issue #146，按需拉取不进缓存）：正文 + 评论流 + PR 的 diff 统计
-// 与 reviewer 指派。PR 用 /pulls/{n}（含 diff 统计），评论流统一走 issues/{n}/comments
-// （GitHub 把 PR 视作 issue）；reviewer 指派 = requested_reviewers + 已提交 review 的作者去重
+// 与 reviewer 指派。PR 用 /pulls/{n}（含 diff 统计），对话评论走 issues/{n}/comments
+// （GitHub 把 PR 视作 issue），行级 review 评论走 pulls/{n}/comments（issue #164：原先缺行级评论，
+// 只剩行级评论的 PR 详情显示「无评论」而板上 commentCount>0，口径不一致）——两类合并进同一评论流，
+// 各带 source 标注（conv=对话 / line=行级），按时间升序排列；reviewer 指派 = requested_reviewers +
+// 已提交 review 的作者去重
 async function fetchItemDetail(owner, repo, type, number, token) {
   const n = parseInt(number, 10);
   if (!n || (type !== 'pr' && type !== 'issue')) throw new Error('参数不合法');
@@ -310,13 +404,19 @@ async function fetchItemDetail(owner, repo, type, number, token) {
   const timer = setTimeout(() => ctrl.abort(), 12000);
   const itemBase = `https://api.github.com/repos/${owner}/${repo}`;
   try {
-    const [mainRes, comRes] = await Promise.all([
+    const [mainRes, comRes, lineRes] = await Promise.all([
       httpFetch(type === 'pr' ? `${itemBase}/pulls/${n}` : `${itemBase}/issues/${n}`, {
         signal: ctrl.signal, headers: apiHeaders(token),
       }),
       httpFetch(`${itemBase}/issues/${n}/comments?per_page=50`, {
         signal: ctrl.signal, headers: apiHeaders(token),
       }),
+      // 行级评论只对 PR 存在（issue #164）；issue 类型不发该请求
+      type === 'pr'
+        ? httpFetch(`${itemBase}/pulls/${n}/comments?per_page=50`, {
+          signal: ctrl.signal, headers: apiHeaders(token),
+        })
+        : Promise.resolve(null),
     ]);
     if (!mainRes.ok) throw new Error(`GitHub API ${mainRes.status}`);
     const main = await mainRes.json();
@@ -327,8 +427,26 @@ async function fetchItemDetail(owner, repo, type, number, token) {
         user: (c.user && c.user.login) || '',
         body: String(c.body || '').trim().slice(0, 400),
         createdAt: c.created_at || null,
+        source: 'conv',
       }));
     }
+    if (lineRes && lineRes.ok) {
+      const ls = await lineRes.json();
+      if (Array.isArray(ls)) {
+        comments = comments.concat(ls.slice(0, 30).map((c) => ({
+          user: (c.user && c.user.login) || '',
+          body: String(c.body || '').trim().slice(0, 400),
+          createdAt: c.created_at || null,
+          source: 'line',
+          path: c.path || '',
+        })));
+      }
+    }
+    // 两类评论按时间升序合并（无时间戳的排前，避免排序不稳定）
+    comments.sort((a, b) => {
+      if (!a.createdAt || !b.createdAt) return 0;
+      return Date.parse(a.createdAt) - Date.parse(b.createdAt);
+    });
     const out = {
       type,
       number: n,
@@ -377,6 +495,12 @@ async function fetchItemDetail(owner, repo, type, number, token) {
 
 // 通知条数上限：未读通知按最近优先截断，防跨仓库订阅多的账号拉爆缓存
 const NOTIFY_CAP = 20;
+// 通知拉取页宽与页数封顶（issue #157）：原 per_page=20 在 owner 过滤前就被 API 侧截断——
+// 订阅大量外部仓库时本人的未读可能排在第 21+ 位被丢弃。改拉 50/页（该端点 per_page 封顶 50，
+// 请求更大的值会被钳回 50，让「不足整页」的分页终止条件误判到末页）、跟页封顶 6 页
+// （共扫 300 条），先过滤本人仓库再截断到 NOTIFY_CAP
+const NOTIFY_PAGE_SIZE = 50;
+const NOTIFY_MAX_PAGES = 6;
 
 // 通知原因中文化（展示用）；未知原因原样保留
 const NOTIFY_REASON_LABEL = {
@@ -410,18 +534,25 @@ function notifHtmlUrl(repoFull, subject) {
 }
 
 async function fetchNotifications(token, me) {
+  // 分页封顶（issue #157）：跟到不足整页为止（沿用 fetchIssues 思路），全量到达后再做 owner 过滤
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 12000);
   try {
-    const res = await httpFetch('https://api.github.com/notifications?per_page=' + NOTIFY_CAP, {
-      signal: ctrl.signal,
-      headers: apiHeaders(token),
-    });
-    if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-    const list = await res.json();
+    const all = [];
+    for (let page = 1; page <= NOTIFY_MAX_PAGES; page++) {
+      const res = await httpFetch(
+        `https://api.github.com/notifications?per_page=${NOTIFY_PAGE_SIZE}&page=${page}`,
+        { signal: ctrl.signal, headers: apiHeaders(token) }
+      );
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      const list = await res.json();
+      if (!Array.isArray(list)) break;
+      all.push.apply(all, list);
+      if (list.length < NOTIFY_PAGE_SIZE) break; // 不足整页 = 已到末页
+    }
     // 边界（issue #145）：仅本人仓库——repository.owner.login 与登录名比对（大小写不敏感），
     // 跨仓库通知不展出；警示是板上算出的事实，通知是 GitHub 推来的事件，语义在 UI 上分开
-    return (Array.isArray(list) ? list : [])
+    return all
       .filter((n) => n.repository && n.repository.owner
         && String(n.repository.owner.login).toLowerCase() === String(me).toLowerCase())
       .slice(0, NOTIFY_CAP)
@@ -449,16 +580,24 @@ async function refreshNotifications(config, store) {
   const cache = store.getGithubCache();
   const cur = cache.notifications;
   const now = Date.now();
-  if (cur && now - cur.fetchedAt < (cur.error ? FAIL_TTL_MS : TTL_MS)) return false;
-  let changed = !!(cur && cur.error); // 失败恢复要重推
+  // 账号边界（issue #158）：缓存快照属于拉取它的账号。disconnect/换号路径会主动清缓存，
+  // 这里再按 fetchedFor 兜底——任何路径换了账号（fetchedFor 不一致）即无视 TTL 强制刷新，
+  // 旧账号的未读（含仓库名）不得被当作新账号的展出
+  const ownerChanged = !cur
+    || String(cur.fetchedFor || '').toLowerCase() !== me.toLowerCase();
+  if (!ownerChanged && now - cur.fetchedAt < (cur.error ? FAIL_TTL_MS : TTL_MS)) return false;
+  // 初值必须为 false（issue #159）：原 `!!(cur && cur.error)` 把「上次失败」无条件当可见变化，
+  // 被失败分支的相同错误抑制逻辑短路后仍恒真——GitHub 持续不可达时每 3 分钟重推一次整板补丁。
+  // 改为：成功分支里「错误恢复」才算变化（cur.error 有值 → 现在 ok 了），失败分支维持相同错误抑制
+  let changed = false;
   try {
     const data = await fetchNotifications(config.githubToken, me);
-    changed = changed || JSON.stringify(data) !== JSON.stringify(cur && cur.data);
-    cache.notifications = { fetchedAt: now, data, error: null };
+    changed = !!(cur && cur.error) || JSON.stringify(data) !== JSON.stringify(cur && cur.data);
+    cache.notifications = { fetchedAt: now, fetchedFor: me, data, error: null };
   } catch (err) {
     const msg = certFailReason(err) || String((err && err.message) || err || '网络请求失败');
     changed = changed || !(cur && cur.error === msg);
-    cache.notifications = { fetchedAt: now, data: (cur && cur.data) || [], error: msg };
+    cache.notifications = { fetchedAt: now, fetchedFor: me, data: (cur && cur.data) || [], error: msg };
   }
   store.setGithubCache(cache);
   return changed;
@@ -533,42 +672,65 @@ async function refreshCache(remotes, config, store) {
   const results = await mapLimited(
     uniq,
     REPO_CONCURRENCY,
-    (r) =>
-      fetchIssues(r.owner, r.repo, config.githubToken).then(async (data) => {
-        // CI 运行并入条目（issue #143）：元数据提供默认分支名，随后查该分支最近一次运行；
-        // 元数据/CI 任一失败都只降级为无 CI 数据，不影响 issues 数据的成败与 TTL。
-        // remoteHeadSha（issue #146）：与本地 headSha 交叉验证「另一台机器推了」
+    (r) => {
+      // 旧条目快照（issue #155）：issues 本体成功但次级拉取失败时，装饰字段沿旧值，
+      // 不再清空覆盖——CI 仍红、review 仍待处理时警示不会凭空消失
+      const prevEntry = cache.repos[`${r.owner}/${r.repo}`];
+      const prev = prevEntry && prevEntry.data;
+      return fetchIssues(r.owner, r.repo, config.githubToken).then(async (data) => {
+        // 元数据 + CI 运行 + 远程 HEAD（issue #143/#146）三者独立容错（issue #155）：
+        // 任一次级拉取失败只沿旧值/隐藏提示，不清空既有警示，也不拖垮 issues 本体
+        let meta = null;
         try {
-          const meta = await fetchRepoMeta(r.owner, r.repo, config.githubToken);
-          const [ci, remoteHead] = await Promise.all([
-            fetchCiRun(r.owner, r.repo, meta.defaultBranch, config.githubToken),
-            fetchRemoteHead(r.owner, r.repo, meta.defaultBranch, config.githubToken),
-          ]);
-          data.meta = meta;
-          data.meta.remoteHeadSha = remoteHead;
-          data.ci = ci;
+          meta = await fetchRepoMeta(r.owner, r.repo, config.githubToken);
         } catch {
-          data.meta = null;
-          data.ci = null;
+          meta = (prev && prev.meta) || null; // 元数据失败沿旧条目（issue #155）
         }
-        // 最新 Release + 发布节奏（issue #146）：失败/无 Release 降级为无数据
-        data.release = await fetchReleaseInfo(r.owner, r.repo, config.githubToken);
-        // review 状态并入（issue #144）：PR 条目挂 reviewState 供徽标，全量意见存 prReviews
-        // 供警示与意图路由 prompt（#142）作原料；拉取失败降级为空清单，不影响 issues 数据
+        if (meta) {
+          data.meta = Object.assign({}, meta); // 拷贝后再写 remoteHeadSha，不改动沿用的旧对象
+          const branch = meta.defaultBranch || '';
+          const [ciRes, headRes] = await Promise.allSettled([
+            branch ? fetchCiRun(r.owner, r.repo, branch, config.githubToken) : Promise.resolve(null),
+            branch ? fetchRemoteHead(r.owner, r.repo, branch, config.githubToken) : Promise.resolve(null),
+          ]);
+          // CI 失败（网络/5xx 抛错）沿旧值，既有警示不清空（issue #155）；
+          // null（未启用 Actions / 无运行）是 API 事实，照用
+          data.ci = ciRes.status === 'fulfilled' ? ciRes.value : ((prev && prev.ci) || null);
+          // 远程 HEAD 失败内部吞成 null：不落假值也不回抄旧 sha（会造出「另一台机器推过」假提示），
+          // 交叉验证提示宁可隐藏
+          if (headRes.status === 'fulfilled' && headRes.value) data.meta.remoteHeadSha = headRes.value;
+        } else {
+          data.meta = null;
+          data.ci = (prev && prev.ci) || null;
+        }
+        // 最新 Release + 发布节奏（issue #146）：网络失败抛错沿旧值（issue #155）；
+        // 无 Release（404）是正常态返回 null，此时不再保留旧值（用户删 Release 属罕见操作，
+        // 以 API 事实为准）
         try {
-          data.prReviews = Array.isArray(data.prNumbers) && data.prNumbers.length
+          data.release = await fetchReleaseInfo(r.owner, r.repo, config.githubToken);
+        } catch {
+          data.release = (prev && prev.release) || null;
+        }
+        // review 状态并入（issue #144）：PR 条目挂 reviewState 供徽标，全量意见存 prReviews
+        // 供警示与意图路由 prompt（#142）作原料。拉取整轮失败（fetchPrReviews 全目标失败返回
+        // null）沿用旧清单，不产生空覆盖（issue #155）；拉到空清单（API 事实）照用
+        let freshReviews;
+        try {
+          freshReviews = Array.isArray(data.prNumbers) && data.prNumbers.length
             ? await fetchPrReviews(r.owner, r.repo, data.prNumbers, config.githubToken)
             : [];
         } catch {
-          data.prReviews = [];
+          freshReviews = null;
         }
+        data.prReviews = freshReviews === null ? ((prev && prev.prReviews) || []) : freshReviews;
         const stateByNum = {};
         data.prReviews.forEach((x) => { stateByNum[x.number] = x.state; });
         data.items.forEach((it) => {
           if (it.type === 'pr') it.reviewState = stateByNum[it.number] || null;
         });
         return { data };
-      }, (err) => ({ error: certFailReason(err) || String((err && err.message) || err || '网络请求失败') }))
+      }, (err) => ({ error: certFailReason(err) || String((err && err.message) || err || '网络请求失败') }));
+    }
   );
   const now = Date.now();
   let changed = false; // 有可见变化（新数据 / 新失败态）→ 需要推补丁
@@ -604,12 +766,15 @@ function applyPrWarnings(projects, enabled) {
   }
 }
 
-// CI 警示（issue #143）：默认分支最近一次运行 conclusion=failure 即记；
-// 运行中（conclusion 为 null）与非 failure 结局不记。enabled=false 时只清不加
+// CI 警示（issue #143）：默认分支最近一次运行的失败结局即记。失败集合不只字面 failure（issue #162）：
+// timed_out（运行超时被杀）、startup_failure（启动即败）、action_required（需人工干预）同样是
+// 「CI 挂了」的用户事实，漏报会让用户以为 CI 是绿的；neutral/skipped 维持不记；
+// cancelled 不记（常为手动取消）；运行中（conclusion 为 null）不记。enabled=false 时只清不加
+const CI_FAIL_CONCLUSIONS = new Set(['failure', 'timed_out', 'startup_failure', 'action_required']);
 function applyCiWarnings(projects, enabled) {
   for (const p of projects) {
     p.warnings = p.warnings.filter((w) => w.type !== 'ci');
-    if (enabled !== false && p.github && p.github.ci && p.github.ci.conclusion === 'failure') {
+    if (enabled !== false && p.github && p.github.ci && CI_FAIL_CONCLUSIONS.has(p.github.ci.conclusion)) {
       p.warnings.push({ type: 'ci', label: '默认分支 CI 失败' });
     }
   }
