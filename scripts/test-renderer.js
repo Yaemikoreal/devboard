@@ -94,6 +94,7 @@ function makeEl(tag) {
     set scrollHeight(v) {},
     get innerHTML() { return this._innerHTML; },
     set innerHTML(v) { this._innerHTML = String(v); this.children = []; },
+    get childElementCount() { return this.children.length; }, // renderThemeCards 首建判断用（stub 此前缺该属性）
     get firstChild() { return this.children[0] || null; },
     get lastChild() { return this.children[this.children.length - 1] || null; },
   };
@@ -169,6 +170,8 @@ global.document = fakeDoc;
 let settingsGate = null;
 let releaseSettings = null; // #165 时序：在 require 前挂 gate，test 主体释放
 let boardPayload = null;
+let showSettingsCb = null; // #124 设置域拆分：捕获 onShowSettings 回调，供测试真实开合设置页
+let lastSettingsPatch = null; // 捕获最近一次自动保存补丁（settings.js 保存链断言用）
 const patchHandlers = [];
 const itemDetailCalls = [];
 const apiCalls = { getSettings: 0, getBoard: 0 };
@@ -193,7 +196,7 @@ const api = {
       else res(cfg);
     });
   },
-  setSettings: (p) => Promise.resolve(Object.assign({}, SETTINGS, p)),
+  setSettings: (p) => { lastSettingsPatch = p; return Promise.resolve(Object.assign({}, SETTINGS, p)); },
   getHotkeyError: () => Promise.resolve(''),
   getAutoStartError: () => Promise.resolve(''),
   getPrefs: () => Promise.resolve({ sortMode: 'manual', branchSel: {}, pins: [], snoozes: [], theme: null, landingView: null, onboarded: true }),
@@ -204,7 +207,7 @@ const api = {
   onBoardScanfail() {},
   onTick() {},
   onWinShown() {},
-  onShowSettings() {},
+  onShowSettings(cb) { showSettingsCb = cb; },
   aiToolsList: () => Promise.resolve([]),
   aiToolsOpen: () => Promise.resolve(true),
   aiCaps: () => Promise.resolve({ enabled: false, engine: null }),
@@ -306,6 +309,7 @@ boardPayload = makeBoard();
 settingsGate = new Promise((r) => { releaseSettings = r; });
 
 const APP = path.join(__dirname, '..', 'src', 'renderer', 'app.js');
+require(path.join(__dirname, '..', 'src', 'renderer', 'settings.js')); // 设置域工厂先挂 window（issue #124 渲染层拆分）
 require(APP);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -329,6 +333,34 @@ async function main() {
       '副标应展示未读数，实际: ' + JSON.stringify(sub.textContent));
     assert.ok(String(sub.textContent).indexOf('同步失败') < 0,
       '无 error 时副标不应带失败提示');
+  }
+
+  /* ========== #124 渲染层拆分：设置域（settings.js）经真实入口开合与自动保存 ========== */
+  {
+    assert.ok(typeof showSettingsCb === 'function', 'onShowSettings 回调应已注册（设置域工厂挂载完成）');
+    showSettingsCb(); // 打开设置（等效 settingsBtn / 托盘 onShowSettings 触发）
+    await sleep(60);
+    assert.ok(byId.app.classList.contains('show-settings'), 'showSettings 应展示设置视图');
+    assert.strictEqual(document.body.dataset.density, 'standard', '启动序列应已应用密度档位（applyStartupAppearance）');
+    assert.ok(byId.themeCards.children.length >= 2, '主题卡应已渲染（自动卡 + 预设，主题域随设置域拆分后仍随打开回填）');
+    assert.strictEqual(byId.fThemeLight.children.length >= 1, true, '浅色主题对下拉应有选项');
+    assert.ok(String(byId.fToken.placeholder).indexOf('已保存') >= 0,
+      '已配置 token 时占位符应为「已保存（输入以更换）」，实际: ' + JSON.stringify(byId.fToken.placeholder));
+    assert.strictEqual(byId.rootsList.children.length, 0, '空 roots 配置应回填 0 行');
+    assert.strictEqual(byId.aiToolsList.children.length, 0, '空 aiTools 配置应回填 0 行');
+    // 模拟设置页输入停顿 → 自动保存链（settings.js silentSave）
+    byId.fEditor.value = 'vim';
+    document.querySelector('.settings-body').dispatch('input', { target: byId.fEditor });
+    await sleep(850); // 停顿 700ms 落盘
+    assert.ok(lastSettingsPatch && lastSettingsPatch.editorCmd === 'vim',
+      '输入停顿后应经 settings.js 保存链自动落盘，实际: ' + JSON.stringify(lastSettingsPatch && lastSettingsPatch.editorCmd));
+    assert.ok(lastSettingsPatch.theme && lastSettingsPatch.theme.id === 'warm',
+      '自动保存应携带当前主题（主题域在 settings.js）: ' + JSON.stringify(lastSettingsPatch && lastSettingsPatch.theme));
+    assert.ok(Array.isArray(lastSettingsPatch.roots) && Array.isArray(lastSettingsPatch.aiTools),
+      '自动保存应包含扫描域三键与 AI 工具清单');
+    byId.settingsBtn.dispatch('click', { stopPropagation() {}, preventDefault() {} }); // settingsBtn 切换语义 → hideSettings → flushSave
+    await sleep(40);
+    assert.ok(!byId.app.classList.contains('show-settings'), 'settingsBtn 再次点击应隐藏设置视图');
   }
 
   /* ========== #163：旧数据 + error 并存，副标追加失败提示 ========== */
