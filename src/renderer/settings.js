@@ -21,8 +21,11 @@
     var loadAiCaps = ctx.loadAiCaps;
     var renderAiWeeklyEntry = ctx.renderAiWeeklyEntry;
     var appEl = document.getElementById('app');
-    // AI 工具注册表派生（issue #123）：与 app.js 同源（preload rendererConsts 单一派生点）
+    // AI 工具注册表派生（issue #123）：与 app.js 同源（preload rendererConsts 单一派生点）。
+    // AI_ENGINE_LABELS（issue #141）：引擎可调用档 label——AI 入口显隐按有 spec 的工具判定，
+    // 提示文案若列全部注册工具会误导（可启动档不进引擎候选）
     var AI_TOOL_LABEL = root.devboardConsts.AI_TOOL_LABELS;
+    var AI_ENGINE_LABEL = root.devboardConsts.AI_ENGINE_LABELS;
     var AI_ICON_CHOICES = [['', '默认（终端）']].concat(root.devboardConsts.AI_ICON_CHOICES);
 
     /* ---------- 主题（issue #27）：整体主题预设 + 强调色派生阶梯 ---------- */
@@ -481,8 +484,9 @@
         o.value = '';
         fAiEngine.appendChild(o);
         fAiEngine.disabled = true;
-        // 提示文案随注册表派生（issue #168 第 5 条）：新登记的工具自动出现在这里，不再手写四个工具名
-        hint.textContent = '安装并登录 ' + Object.keys(AI_TOOL_LABEL).map(function (k) { return AI_TOOL_LABEL[k]; }).join(' / ') + ' 任一工具后，AI 功能入口才会出现';
+        // 提示文案随注册表派生（issue #168 第 5 条）：新登记的工具自动出现在这里，不再手写四个工具名。
+        // 按引擎可调用档派生（issue #141）：可启动档工具不进引擎候选，不在此列
+        hint.textContent = '安装并登录 ' + Object.keys(AI_ENGINE_LABEL).map(function (k) { return AI_ENGINE_LABEL[k]; }).join(' / ') + ' 任一工具后，AI 功能入口才会出现';
         return;
       }
       fAiEngine.disabled = false;

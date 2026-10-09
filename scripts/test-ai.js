@@ -69,18 +69,23 @@ async function main() {
   assert.strictEqual(ai.parseFilter('{"band":"nope"}'), null, '非法 band 且无其他条件应返回 null');
 
   // --- 工具注册表一致性（issue #123）：登记一处，消费方全派生，防平行登记回归 ---
+  // issue #141 起注册表含「可启动档」（无 spec、无会话探测的主流候选）：spec/探测两处契约相应放宽，
+  // 对有 spec 的行维持原形状断言（漏登记防线对引擎档不放松）
   const ids = registry.AI_TOOLS.map((t) => t.id);
   assert.ok(ids.length >= 4, '注册表应登记默认工具');
   assert.strictEqual(new Set(ids).size, ids.length, '注册表 id 不得重复');
   for (const t of registry.AI_TOOLS) {
     assert.ok(t.id && t.label && t.cmd, '工具行应含 id/label/cmd: ' + t.id);
-    assert.ok(t.spec && Array.isArray(t.spec.args) && typeof t.spec.stdin === 'boolean' && typeof t.spec.shell === 'boolean',
-      'spec 形状（args/stdin/shell）应完整: ' + t.id);
+    if (t.spec) {
+      assert.ok(Array.isArray(t.spec.args) && typeof t.spec.stdin === 'boolean' && typeof t.spec.shell === 'boolean',
+        'spec 形状（args/stdin/shell）应完整: ' + t.id);
+    }
     assert.ok(t.icon && t.icon.bg && typeof t.icon.svg === 'string' && t.icon.svg, 'icon 形状（bg/svg）应完整: ' + t.id);
   }
-  // 引擎规格查找与登记同源；未知工具返回 null（ai.js 落 CUSTOM_SPEC 通用规格）
-  assert.deepStrictEqual(registry.AI_TOOLS.map((t) => registry.specFor(t.id)), registry.AI_TOOLS.map((t) => t.spec),
-    'specFor 应与注册表登记一致');
+  // 引擎规格查找与登记同源；未知工具返回 null（ai.js 落 CUSTOM_SPEC 通用规格）。
+  // spec 缺席行（issue #141 可启动档）归一为 null 口径：specFor 对缺席/未知统一返回 null
+  assert.deepStrictEqual(registry.AI_TOOLS.map((t) => registry.specFor(t.id)), registry.AI_TOOLS.map((t) => t.spec || null),
+    'specFor 应与注册表登记一致（缺席 spec 按 null 归一）');
   assert.strictEqual(registry.specFor('不存在的工具'), null, '未知工具 spec 应返回 null');
   // 默认清单 / 痕迹 label / 图标下拉三个派生面覆盖注册表全量 id
   assert.deepStrictEqual(registry.defaultToolList().map((t) => t.id), ids, '默认清单 id 集应与注册表一致');
@@ -97,17 +102,26 @@ async function main() {
   assert.strictEqual(registry.toolById('不存在'), null, '未知 id 应返回 null');
   assert.deepStrictEqual(registry.AI_TOOLS.map((t) => registry.toolById(t.id)), registry.AI_TOOLS,
     'toolById 应逐次命中同一批登记行');
-  // scanner 探测登记与注册表 id 一致：无孤儿探测（有探测函数的工具必须已登记）
-  assert.deepStrictEqual(scanner.sessionProbeIds(), ids.slice().sort(),
-    '会话探测登记应与注册表 id 一致，不得有孤儿探测');
+  // scanner 探测登记与注册表 id 一致（issue #141 放宽）：登记工具可暂无会话探测（可启动档），
+  // 但不得有孤儿探测（探测 id 必须都已登记）；默认四件套必须有探测——会话痕迹主力不回退
+  const probeIds = scanner.sessionProbeIds();
+  const idSet = new Set(ids);
+  assert.ok(probeIds.every((id) => idSet.has(id)), '会话探测不得有孤儿 id（探测的工具必须已登记）');
+  for (const t of ['claude', 'codex', 'kimi', 'grok']) {
+    assert.ok(probeIds.includes(t), '引擎档默认四件套必须有会话探测: ' + t);
+  }
   // 桥载荷（真实下发面，issue #168 第 15 条）：断言 preload 实际暴露的两个派生结果，
   // 而不是只比注册表内部 helper——将来谁再手写一份映射，这里会红
   const bridge = registry.rendererConsts();
-  assert.deepStrictEqual(Object.keys(bridge), ['AI_TOOL_LABELS', 'AI_ICON_CHOICES'], '桥载荷只含两个派生面');
+  assert.deepStrictEqual(Object.keys(bridge), ['AI_TOOL_LABELS', 'AI_ICON_CHOICES', 'AI_ENGINE_LABELS'], '桥载荷只含三个派生面');
   assert.deepStrictEqual(Object.keys(bridge.AI_TOOL_LABELS), ids, '桥载荷 label 映射应覆盖注册表全量 id');
   assert.deepStrictEqual(bridge.AI_TOOL_LABELS, registry.aiToolLabels(), '桥载荷 label 应与派生同源');
   assert.deepStrictEqual(bridge.AI_ICON_CHOICES, registry.iconChoices(), '桥载荷图标选项应与派生同源');
   assert.deepStrictEqual(bridge.AI_ICON_CHOICES.map((p) => p[0]), ids, '图标下拉应覆盖注册表全量 id');
+  // 引擎可调用档（issue #141）：桥载荷只下发有 spec 工具的 label，与 resolveEngines 闸门同口径
+  assert.deepStrictEqual(bridge.AI_ENGINE_LABELS, registry.engineToolLabels(), '桥载荷引擎档 label 应与派生同源');
+  assert.deepStrictEqual(Object.keys(bridge.AI_ENGINE_LABELS), registry.AI_TOOLS.filter((t) => t.spec).map((t) => t.id),
+    '引擎档 label 应恰好覆盖有 spec 的登记行');
   // 注册表为纯数据 / 桥载荷不含函数（preload 经 contextBridge 下发，函数会被丢弃或代理失败）
   for (const t of registry.AI_TOOLS) {
     for (const [k, v] of Object.entries(t)) {
@@ -158,11 +172,54 @@ async function main() {
       } finally {
         fsx.rmSync(dir, { recursive: true, force: true });
       }
-      // 5) 未登记探测函数的工具：id 集一致性断言必须当场失败（把静默降级变成响亮失败）
-      assert.notDeepStrictEqual(scanner.sessionProbeIds(), registry.AI_TOOLS.map((t) => t.id).sort(),
-        '未登记探测的假工具应被一致性断言发现（防止「能启动但无会话痕迹」的静默降级回归）');
+      // 5) #141 放宽：登记工具可无会话探测（可启动档）——假工具未登记探测不再违反一致性契约
+      //    （原「完全相等」语义随 #141 探测泛化退役）；孤儿探测方向的反向防线保留：
+      //    若有人给未登记 id 添加探测，上方「无孤儿 id」子集断言会当场打红
+      assert.ok(scanner.sessionProbeIds().every((id) => registry.toolById(id)),
+        '孤儿探测防线保持生效（探测 id 必须已登记）');
     } finally {
       registry.AI_TOOLS.length = before; // 还原注册表，避免影响后续断言
+    }
+  }
+
+  // --- 可启动档闸门（issue #141）：无 spec 工具只进工具清单，不进引擎候选 ---
+  // ipc-ai 此前无测试覆盖；electron 以 Module._load 桩注入（ipc-ai 只用 ipcMain.handle），
+  // checkCommand 桩控制安装集：claude/kimi（引擎档）+ gemini（可启动档）已装，其余未装。
+  {
+    const handles = {};
+    const fakeIpcMain = { handle: (ch, fn) => { handles[ch] = fn; } };
+    const Module = require('module');
+    const origLoad = Module._load;
+    Module._load = function (request) {
+      if (request === 'electron') return { ipcMain: fakeIpcMain };
+      return origLoad.apply(this, arguments);
+    };
+    try {
+      const registerAi = require('../src/main/ipc-ai');
+      const INSTALLED = { claude: true, kimi: true, gemini: true };
+      const fakeStore = {
+        getConfig: () => ({ aiEnabled: true, aiEngine: '', aiTools: [] }),
+        getAiCache: () => ({}),
+        setAiCache: () => {},
+      };
+      registerAi({
+        store: fakeStore,
+        checkCommand: async (cmd) => ({ ok: !!INSTALLED[cmd], reason: '' }),
+        pathExists: async () => true,
+        spawnResult: async () => true,
+      });
+      // 工具清单：可启动档随探测展出（工作台/快捷打开/设置页），未装候选不标 installed
+      const list = await handles['aitools:list']();
+      assert.ok(list.some((t) => t.id === 'gemini' && t.installed), '可启动档工具（gemini）应出现在工具清单');
+      assert.ok(list.some((t) => t.id === 'claude' && t.installed), '引擎档工具应出现在工具清单');
+      assert.ok(list.every((t) => !INSTALLED[t.cmd] ? !t.installed : true), '未安装候选不得标 installed');
+      // 引擎候选：可启动档被闸门排除，首选落在有 spec 的已装工具
+      const caps = await handles['ai:caps']();
+      assert.strictEqual(caps.enabled, true, '有引擎档工具已装时 AI 能力应可用');
+      assert.ok(caps.engine, '应解析出引擎首选');
+      assert.strictEqual(caps.engine.id, 'claude', '引擎首选应落在有 spec 的已装工具（可启动档 gemini 不进候选）');
+    } finally {
+      Module._load = origLoad;
     }
   }
   // --- cleanOutput ---

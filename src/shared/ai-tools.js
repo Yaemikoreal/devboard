@@ -65,6 +65,80 @@ const AI_TOOLS = [
       svg: '<path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z" fill="#fff"/>',
     },
   },
+  // ---- 可启动档（issue #141 探测泛化）：主流 Agent CLI 候选，PATH 命中即进工作台/快捷打开/设置页 ----
+  // 未登记 spec：引擎候选只取「installed 且有 spec」的工具（resolveEngines 闸门），此类只进可启动档；
+  // 未登记 localDir：会话痕迹探测暂缺（scanner 对缺席已容错），待确认项留后续按工具补登记
+  // 图标：simple-icons 未收录或路径无法核实的，沿用 kimi 的字母近似标先例，避免手写错误品牌路径
+  {
+    id: 'gemini',
+    label: 'Gemini CLI',
+    shortLabel: 'Gemini',
+    cmd: 'gemini',
+    icon: {
+      bg: '#1b72e8',
+      svg: '<text x="12" y="17" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">G</text>',
+    },
+  },
+  {
+    id: 'aider',
+    label: 'Aider',
+    shortLabel: 'Aider',
+    cmd: 'aider',
+    icon: {
+      bg: '#1f7a33',
+      svg: '<text x="12" y="17" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">A</text>',
+    },
+  },
+  {
+    id: 'opencode',
+    label: 'OpenCode',
+    shortLabel: 'OpenCode',
+    cmd: 'opencode',
+    icon: {
+      bg: '#2b2b2b',
+      svg: '<text x="12" y="17" text-anchor="middle" font-size="12" font-weight="700" fill="#fff" font-family="sans-serif">OC</text>',
+    },
+  },
+  {
+    id: 'amp',
+    label: 'Amp',
+    shortLabel: 'Amp',
+    cmd: 'amp',
+    icon: {
+      bg: '#191919',
+      svg: '<text x="12" y="17" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">A</text>',
+    },
+  },
+  {
+    id: 'cursor-agent',
+    label: 'Cursor Agent',
+    shortLabel: 'Cursor',
+    cmd: 'cursor-agent',
+    icon: {
+      bg: '#0f0f0f',
+      svg: '<text x="12" y="17" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">C</text>',
+    },
+  },
+  {
+    id: 'copilot',
+    label: 'Copilot CLI',
+    shortLabel: 'Copilot',
+    cmd: 'copilot',
+    icon: {
+      bg: '#1f2328',
+      svg: '<text x="12" y="17" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">C</text>',
+    },
+  },
+  {
+    id: 'qwen',
+    label: 'Qwen Code',
+    shortLabel: 'Qwen',
+    cmd: 'qwen',
+    icon: {
+      bg: '#615ced',
+      svg: '<text x="12" y="17" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">Q</text>',
+    },
+  },
 ];
 
 // 按 id 查登记行：每次现查而非加载时快照——注册表若在运行期增行（#141 自动发现等），
@@ -104,18 +178,28 @@ function aiToolLabels() {
   return map;
 }
 
+// 引擎可调用档的 label 映射（issue #141）：只含有 spec 的工具——AI 功能入口文案（「安装并登录
+// 某某后，AI 功能入口才会出现」）按此派生，与 resolveEngines 的 spec 闸门同口径，不列可启动档工具
+function engineToolLabels() {
+  const map = {};
+  for (const t of AI_TOOLS) if (t.spec) map[t.id] = t.label;
+  return map;
+}
+
 // 设置页图标下拉选项（[id, shortLabel] 数组）：自定义工具行挑品牌图标用。
 // shortLabel（'Claude'/'Kimi'）是设置页下拉的短名 facet，注册表建议形状之外的显式增补
 function iconChoices() {
   return AI_TOOLS.map((t) => [t.id, t.shortLabel || t.label]);
 }
 
-// preload 桥载荷（issue #123）：渲染层需要的两个派生面在此一次性算好下发，
-// 只给派生的最小结果——引擎 spec / localDir / 图标 SVG 属实现细节，不过桥（不扩大下发面）
+// preload 桥载荷（issue #123）：渲染层需要的派生面在此一次性算好下发，
+// 只给派生的最小结果——引擎 spec / localDir / 图标 SVG 属实现细节，不过桥（不扩大下发面）。
+// AI_ENGINE_LABELS（issue #141）：引擎可调用档 label，供设置页提示文案与 ai:caps 显隐口径同源
 function rendererConsts() {
   return {
     AI_TOOL_LABELS: aiToolLabels(),
     AI_ICON_CHOICES: iconChoices(),
+    AI_ENGINE_LABELS: engineToolLabels(),
   };
 }
 
@@ -127,6 +211,7 @@ module.exports = {
   iconFor,
   defaultToolList,
   aiToolLabels,
+  engineToolLabels,
   iconChoices,
   rendererConsts,
 };

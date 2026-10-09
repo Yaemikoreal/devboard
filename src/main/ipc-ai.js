@@ -12,7 +12,7 @@ const { ipcMain } = require('electron');
 const ai = require('./ai');
 const { runEngineChain } = require('./ai-chain'); // 引擎链回退/拉黑/错误归类（issue-24）
 const { localDateStr } = require('../shared/constants'); // 共享常量（issue-11 / #127）
-const { iconFor, defaultToolList } = require('../shared/ai-tools'); // AI 工具单一注册表（issue #123）
+const { iconFor, defaultToolList, specFor } = require('../shared/ai-tools'); // AI 工具单一注册表（issue #123）
 
 // 默认 AI 工具清单与品牌图标已收敛进 AI 工具注册表（issue #123）：
 // defaultToolList() 出清单、iconFor(logoKey, id) 出图标，本文件不持有按工具 id 键控的平行常量表
@@ -25,7 +25,9 @@ const { iconFor, defaultToolList } = require('../shared/ai-tools'); // AI 工具
 // 失败时清掉在飞缓存，下次调用立即重试
 let aiToolsDetectCache = { at: 0, key: '', list: null, promise: null };
 function detectAiTools(cfg, checkCommand) {
-  const key = JSON.stringify(cfg.aiTools || []);
+  // 缓存键含注册表默认清单（issue #141）：注册表扩容后旧缓存不得冒充新探测结果；
+  // 自定义清单变化同样触发重探
+  const key = JSON.stringify([defaultToolList().map((t) => t.cmd), cfg.aiTools || []]);
   const c = aiToolsDetectCache;
   if (c.key === key) {
     if (c.list && Date.now() - c.at < 60000) return Promise.resolve(c.list);
@@ -68,8 +70,12 @@ async function probeAiTools(cfg, checkCommand) {
 }
 
 // 引擎候选排序：显式指定 > 最近成功 > 清单默认顺序（稳定排序）；供 ai:ask 链式回退（issue #41）
+// spec 闸门（issue #141）：可启动档（注册表未登记 spec 的工具）只进工作台/快捷打开/设置页，
+// 不进引擎候选——无 spec 的调用会静默落 CUSTOM_SPEC 通用规格，产出不可信，宁可不进链
 async function resolveEngines(cfg, lastGoodId, checkCommand) {
-  const avail = (await detectAiTools(cfg, checkCommand)).filter((t) => t.installed);
+  const avail = (await detectAiTools(cfg, checkCommand))
+    .filter((t) => t.installed)
+    .filter((t) => !!specFor(t.id));
   const pref = [cfg.aiEngine, lastGoodId].filter(Boolean);
   const rank = (t) => {
     const i = pref.indexOf(t.id);
