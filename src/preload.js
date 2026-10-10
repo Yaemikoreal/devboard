@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld('devboard', {
   // AI 工具快捷启动（issue #15）；prompt 预填为意图路由出口（issue #142，可省略）
   aiToolsList: () => ipcRenderer.invoke('aitools:list'),
   aiToolsOpen: (cmd, projectPath, prompt) => ipcRenderer.invoke('aitools:open', cmd, projectPath, prompt),
+  // MCP 一键注册（issue #149）：把 SignalBoard MCP 写进已探测 CLI 的配置
+  mcpRegister: () => ipcRenderer.invoke('mcp:register'),
   // AI 功能：能力探测 + 统一调用（issue #29）
   aiCaps: () => ipcRenderer.invoke('ai:caps'),
   aiAsk: (payload) => ipcRenderer.invoke('ai:ask', payload),

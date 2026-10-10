@@ -11,8 +11,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 const { Store, DEFAULT_CONFIG } = require('../main/store');
 const tools = require('./tools');
+const actionProto = require('./protocol');
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_NAME = 'signalboard';
@@ -35,6 +37,35 @@ function resolveUserDataDir(argv) {
   return path.join(home, '.config', 'SignalBoard');
 }
 
+// 动作工具的应用定位（issue #149）：--app-exe <exe>（打包 = SignalBoard.exe；开发 = electron.exe）
+// + 开发形态另带 --app-cwd <repoRoot>（electron 需要在仓库根以 `.` 指向应用）。
+// 未配置时动作工具返回结构化错误（APP_NOT_CONFIGURED），查询工具不受影响。
+// 请求即触发：detached 拉起应用 exe——应用已在跑时 second-instance 收 argv 派发；未在跑时
+// 新实例在启动段处理同一动作（比核验设想的「返回未运行错误」更有用且实现确定，已在 issue 说明）
+function resolveAppLaunch(argv) {
+  const read = (flag) => {
+    const i = argv.indexOf(flag);
+    return i >= 0 ? argv[i + 1] : null;
+  };
+  const exe = read('--app-exe');
+  if (!exe) return null;
+  const cwd = read('--app-cwd');
+  return {
+    // 入参为 action 对象（tools.js 的动作工具与 requestAppRefresh 统一传对象），此处统一构造 argv
+    spawn: (action) => {
+      const args = actionProto.buildActionArgv(action);
+      const child = spawn(exe, cwd ? ['.', ...args] : args, {
+        cwd: cwd || undefined,
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.on('error', () => {}); // 拉起失败不炸 server；动作语义是请求，结果在应用内查看
+      if (child.unref) child.unref();
+      return true;
+    },
+  };
+}
+
 function start({ argv, stdin, stdout, stderr }) {
   let userDataDir;
   try {
@@ -50,9 +81,11 @@ function start({ argv, stdin, stdout, stderr }) {
 
   const store = new Store(userDataDir);
   const config = store.getConfig() || DEFAULT_CONFIG;
+  const appLaunch = resolveAppLaunch(argv || []);
 
-  // 逐工具调用：入参快照在每次调用时现取（进程常驻期间数据文件可能被应用更新）
-  const snapshot = () => ({ store, config, now: new Date() });
+  // 逐工具调用：入参快照在每次调用时现取（进程常驻期间数据文件可能被应用更新）；
+  // appSpawn 供写面/动作工具 detached 拉起应用（未配置 --app-exe 时为 null → 结构化错误）
+  const snapshot = () => ({ store, config, now: new Date(), appSpawn: appLaunch ? appLaunch.spawn : null });
 
   function handleRequest(msg) {
     switch (msg.method) {
@@ -79,9 +112,10 @@ function start({ argv, stdin, stdout, stderr }) {
         try {
           data = tools.callTool(snapshot(), name, args);
         } catch (err) {
-          // 工具级失败（项目不存在/未知工具等）：isError 结构化返回，连接不断
+          // 工具级失败（项目不存在/未知工具等）：isError 结构化返回，连接不断；
+          // mcpCode 前缀透出（如 APP_NOT_CONFIGURED）供 agent 编程化分流，不影响人读
           return {
-            content: [{ type: 'text', text: (err && err.message) || String(err) }],
+            content: [{ type: 'text', text: ((err && err.mcpCode) ? '[' + err.mcpCode + '] ' : '') + ((err && err.message) || String(err)) }],
             isError: true,
           };
         }

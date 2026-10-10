@@ -21,6 +21,28 @@ function prefillModeOf(cmd) {
   return (t && t.prefill && t.prefill.mode) || 'none';
 }
 
+// 意图路由出口的核心实现（issue #142；issue #149 的 open-cli 动作复用同一管线）：
+// prompt 按 prefillModeOf 分流——arg = 独立 argv 元素（quoteShellArg 逐参转义，中文/引号安全）；
+// none/未知命令（含自定义工具）= 先写剪贴板兜底。pathExists/spawnResult 由调用方注入
+async function openCliInTerminal(cmd, projectPath, prompt, helpers) {
+  const h = helpers || {};
+  const exists = h.pathExists || ((p) => Promise.resolve(true));
+  const spawn = h.spawnResult || (() => Promise.resolve(false));
+  const c = String(cmd || '').trim();
+  const p = String(projectPath || '');
+  if (!c || !p || !(await exists(p))) return false; // 异步探盘（issue #168 第 5 条）
+  const promptText = String(prompt || '').trim();
+  if (promptText && prefillModeOf(c) === 'arg') {
+    const okArg = await spawn('wt', ['-d', p, 'cmd', '/k', c, promptText]);
+    if (okArg) return true;
+    return spawn('cmd', ['/c', 'start', 'cmd', '/k', c, promptText], { cwd: p });
+  }
+  if (promptText) clipboard.writeText(promptText); // 预填不支持的 CLI：剪贴板兜底
+  const ok = await spawn('wt', ['-d', p, 'cmd', '/k', c]);
+  if (ok) return true;
+  return spawn('cmd', ['/c', 'start', 'cmd', '/k', c], { cwd: p });
+}
+
 // 默认 AI 工具清单与品牌图标已收敛进 AI 工具注册表（issue #123）：
 // defaultToolList() 出清单、iconFor(logoKey, id) 出图标，本文件不持有按工具 id 键控的平行常量表
 
@@ -120,26 +142,10 @@ module.exports = function registerAi({ store, checkCommand, pathExists, spawnRes
   // AI 工具清单：默认四项 + config.aiTools 自定义项，逐项 where 探测安装情况（issue #15）
   ipcMain.handle('aitools:list', () => detectAiTools(store.getConfig(), checkCommand));
 
-  // 在所选项目目录开终端执行 AI 工具命令：优先 wt -d，回退 cmd /c start（issue #15）。
   // 意图路由出口（issue #142）：第三参 prompt 缺省时行为与原来完全一致（工作台等既有调用零改动）；
-  // 带 prompt 时按注册行 prefill.mode 预填——arg = prompt 作为独立 argv 元素拼接（经 spawnResult 的
-  // quoteShellArg 逐参转义，中文/引号安全，不做字符串拼接）；none/未知命令（含自定义工具）= 先写
-  // 剪贴板，用户在终端里粘贴
-  ipcMain.handle('aitools:open', async (_e, cmd, projectPath, prompt) => {
-    const c = String(cmd || '').trim();
-    const p = String(projectPath || '');
-    if (!c || !p || !(await pathExists(p))) return false; // 异步探盘（issue #168 第 5 条）
-    const promptText = String(prompt || '').trim();
-    if (promptText && prefillModeOf(c) === 'arg') {
-      const okArg = await spawnResult('wt', ['-d', p, 'cmd', '/k', c, promptText]);
-      if (okArg) return true;
-      return spawnResult('cmd', ['/c', 'start', 'cmd', '/k', c, promptText], { cwd: p });
-    }
-    if (promptText) clipboard.writeText(promptText); // 预填不支持的 CLI：剪贴板兜底
-    const ok = await spawnResult('wt', ['-d', p, 'cmd', '/k', c]);
-    if (ok) return true;
-    return spawnResult('cmd', ['/c', 'start', 'cmd', '/k', c], { cwd: p });
-  });
+  // 实现抽到模块级 openCliInTerminal（#149 的 open-cli 动作复用同一管线）
+  ipcMain.handle('aitools:open', (_e, cmd, projectPath, prompt) =>
+    openCliInTerminal(cmd, projectPath, prompt, { pathExists, spawnResult }));
 
   // AI 能力探测（issue #29）：渲染层据此显隐 AI 入口；engine 为空 = 无可用工具
   ipcMain.handle('ai:caps', async () => {
@@ -358,3 +364,8 @@ module.exports = function registerAi({ store, checkCommand, pathExists, spawnRes
   // settings:set（主干）变更 AI 配置时清空会话级黑名单（issue #138），经返回值暴露清空口
   return { clearSessionBadEngines: () => sessionBadEngines.clear() };
 };
+
+// 命名导出（issue #149）：open-cli 动作与主干注册器复用的管线与探测
+module.exports.openCliInTerminal = openCliInTerminal;
+module.exports.prefillModeOf = prefillModeOf;
+module.exports.detectAiTools = detectAiTools;
