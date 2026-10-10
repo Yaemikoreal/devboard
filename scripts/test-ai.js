@@ -80,6 +80,9 @@ async function main() {
       assert.ok(Array.isArray(t.spec.args) && typeof t.spec.stdin === 'boolean' && typeof t.spec.shell === 'boolean',
         'spec 形状（args/stdin/shell）应完整: ' + t.id);
     }
+    if (t.prefill) {
+      assert.ok(['arg', 'stdin', 'none'].includes(t.prefill.mode), 'prefill.mode 应为已知值: ' + t.id);
+    }
     assert.ok(t.icon && t.icon.bg && typeof t.icon.svg === 'string' && t.icon.svg, 'icon 形状（bg/svg）应完整: ' + t.id);
   }
   // 引擎规格查找与登记同源；未知工具返回 null（ai.js 落 CUSTOM_SPEC 通用规格）。
@@ -182,16 +185,19 @@ async function main() {
     }
   }
 
-  // --- 可启动档闸门（issue #141）：无 spec 工具只进工具清单，不进引擎候选 ---
-  // ipc-ai 此前无测试覆盖；electron 以 Module._load 桩注入（ipc-ai 只用 ipcMain.handle），
+  // --- 可启动档闸门（issue #141）+ 意图路由预填（issue #142）：ipc-ai 的 handler 级测试 ---
+  // electron 以 Module._load 桩注入（ipc-ai 用 ipcMain.handle 与 clipboard），
   // checkCommand 桩控制安装集：claude/kimi（引擎档）+ gemini（可启动档）已装，其余未装。
   {
     const handles = {};
     const fakeIpcMain = { handle: (ch, fn) => { handles[ch] = fn; } };
+    const clipboardWrites = [];
     const Module = require('module');
     const origLoad = Module._load;
     Module._load = function (request) {
-      if (request === 'electron') return { ipcMain: fakeIpcMain };
+      if (request === 'electron') {
+        return { ipcMain: fakeIpcMain, clipboard: { writeText: (t) => clipboardWrites.push(t) } };
+      }
       return origLoad.apply(this, arguments);
     };
     try {
@@ -202,11 +208,12 @@ async function main() {
         getAiCache: () => ({}),
         setAiCache: () => {},
       };
+      const spawnCalls = [];
       registerAi({
         store: fakeStore,
         checkCommand: async (cmd) => ({ ok: !!INSTALLED[cmd], reason: '' }),
         pathExists: async () => true,
-        spawnResult: async () => true,
+        spawnResult: async (cmd, args, opts) => { spawnCalls.push({ cmd, args, opts }); return true; },
       });
       // 工具清单：可启动档随探测展出（工作台/快捷打开/设置页），未装候选不标 installed
       const list = await handles['aitools:list']();
@@ -218,6 +225,34 @@ async function main() {
       assert.strictEqual(caps.enabled, true, '有引擎档工具已装时 AI 能力应可用');
       assert.ok(caps.engine, '应解析出引擎首选');
       assert.strictEqual(caps.engine.id, 'claude', '引擎首选应落在有 spec 的已装工具（可启动档 gemini 不进候选）');
+
+      // --- aitools:open 意图路由（issue #142）：prompt 预填按注册行 prefill.mode 分流 ---
+      // 无 prompt：行为与原版完全一致（裸命令，既有调用零改动）
+      spawnCalls.length = 0;
+      const openBare = await handles['aitools:open'](null, 'claude', 'E:\\p\\x');
+      assert.strictEqual(openBare, true, '无 prompt 应照常启动');
+      assert.deepStrictEqual(spawnCalls[0].args, ['-d', 'E:\\p\\x', 'cmd', '/k', 'claude'], '无 prompt 不得追加参数');
+      // claude prefill=arg：prompt 作为独立 argv 元素（quoteShellArg 逐参转义在此之后的 spawn 层）
+      spawnCalls.length = 0;
+      await handles['aitools:open'](null, 'claude', 'E:\\p\\x', '整理当前改动成合理提交');
+      assert.ok(spawnCalls[0].args.includes('整理当前改动成合理提交'), 'arg 模式应把 prompt 作为独立参数拼接');
+      assert.strictEqual(clipboardWrites.length, 0, 'arg 模式不得写剪贴板');
+      // grok prefill=none：prompt 走剪贴板兜底，命令行不带 prompt
+      spawnCalls.length = 0;
+      await handles['aitools:open'](null, 'grok', 'E:\\p\\x', '确认并推送');
+      assert.strictEqual(clipboardWrites.length, 1, 'none 模式应写剪贴板兜底');
+      assert.deepStrictEqual(spawnCalls[0].args, ['-d', 'E:\\p\\x', 'cmd', '/k', 'grok'], 'none 模式命令行不带 prompt');
+      // 自定义命令（注册表外）：按 none 兜底
+      spawnCalls.length = 0;
+      clipboardWrites.length = 0;
+      await handles['aitools:open'](null, 'my-custom-cli', 'E:\\p\\x', '随便一句话');
+      assert.strictEqual(clipboardWrites.length, 1, '注册表外命令应按剪贴板兜底');
+      // 空 prompt：等价无 prompt（不写剪贴板）
+      spawnCalls.length = 0;
+      clipboardWrites.length = 0;
+      await handles['aitools:open'](null, 'claude', 'E:\\p\\x', '   ');
+      assert.strictEqual(clipboardWrites.length, 0, '空白 prompt 不得写剪贴板');
+      assert.deepStrictEqual(spawnCalls[0].args, ['-d', 'E:\\p\\x', 'cmd', '/k', 'claude'], '空白 prompt 等价无 prompt');
     } finally {
       Module._load = origLoad;
     }

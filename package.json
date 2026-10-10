@@ -13,6 +13,7 @@
     "test:ai": "node scripts/test-ai.js",
     "test:github": "node scripts/test-github.js",
     "test:handoffs": "node scripts/test-handoffs.js",
+    "test:intent": "node scripts/test-intent.js",
     "test:mcp": "node scripts/test-mcp.js",
     "test:renderer": "node scripts/test-renderer.js",
     "theme:sync": "node scripts/sync-theme-root.js",

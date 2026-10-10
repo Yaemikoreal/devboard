@@ -18,6 +18,8 @@ const AI_TOOLS = [
     // shell: claude 是 npm .cmd shim，Windows 下必须经 shell 启动（Node 对 .cmd 的 CVE 限制）；
     // prompt 经 stdin 传入
     spec: { args: ['-p'], stdin: true, shell: true },
+    // 交互式可见终端的初始 prompt 预填方式（issue #142）：arg = 位置参数（claude "提示词" 直起会话）
+    prefill: { mode: 'arg' },
     // 图标来源：simple-icons anthropic（issue #21）
     icon: {
       bg: '#d97757',
@@ -32,6 +34,7 @@ const AI_TOOLS = [
     localDir: '.codex',
     // --skip-git-repo-check：开机自启等场景 cwd 不是受信 git 仓库时 codex exec 会直接拒绝执行（issue #115）
     spec: { args: ['exec', '--skip-git-repo-check'], stdin: false, shell: false },
+    prefill: { mode: 'arg' }, // 交互式 codex "提示词" 直起会话（issue #142）
     // 图标来源：simple-icons openai v13（新版已下架，issue #21）
     icon: {
       bg: '#202020',
@@ -46,6 +49,7 @@ const AI_TOOLS = [
     localDir: '.kimi-code',
     // streamJson: 输出为 JSON 行，取 role=assistant 的 content 作为正文（kimi 文本模式会混入过程 bullet）
     spec: { args: ['-p'], stdin: false, shell: false, streamJson: true },
+    prefill: { mode: 'arg' }, // 交互式 kimi "提示词" 直起会话（issue #142）
     // kimi 无官方 simple-icons 条目（未收录 Moonshot），沿用 demos 的近似标（K 字，issue #21）
     icon: {
       bg: '#101010',
@@ -59,6 +63,8 @@ const AI_TOOLS = [
     cmd: 'grok',
     localDir: '.grok',
     spec: { args: ['--single'], stdin: false, shell: false },
+    // --single 是一次性模式，交互式初始 prompt 支持度未实测：预填走剪贴板兜底（issue #142）
+    prefill: { mode: 'none' },
     // 图标来源：simple-icons x（issue #21）
     icon: {
       bg: '#000000',

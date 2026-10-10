@@ -235,9 +235,11 @@
       });
     }
 
-    // AI 结果区：徽标（引擎 + 生成时间，issue #43 精简）+ 结构化正文/错误；box 内重建
+    // AI 结果区：徽标（引擎 + 生成时间，issue #43 精简）+ 结构化正文/错误；box 内重建。
+    // __lastText 供「执行」键（issue #142）取当前展出的建议正文作预填 prompt
     function fillAiBox(box, r) {
       box.innerHTML = '';
+      box.__lastText = r && r.ok ? String(r.text || '') : '';
       if (!r || !r.ok) {
         box.appendChild(el('div', 'ai-err', (r && r.reason) ? 'AI 生成失败：' + r.reason : 'AI 生成失败，可稍后重试'));
         return;
@@ -394,7 +396,10 @@
     bindAiWeekly(); // 周报按钮绑定随域初始化（原 app.js 启动段调用点等价前移，issue #124）
 
     /* ----- P0 · 项目 AI 建议（详情面板，按 项目+HEAD 缓存；后台执行 issue #40） ----- */
-    // 生成按钮收进标题行（issue #38）；已缓存的建议打开面板即默认展开，不再多点一次
+    // 生成按钮收进标题行（issue #38）；已缓存的建议打开面板即默认展开，不再多点一次。
+    // 「执行」键（issue #142，意图路由）：把当前展出的建议文本作为预填 prompt，在项目目录
+    // 可见终端起默认 AI CLI（aitools:open 出口，prefill.mode=arg 参数数组转义）——写操作
+    // 由用户自己的 AI 会话完成，板保持只读（ADR-0004）
     function renderAiAdviceSec(p) {
       if (!aiReady()) return null;
       var s = sec('AI 建议');
@@ -406,6 +411,20 @@
       s.appendChild(box);
       var key = aiJobKey('advice', p.path);
       var job = liveAiJob(key);
+      // 「执行」键（issue #142）：把当前展出的建议文本作为预填 prompt，在项目目录可见终端起 CLI。
+      // 文本取 fillAiBox 记录的 __lastText（面板重渲后随 box 重建，不落陈旧引用）
+      var runBtn = el('button', 'ai-btn ai-run', '▶ 执行');
+      runBtn.type = 'button';
+      runBtn.title = '在项目目录用 ' + state.aiCaps.engine.label + ' 执行这条建议（预填建议文本，人在环确认）';
+      runBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var text = box.__lastText;
+        if (!text) return; // 还没有可执行的建议（未生成/生成失败）
+        api.aiToolsOpen(state.aiCaps.engine.cmd, p.path, text).then(function (ok) {
+          flashBtn(runBtn, ok ? '已启动' : '启动失败', ok);
+        }).catch(function () { flashBtn(runBtn, '启动失败', false); });
+      });
+      s.firstChild.appendChild(runBtn);
       if (job && job.status === 'running') {
         paintAiRunning(box, btn, job); // 后台任务在飞：切出去再回来恢复进行态
       } else if (job) {

@@ -537,6 +537,13 @@
       nm.title = a.name;
       item.appendChild(nm);
       item.appendChild(el('span', 'ds', a.label));
+      // 「起 AI」键（issue #142）：按该类警示的固定模板预填，不跳转；类型取第一个有模板的
+      var aProj = findProject(a.path);
+      if (aProj) {
+        var goType = types.filter(function (t) { return window.devboardIntent.warningTemplateTypes.includes(t); })[0];
+        var go = goType ? intentButtonFor(aProj, goType) : null;
+        if (go) item.appendChild(go);
+      }
       item.appendChild(el('span', 'mk'));
       item.addEventListener('click', function () { jumpToProject(a.path); });
       list.appendChild(item);
@@ -943,12 +950,62 @@
     parent.appendChild(s);
   }
 
+  // 意图路由（issue #142，ADR-0004 第 1 条）：警示 → 默认 AI CLI 的固定模板预填。
+  // 事实装配只含统计字段（分支/计数/PR 号标题），模板模块绝不接收代码内容；模板经
+  // preload devboardIntent 下发（与主进程实际预填同源）。
+  function intentFactsOf(p, type) {
+    var f = {
+      branch: p.branch || '',
+      dirtyCount: p.dirtyCount || 0,
+      dirtyDays: (state.settings && state.settings.warningDirtyDays) || 3,
+      ahead: p.ahead || 0,
+    };
+    if (type === 'pr' && p.github) {
+      var prItem = (p.github.items || []).filter(function (it) { return it.type === 'pr'; })[0];
+      f.prNumber = (prItem && prItem.number) || (p.github.prNumbers || [])[0] || null;
+      f.prTitle = (prItem && prItem.title) || '';
+    }
+    return f;
+  }
+
+  // 起默认 AI CLI 处理某类警示：引擎不在（无可用工具）不挂键（沿用 ai:caps 显隐）；
+  // pr 类型先探 gh CLI 决定模板降级版本，然后经 aitools:open 出口起可见终端
+  function openIntentCli(p, type, btn) {
+    var eng = state.aiCaps && state.aiCaps.engine;
+    if (!eng) return;
+    var probe = type === 'pr' ? api.checkCommand('gh') : Promise.resolve({ ok: false });
+    probe.then(function (r) {
+      var facts = intentFactsOf(p, type);
+      facts.ghAvailable = !!(r && r.ok);
+      var prompt = window.devboardIntent.buildPrompt(type, facts);
+      if (!prompt) return;
+      return api.aiToolsOpen(eng.cmd, p.path, prompt).then(function (ok) {
+        flashBtn(btn, ok ? '已启动' : '启动失败', ok);
+      });
+    }).catch(function () { flashBtn(btn, '启动失败', false); });
+  }
+
+  // 警示 pill 的「起 AI」键：仅模板化类型（dirty/ahead/pr）挂出；ci/review 无模板不挂
+  function intentButtonFor(p, type) {
+    if (!aiReady()) return null;
+    if (!window.devboardIntent.warningTemplateTypes.includes(type)) return null;
+    var go = el('button', 'x intent-go', '✦');
+    go.title = '在项目目录用默认 AI CLI 处理这类警示（预填固定模板，人在环执行）';
+    go.addEventListener('click', function (e) {
+      e.stopPropagation();
+      openIntentCli(p, type, go);
+    });
+    return go;
+  }
+
   function renderWarns(parent, p) {
     if (!p.warnings || !p.warnings.length) return;
     var box = el('div', 'warns');
     p.warnings.forEach(function (w) {
       var s = el('span', 'warn', w.label);
       s.insertBefore(el('i', 'wg ' + warnGlyphClass(w.type)), s.firstChild); // 类型图形（issue #77）
+      var go = intentButtonFor(p, w.type);
+      if (go) s.appendChild(go);
       var x = el('button', 'x', '×');
       x.title = '消音此警示（状态变化后自动复出）';
       x.addEventListener('click', function (e) {

@@ -176,6 +176,7 @@ let lastPrefsPatch = null; // 捕获最近一次 prefs 写盘（#147 交接已�
 let winShownCb = null; // 捕获 win:shown 回调（applyLanding 真实入口，供测试恢复着陆视图）
 const patchHandlers = [];
 const itemDetailCalls = [];
+const aiToolsOpenCalls = []; // #142 意图路由：捕获 aiToolsOpen 的 prompt 预填调用
 const apiCalls = { getSettings: 0, getBoard: 0 };
 let itemDetailImpl = () => Promise.resolve({ body: '首次正文', comments: [], pr: null });
 
@@ -211,9 +212,15 @@ const api = {
   onWinShown(cb) { winShownCb = cb; },
   onShowSettings(cb) { showSettingsCb = cb; },
   aiToolsList: () => Promise.resolve([]),
-  aiToolsOpen: () => Promise.resolve(true),
-  aiCaps: () => Promise.resolve({ enabled: false, engine: null }),
-  aiAsk: () => Promise.resolve({ empty: true }),
+  aiToolsOpen: (cmd, projectPath, prompt) => { aiToolsOpenCalls.push({ cmd, projectPath, prompt }); return Promise.resolve(true); },
+  aiCaps: () => Promise.resolve({ enabled: true, engine: { id: 'claude', label: 'Claude Code', cmd: 'claude' } }),
+  aiAsk: (payload) => {
+    if (payload && payload.kind === 'advice' && payload.cachedOnly) {
+      // #142：advice 缓存命中，供「执行」键断言预填文本
+      return Promise.resolve({ ok: true, kind: 'advice', text: '先把登录模块跑回归再合并', engine: { id: 'claude', label: 'Claude Code' }, at: new Date().toISOString() });
+    }
+    return Promise.resolve({ empty: true });
+  },
   aiPromptPreview: () => Promise.resolve({ text: '' }),
   setMemo: () => Promise.resolve(true),
   snooze: () => Promise.resolve(true),
@@ -247,6 +254,15 @@ global.window = {
   devboard: api,
   devboardConsts: Object.assign({}, constants, aiTools.rendererConsts()),
   devboardThemes: require('../src/shared/themes'),
+  // #142：意图模板经 stub 直挂（与 preload devboardIntent 同形状——buildPrompt 是函数，
+  // 进不了 rendererConsts 纯数据载荷，preload 侧用 contextBridge 代理同步函数）
+  devboardIntent: {
+    warningTemplateTypes: Object.keys(require('../src/shared/intent-templates').WARNING_TEMPLATES),
+    buildPrompt: (type, facts) => {
+      const t = require('../src/shared/intent-templates').warningTemplate(type);
+      return t ? t.buildPrompt(facts || {}) : null;
+    },
+  },
   devboardBoot: { theme: null },
   addEventListener() {}, removeEventListener() {},
   matchMedia: () => ({ matches: false, addEventListener() {}, addListener() {}, removeEventListener() {} }),
@@ -278,9 +294,9 @@ const makeBoard = (opts) => {
   const proj = {
     path: 'E:\\p\\alpha', name: 'alpha', branch: 'main', commits7d: 3,
     recentCommits: [{ msg: 'x', rel: '1 天前' }],
-    dirtyCount: 0, dirtyAt: null, dirtyFiles: [], ahead: 0, behind: 0,
+    dirtyCount: opts.dirtyCount !== undefined ? opts.dirtyCount : 0, dirtyAt: null, dirtyFiles: [], ahead: 0, behind: 0,
     lastCommitAt: new Date().toISOString(), lastActivityAt: new Date().toISOString(), headSha: 'abc123',
-    activity365: new Array(365).fill(0), warnings: [],
+    activity365: new Array(365).fill(0), warnings: opts.warnings || [],
     githubOwned: true, githubError: null,
     github: {
       owner: 'Yaemikoreal', repo: 'devboard',
@@ -417,6 +433,39 @@ async function main() {
     winShownCb();
     await sleep(30);
     assert.ok(byId.viewOverview.classList.contains('hidden') === false, 'win:shown 后应回到着陆视图（总览）');
+  }
+
+  /* ========== #142 意图路由：警示「起 AI」键（模板预填）+ 建议执行键 ========== */
+  {
+    const b = makeBoard({ warnings: [{ type: 'dirty', label: '18 文件未提交超3天' }], dirtyCount: 18 });
+    b.scanGeneration = 3;
+    patchHandlers.forEach((cb) => cb(b));
+    await sleep(30);
+    byId.rows.children[0].dispatch('click', { stopPropagation() {}, preventDefault() {} }); // 选中 → 面板
+    await sleep(30);
+    // 警示 pill 的「起 AI」键：dirty 有模板 → 挂键；点击 → 固定模板预填 + 起默认引擎 CLI
+    const pillGo = byId.panelIn.querySelector('.intent-go');
+    assert.ok(pillGo, 'dirty 警示 pill 应挂「起 AI」键（模板化类型）');
+    pillGo.dispatch('click', { stopPropagation() {}, preventDefault() {} });
+    await sleep(40);
+    const pillCall = aiToolsOpenCalls[aiToolsOpenCalls.length - 1];
+    assert.ok(pillCall && pillCall.cmd === 'claude', '应起默认引擎 CLI（ai:caps 引擎）');
+    assert.strictEqual(pillCall.projectPath, 'E:\\p\\alpha', '应在项目目录起终端');
+    assert.ok(pillCall.prompt && pillCall.prompt.indexOf('18 个文件') >= 0, 'prompt 应由模板插入统计事实，实际: ' + JSON.stringify(pillCall && pillCall.prompt));
+    assert.ok(pillCall.prompt.indexOf('不要推送') >= 0, 'prompt 应来自固定模板（整理提交口径）');
+    assert.ok(pillCall.prompt.indexOf('secret') < 0, '模板不得携带代码内容');
+    // 建议执行键：advice 缓存命中展出 → 「▶ 执行」→ 建议文本作为预填 prompt
+    const runBtn = byId.panelIn.querySelector('.ai-run');
+    assert.ok(runBtn, 'AI 建议区应有「执行」键');
+    runBtn.dispatch('click', { stopPropagation() {}, preventDefault() {} });
+    await sleep(30);
+    const runCall = aiToolsOpenCalls[aiToolsOpenCalls.length - 1];
+    assert.ok(runCall && runCall.prompt === '先把登录模块跑回归再合并', '执行键应以当前建议文本为预填 prompt，实际: ' + JSON.stringify(runCall && runCall.prompt));
+    assert.strictEqual(runCall.cmd, 'claude', '执行键起默认引擎');
+    // 收回选中态，交还干净状态给后续用例
+    var panelClose142 = byId.panelIn.querySelector('.p-close');
+    panelClose142.dispatch('click', { stopPropagation() {}, preventDefault() {} });
+    await sleep(20);
   }
 
   /* ========== #163：旧数据 + error 并存，副标追加失败提示 ========== */

@@ -24,6 +24,17 @@ contextBridge.exposeInMainWorld('devboardConsts', Object.assign(
 // window.devboardThemes 消费；冷启动四色与 :root 暖阳默认值亦从该模块派生
 contextBridge.exposeInMainWorld('devboardThemes', require('./shared/themes'));
 
+// 意图路由模板（issue #142）：三类警示的固定 prompt 模板单一来源（shared/intent-templates.js）。
+// buildPrompt 是函数，进不了 rendererConsts 的纯数据载荷——经 contextBridge 代理成同步函数下发，
+// 渲染层按钮拼出的 prompt 与模板模块同源，不会出现「按钮说的和终端里收到的不一致」
+contextBridge.exposeInMainWorld('devboardIntent', {
+  warningTemplateTypes: Object.keys(require('./shared/intent-templates').WARNING_TEMPLATES),
+  buildPrompt: (type, facts) => {
+    const t = require('./shared/intent-templates').warningTemplate(type);
+    return t ? t.buildPrompt(facts || {}) : null;
+  },
+});
+
 contextBridge.exposeInMainWorld('devboard', {
   getBoard: () => ipcRenderer.invoke('board:get'),
   rescan: () => ipcRenderer.invoke('board:rescan'),
@@ -53,9 +64,9 @@ contextBridge.exposeInMainWorld('devboard', {
   githubDisconnect: () => ipcRenderer.invoke('github:disconnect'),
   // 单条 issue/PR 展开详情（issue #146）：按需拉取正文/评论流/diff 统计/reviewer
   githubItemDetail: (payload) => ipcRenderer.invoke('github:itemDetail', payload),
-  // AI 工具快捷启动（issue #15）
+  // AI 工具快捷启动（issue #15）；prompt 预填为意图路由出口（issue #142，可省略）
   aiToolsList: () => ipcRenderer.invoke('aitools:list'),
-  aiToolsOpen: (cmd, projectPath) => ipcRenderer.invoke('aitools:open', cmd, projectPath),
+  aiToolsOpen: (cmd, projectPath, prompt) => ipcRenderer.invoke('aitools:open', cmd, projectPath, prompt),
   // AI 功能：能力探测 + 统一调用（issue #29）
   aiCaps: () => ipcRenderer.invoke('ai:caps'),
   aiAsk: (payload) => ipcRenderer.invoke('ai:ask', payload),

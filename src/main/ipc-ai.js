@@ -8,11 +8,18 @@
 'use strict';
 
 const crypto = require('crypto');
-const { ipcMain } = require('electron');
+const { ipcMain, clipboard } = require('electron');
 const ai = require('./ai');
 const { runEngineChain } = require('./ai-chain'); // 引擎链回退/拉黑/错误归类（issue-24）
 const { localDateStr } = require('../shared/constants'); // 共享常量（issue-11 / #127）
-const { iconFor, defaultToolList, specFor } = require('../shared/ai-tools'); // AI 工具单一注册表（issue #123）
+const { iconFor, defaultToolList, specFor, toolById } = require('../shared/ai-tools'); // AI 工具单一注册表（issue #123）
+
+// 预填方式（issue #142）：注册行 prefill.mode——'arg'=交互式位置参数；'none'/缺席（含自定义命令）=
+// 剪贴板兜底。按 CLI 逐个实测后定值；可启动档工具不在此列（不进引擎候选，执行键不用它们）
+function prefillModeOf(cmd) {
+  const t = toolById(cmd);
+  return (t && t.prefill && t.prefill.mode) || 'none';
+}
 
 // 默认 AI 工具清单与品牌图标已收敛进 AI 工具注册表（issue #123）：
 // defaultToolList() 出清单、iconFor(logoKey, id) 出图标，本文件不持有按工具 id 键控的平行常量表
@@ -113,11 +120,22 @@ module.exports = function registerAi({ store, checkCommand, pathExists, spawnRes
   // AI 工具清单：默认四项 + config.aiTools 自定义项，逐项 where 探测安装情况（issue #15）
   ipcMain.handle('aitools:list', () => detectAiTools(store.getConfig(), checkCommand));
 
-  // 在所选项目目录开终端执行 AI 工具命令：优先 wt -d，回退 cmd /c start（issue #15）
-  ipcMain.handle('aitools:open', async (_e, cmd, projectPath) => {
+  // 在所选项目目录开终端执行 AI 工具命令：优先 wt -d，回退 cmd /c start（issue #15）。
+  // 意图路由出口（issue #142）：第三参 prompt 缺省时行为与原来完全一致（工作台等既有调用零改动）；
+  // 带 prompt 时按注册行 prefill.mode 预填——arg = prompt 作为独立 argv 元素拼接（经 spawnResult 的
+  // quoteShellArg 逐参转义，中文/引号安全，不做字符串拼接）；none/未知命令（含自定义工具）= 先写
+  // 剪贴板，用户在终端里粘贴
+  ipcMain.handle('aitools:open', async (_e, cmd, projectPath, prompt) => {
     const c = String(cmd || '').trim();
     const p = String(projectPath || '');
     if (!c || !p || !(await pathExists(p))) return false; // 异步探盘（issue #168 第 5 条）
+    const promptText = String(prompt || '').trim();
+    if (promptText && prefillModeOf(c) === 'arg') {
+      const okArg = await spawnResult('wt', ['-d', p, 'cmd', '/k', c, promptText]);
+      if (okArg) return true;
+      return spawnResult('cmd', ['/c', 'start', 'cmd', '/k', c, promptText], { cwd: p });
+    }
+    if (promptText) clipboard.writeText(promptText); // 预填不支持的 CLI：剪贴板兜底
     const ok = await spawnResult('wt', ['-d', p, 'cmd', '/k', c]);
     if (ok) return true;
     return spawnResult('cmd', ['/c', 'start', 'cmd', '/k', c], { cwd: p });
