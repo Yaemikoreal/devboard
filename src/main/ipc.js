@@ -17,6 +17,9 @@ const registerGithub = require('./ipc-github'); // GitHub 鉴权/账号域 handl
 const registerAi = require('./ipc-ai'); // AI 调度域 handler（issue #124 第二刀）
 const registerData = require('./ipc-data'); // 数据/系统辅助域 handler（issue #124 第三刀）
 const handoffs = require('./handoffs'); // 交接领域服务（issue #147，#148/#149 复用写入口）
+const actionProto = require('./mcp/protocol'); // MCP 动作 argv 协议（issue #149）
+const mcpRegister = require('./mcp-register'); // MCP 一键注册器（issue #149）
+const { openCliInTerminal, detectAiTools } = registerAi; // 命名导出：open-cli 动作复用管线 + 注册目标探测
 const { DEFAULT_CONFIG } = require('./store');
 const { WARN_SEVERITY } = require('../shared/constants'); // 共享常量（issue-11 / #127）
 const { createGitWatcher } = require('./watcher');
@@ -598,7 +601,52 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   });
   ipcMain.handle('win:close', () => { const w = getWindow(); if (w) w.close(); });
 
-  return { buildBoard, gitWatcher };
+  /* ----- MCP 动作派发与一键注册（issue #149） ----- */
+  // second-instance/启动段把 --mcp-action argv 转成既有能力：rescan（全量重扫）/
+  // refresh（缓存重拼推补丁，交接写入后未读点即时可见）/ quickopen / open-cli（预填管线复用）。
+  // 动作即请求：fire-and-forget，不向 server 回传完成结果（人在环）
+  function dispatchMcpAction(args) {
+    const action = String((args && args['mcp-action']) || '');
+    if (action === 'rescan' || action === 'refresh') {
+      buildBoard(action === 'rescan').catch((err) => console.error('[devboard] MCP 动作 ' + action + ' 失败:', err));
+      return Promise.resolve({ ok: true, action });
+    }
+    if (action === 'quickopen') {
+      return quickOpen({ path: args['mcp-path'], kind: args['mcp-kind'] || 'folder' }, store.getConfig())
+        .then((ok) => ({ ok: !!ok, action }))
+        .catch((err) => ({ ok: false, action, reason: String((err && err.message) || err) }));
+    }
+    if (action === 'open-cli') {
+      const prompt = actionProto.decodePrompt(args['mcp-prompt-b64']);
+      return openCliInTerminal(args['mcp-cmd'], args['mcp-path'], prompt, { pathExists, spawnResult })
+        .then((ok) => ({ ok: !!ok, action }))
+        .catch((err) => ({ ok: false, action, reason: String((err && err.message) || err) }));
+    }
+    return Promise.resolve({ ok: false, action, reason: '未知动作' });
+  }
+
+  // 一键注册（issue #149）：对已安装且登记 mcp facet 的 CLI 逐个执行原生 `mcp add`；
+  // 未登记 facet 的 CLI 如实报「暂不支持」（不瞎写用户配置），结果附回滚方式。
+  // server 脚本是纯 Node 程序，注册命令用 node 拉起——PATH 无 node 时整体不发起并给指路
+  ipcMain.handle('mcp:register', async () => {
+    const node = await checkCommand('node');
+    if (!node.ok) return { results: [], reason: 'PATH 中找不到 node：MCP server 为 Node 脚本，需先安装 Node.js' };
+    const detected = await detectAiTools(store.getConfig(), checkCommand);
+    const repoRoot = path.resolve(__dirname, '..', '..');
+    const serverBin = mcpRegister.serverScriptPath(repoRoot);
+    const results = [];
+    for (const t of detected.filter((x) => x.installed)) {
+      results.push(await mcpRegister.registerMcp(t.id, {
+        binPath: serverBin,
+        userDataDir: store.baseDir,
+        appExe: process.execPath,
+        appCwd: process.defaultApp ? repoRoot : null, // 开发形态 electron 需在仓库根以 `.` 指向应用
+      }, { execFile }));
+    }
+    return { results };
+  });
+
+  return { buildBoard, gitWatcher, mcpAction: dispatchMcpAction };
 }
 
 module.exports = { registerIpc };

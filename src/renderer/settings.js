@@ -894,6 +894,26 @@
     document.getElementById('addRoot').addEventListener('click', function () { pathRow(rootsList, ''); });
     document.getElementById('addExtra').addEventListener('click', function () { pathRow(extraList, ''); });
     document.getElementById('addAiTool').addEventListener('click', function () { aiToolRow('', ''); });
+    // MCP 一键注册（issue #149）：结果逐 CLI 展示（✓/✗ + 回滚命令），失败不清屏可重试
+    document.getElementById('mcpRegisterBtn').addEventListener('click', function () {
+      var btn = this;
+      var res = document.getElementById('mcpRegisterResult');
+      btn.disabled = true;
+      res.textContent = '注册中…';
+      res.classList.remove('hidden');
+      api.mcpRegister().then(function (r) {
+        var lines = r.reason ? [r.reason] : [];
+        (r.results || []).forEach(function (x) {
+          lines.push((x.ok ? '✓ ' : '✗ ') + x.toolId + '：' + (x.ok ? (x.detail || '已注册') : (x.reason || '失败')));
+          if (x.rollback) lines.push('　回滚：' + x.rollback);
+        });
+        res.textContent = lines.join('\n') || '没有可注册的 CLI（先安装 claude / codex / gemini / qwen 并保持 PATH 可探测）';
+        btn.disabled = false;
+      }).catch(function (err) {
+        res.textContent = '注册失败：' + ipcErrText(err);
+        btn.disabled = false;
+      });
+    });
     document.getElementById('browseEditor').addEventListener('click', function () {
       api.pickPath('file').then(function (p) { if (p) { fEditor.value = p; scheduleSave(); } })
         .catch(function (err) { showHint('选择文件失败：' + ipcErrText(err), true); });

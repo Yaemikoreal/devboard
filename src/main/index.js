@@ -13,6 +13,7 @@ let tray = null;
 let store = null;
 let buildBoard = null;
 let gitWatcher = null;
+let mcpAction = null; // MCP 动作派发器（issue #149）：second-instance/启动段把 --mcp-action argv 落成既有能力
 let quitting = false;
 let tickTimer = null;
 let lastHotkeyError = '';
@@ -244,7 +245,10 @@ if (!gotLock) {
     console.error('[devboard] unhandledRejection:', err);
   });
 
-  app.on('second-instance', () => {
+  // second-instance 带 argv（issue #149）：MCP 动作优先落成（重扫/快捷打开/起 CLI），再亮窗；
+  // 动作派发内部自带兜错，不会向这里抛
+  app.on('second-instance', (_e, argv) => {
+    if (mcpAction) mcpAction(argv);
     if (win) { win.show(); win.focus(); }
   });
 
@@ -253,7 +257,7 @@ if (!gotLock) {
     app.setAppUserModelId('com.yaemikoreal.signalboard'); // 与 build.appId 一致，通知才能正确归因与响应点击
     migrateUserDataIfNeeded();
     store = new Store(app.getPath('userData'), require('./token-vault'));
-    ({ buildBoard, gitWatcher } = registerIpc({
+    ({ buildBoard, gitWatcher, mcpAction } = registerIpc({
       store,
       getWindow: () => win,
       applySettings,
@@ -261,6 +265,11 @@ if (!gotLock) {
       getAutoStartError: () => lastAutoStartError, // 开机自启注册失败原因，设置页展示（issue #108）
       onAttentionCount: updateTrayTooltip, // 拼板后刷新托盘计数（显隐由 tooltip 函数按设置裁决，issue #80）
     }));
+
+    // 启动段处理 --mcp-action（issue #149）：应用未在跑时 MCP server detached 拉起新实例，动作
+    // 在新实例这里落成；普通启动的 argv 不含 --mcp-*=*，parseActionArgv 返回 null 直接跳过。
+    // slice 边界：开发形态 argv = [electron.exe, main.js, ...args]，打包 = [exe, ...args]
+    mcpAction(process.argv.slice(process.defaultApp ? 2 : 1));
 
     // 冷启动防闪（issue #101）：preload 同步取首帧关键 token，head 内联脚本在样式生效前铺底
     ipcMain.on('boot:theme', (e) => { e.returnValue = bootThemePayload(store.getConfig().theme); });

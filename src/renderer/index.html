@@ -346,6 +346,15 @@ try {
               <div class="group-desc" id="aiToolsDesc">总览页工作台按本机 PATH 探测已登记的 AI 工具；下方可增删自定义命令（名称 + 命令），与默认清单一并探测</div>
               <div id="aiToolsList"></div>
               <button class="add-row" id="addAiTool" type="button">+ 添加工具</button>
+              <!-- MCP 一键注册（issue #149）：对已安装且支持的 CLI 执行原生 mcp add，结果附回滚命令 -->
+              <div class="field">
+                <label>MCP 注册（实验性）</label>
+                <div class="inline-check">
+                  <button id="mcpRegisterBtn" type="button">一键注册 SignalBoard MCP</button>
+                </div>
+                <div class="hint">把 SignalBoard 作为 MCP server 写进已安装且支持的 Agent CLI（claude / codex / gemini / qwen）；注册后 agent 会话可查询项目事实、写交接、触发重扫。写坏不了配置：走 CLI 原生命令，结果附回滚方式</div>
+                <pre class="prompt-preview hidden" id="mcpRegisterResult"></pre>
+              </div>
             </div>
             <div class="set-group">
               <!-- 提示词模板自定义（issue #78）：编辑单位 = 模板 + {{事实}} 插入点；事实块组装留在代码里 -->
