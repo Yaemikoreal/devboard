@@ -25,6 +25,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      # 站点护栏（issue #69 阶段 2）：动效越界/layout 抖动、图片偷跑全尺寸、降级块被删——
+      # 任何一项打红即不上线，把验收标准从「一次性核对」变成「持续成立」
+      - name: Audit site (guardrails)
+        run: node scripts/audit-site.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

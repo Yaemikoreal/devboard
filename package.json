@@ -17,6 +17,7 @@
     "test:mcp": "node scripts/test-mcp.js",
     "test:renderer": "node scripts/test-renderer.js",
     "theme:sync": "node scripts/sync-theme-root.js",
+    "audit:site": "node scripts/audit-site.js",
     "shot": "electron scripts/screenshot.js",
     "demo": "electron scripts/screenshot.js --gif",
     "logo": "electron scripts/render-logo.js",
