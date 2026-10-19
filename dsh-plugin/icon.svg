@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- SignalBoard 应用图标（本仓库 draft-d 定稿的整版复用）：奶油底板 + 3x3 圆角方格点阵，对角两格为明黄「信号格」。
+       作为 DSH 插件显示图标（Plugin Manager / 清单行），非面板内 UI（面板内走宿主 token 的单色线性版本）。 -->
+  <rect x="130.5" y="130.5" width="763" height="763" rx="126" fill="#f3eee2"/>
+  <rect x="251" y="251" width="150" height="150" rx="31" fill="#322b23"/>
+  <rect x="437" y="251" width="150" height="150" rx="31" fill="#322b23"/>
+  <rect x="623" y="251" width="150" height="150" rx="31" fill="#f5d00b"/>
+  <rect x="251" y="437" width="150" height="150" rx="31" fill="#322b23"/>
+  <rect x="437" y="437" width="150" height="150" rx="31" fill="#322b23"/>
+  <rect x="623" y="437" width="150" height="150" rx="31" fill="#322b23"/>
+  <rect x="251" y="623" width="150" height="150" rx="31" fill="#f5d00b"/>
+  <rect x="437" y="623" width="150" height="150" rx="31" fill="#322b23"/>
+  <rect x="623" y="623" width="150" height="150" rx="31" fill="#322b23"/>
+</svg>
