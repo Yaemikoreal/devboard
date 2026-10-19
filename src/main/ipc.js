@@ -155,10 +155,9 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   // refreshGithubNow 以 onAuthChanged 回调注入，保住「连接/导入后立即拉一轮、断开立即重推拼板」
   // （issue #118）语义；healGithubUsername 由 buildBoard（板域）调用，经返回值取回
   const { healGithubUsername } = registerGithub({ store, onAuthChanged: refreshGithubNow });
-  // AI 调度域已拆至 ipc-ai.js（issue #124 第二刀）：五个 ai/aitools handler + 工具探测/引擎排序等
-  // 帮手 + 在飞表与引擎黑名单；checkCommand/pathExists/spawnResult 跨域系统助手经 deps 注入，
-  // 会话级黑名单清空口经返回值暴露（settings:set 调用，issue #138）
-  const { clearSessionBadEngines } = registerAi({ store, checkCommand, pathExists, spawnResult });
+  // AI 调度域已拆至 ipc-ai.js（issue #124 第二刀）：ai/aitools/provider handler + 工具探测/在飞表；
+  // checkCommand/pathExists/spawnResult 跨域系统助手经 deps 注入（AI 生成本身只走供应商直连）
+  registerAi({ store, checkCommand, pathExists, spawnResult });
   // 数据/系统辅助域已拆至 ipc-data.js（issue #124 第三刀）：dialog:pick / util:checkCommand /
   // shell:openExternal / data:openDir/export/import/reset；checkCommand 留主干经 deps 注入，
   // data:import 写回 config 后经 applySettings 让热键/自启/刷新间隔即时生效
@@ -497,6 +496,10 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     return Object.assign({}, cfg, {
       githubToken: '',
       hasGithubToken: !!cfg.githubToken,
+      // AI 供应商 Key 与 githubToken 同口径：只下发「是否已保存」，明文不出主进程（issue #180 后续）
+      aiApiKey: '',
+      hasAiApiKey: !!cfg.aiApiKey,
+      aiProviderConfigured: !!(cfg.aiProviderBaseUrl && cfg.aiProviderModel && cfg.aiApiKey),
       tokenEncrypted: store.cryptoAvailable(),
       aiPromptDefaults: { weekly: ai.DEFAULT_WEEKLY_TEMPLATE, advice: ai.DEFAULT_ADVICE_TEMPLATE },
     });
@@ -528,10 +531,13 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
       p[k] = raw[k];
     }
     if (!p.githubToken) delete p.githubToken; // 空值 = 不改动已存 token（清空走 github:importGh 失败态外的显式入口）
-    // AI 配置变更清空会话级引擎黑名单（issue #138，黑名单在 ipc-ai.js 域内，经返回值清空口调用）：
-    // aiEngine/aiTools/aiEnabled 任一变化，被偶发故障拉黑的引擎立即可再试，修好登录/配额后不再整会话雪藏
-    if (['aiEngine', 'aiTools', 'aiEnabled'].some((k) => Object.prototype.hasOwnProperty.call(p, k))) {
-      clearSessionBadEngines();
+    // AI 供应商 Key：空白 = 保持已存；null = 显式清空；非空字符串 = 更换（长度兜底截断）
+    if (raw.aiApiKey === null) {
+      p.aiApiKey = '';
+    } else if (typeof p.aiApiKey === 'string' && p.aiApiKey.trim()) {
+      p.aiApiKey = p.aiApiKey.trim().slice(0, 500);
+    } else {
+      delete p.aiApiKey;
     }
     const cfg = store.setConfig(p);
     applySettings(cfg); // 热键重注册 + 开机自启即时生效

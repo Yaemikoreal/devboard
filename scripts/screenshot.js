@@ -89,7 +89,11 @@ app.whenReady().then(() => {
     ipcMain.handle('settings:get', () => ({
       roots: ['E:\\myproject'], extraPaths: [], blacklist: ['node_modules'],
       githubToken: '', hasGithubToken: true, githubUsername: 'me', editorCmd: 'code', terminalCmd: '',
-      hotkey: 'Ctrl+Shift+D', autoStart: true, aiTools: [], aiEnabled: true, aiEngine: 'kimi',
+      hotkey: 'Ctrl+Shift+D', autoStart: true, aiTools: [], aiEnabled: true,
+      // AI 供应商 mock（issue #180 后续）：截图走直连后端，提供完整供应商配置
+      aiProviderPreset: 'deepseek', aiProviderProtocol: 'openai',
+      aiProviderBaseUrl: 'https://api.deepseek.com/v1', aiProviderModel: 'deepseek-chat',
+      hasAiApiKey: true, aiProviderConfigured: true,
       // DEVBOARD_MOCK_THEME=warm|mist|meadow|dark：指定整体主题出图（缺省暖阳，强调色取主题默认）
       theme: { id: process.env.DEVBOARD_MOCK_THEME || 'warm' },
     }));
@@ -119,9 +123,16 @@ app.whenReady().then(() => {
     // AI 功能（issue #29 mock）：引擎可用；周报/建议给罐装文本，筛选给结构化结果
     // DEVBOARD_MOCK_AI=off 时返回无引擎，验证「未装工具时入口隐藏」
     const aiOff = process.env.DEVBOARD_MOCK_AI === 'off';
+    const mockProvider = { preset: 'deepseek', label: 'DeepSeek · deepseek-chat', model: 'deepseek-chat', protocol: 'openai' };
     ipcMain.handle('ai:caps', () => (aiOff
-      ? { enabled: true, engine: null }
-      : { enabled: true, engine: { id: 'kimi', label: 'Kimi Code', cmd: 'kimi' } }));
+      ? { enabled: true, configured: false, provider: null, cliTool: null }
+      : {
+        enabled: true,
+        configured: true,
+        provider: mockProvider,
+        // 截图环境无真实 CLI：cliTool 给一个让意图路由/执行键正常出现（与旧 mock 的 kimi 一致）
+        cliTool: { id: 'kimi', label: 'Kimi Code', cmd: 'kimi' },
+      }));
     const atWeekly = new Date(Date.now() - 47 * 60000).toISOString();
     const atAdvice = new Date(Date.now() - 2 * 3600000).toISOString();
     // DEVBOARD_MOCK_AI_DELAY=毫秒：模拟真实 CLI 耗时，验证生成任务后台执行与切页恢复（issue #40）
@@ -130,7 +141,7 @@ app.whenReady().then(() => {
       ? new Promise((res) => setTimeout(() => res(v), aiDelay))
       : v);
     ipcMain.handle('ai:ask', (_e, payload) => {
-      const engine = { id: 'kimi', label: 'Kimi Code', cmd: 'kimi' };
+      const engine = { id: 'provider', label: mockProvider.label, cmd: '', provider: true };
       if (payload && payload.kind === 'filter') {
         return { ok: true, kind: 'filter', filter: { band: null, keyword: null, days: 7 }, engine };
       }

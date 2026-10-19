@@ -1,5 +1,5 @@
 /* devboard 渲染层设置域（issue #124 渲染层拆分）：外观/主题域 + 设置页全域——
-   分段控件、子模块导航、GitHub 账户与设备码流、AI 工具行与引擎下拉、提示词模板、
+   分段控件、子模块导航、GitHub 账户与设备码流、AI 工具行与供应商配置、提示词模板、
    数据组、自动保存链、热键录入。原 app.js 单 IIFE 共享 state、无模块系统，
    本文件以经典脚本挂工厂（window.DevboardSettings），由 app.js 注入 ctx 挂载：
    跨域引用（板/渲染/AI 入口）一律经 ctx，通道与行为零变更。
@@ -22,11 +22,15 @@
     var renderAiWeeklyEntry = ctx.renderAiWeeklyEntry;
     var appEl = document.getElementById('app');
     // AI 工具注册表派生（issue #123）：与 app.js 同源（preload rendererConsts 单一派生点）。
-    // AI_ENGINE_LABELS（issue #141）：引擎可调用档 label——AI 入口显隐按有 spec 的工具判定，
-    // 提示文案若列全部注册工具会误导（可启动档不进引擎候选）
-    var AI_TOOL_LABEL = root.devboardConsts.AI_TOOL_LABELS;
-    var AI_ENGINE_LABEL = root.devboardConsts.AI_ENGINE_LABELS;
+    // AI 生成只走供应商直连后，设置页不再需要「本机 CLI 引擎」下拉；AI 工具区仍按注册表探测结果展示
     var AI_ICON_CHOICES = [['', '默认（终端）']].concat(root.devboardConsts.AI_ICON_CHOICES);
+    // AI 供应商预设/协议（应用直连模型 API）：由 preload 经 devboardConsts 下发（shared/ai-providers.js 单一来源）。
+    // 本地未接线时退化为空预设 + 两种内置协议：仍可手填自定义供应商，不因缺常量抛错
+    var AI_PROVIDER_PRESETS = (root.devboardConsts && Array.isArray(root.devboardConsts.aiProviders))
+      ? root.devboardConsts.aiProviders : [];
+    var AI_PROTOCOL_CHOICES = (root.devboardConsts && Array.isArray(root.devboardConsts.aiProtocols) && root.devboardConsts.aiProtocols.length)
+      ? root.devboardConsts.aiProtocols
+      : [{ id: 'openai', label: 'OpenAI 兼容' }, { id: 'anthropic', label: 'Anthropic 原生' }];
 
     /* ---------- 主题（issue #27）：整体主题预设 + 强调色派生阶梯 ---------- */
     var DEFAULT_ACCENT = '#f5d90a';
@@ -94,7 +98,15 @@
     var fHotkey = document.getElementById('fHotkey');
     var fAutoStart = document.getElementById('fAutoStart');
     var fAiEnabled = document.getElementById('fAiEnabled');
-    var fAiEngine = document.getElementById('fAiEngine');
+    // AI 供应商直连（应用直连模型 API）：字段与 store.js DEFAULT_CONFIG.ai* 同名
+    var fAiProviderPreset = document.getElementById('fAiProviderPreset');
+    var fAiProviderProtocol = document.getElementById('fAiProviderProtocol');
+    var fAiProviderBaseUrl = document.getElementById('fAiProviderBaseUrl');
+    var fAiProviderModel = document.getElementById('fAiProviderModel');
+    var fAiApiKey = document.getElementById('fAiApiKey'); // Key 不下发；留空 = 保持已存
+    var fAiTemperature = document.getElementById('fAiTemperature');
+    var fAiMaxTokens = document.getElementById('fAiMaxTokens');
+    var fAiTimeoutMs = document.getElementById('fAiTimeoutMs');
     var scanIntervalSeg = document.getElementById('scanIntervalSeg');
     var warnDirtyDaysSeg = document.getElementById('warnDirtyDaysSeg');
     var fWarnDirty = document.getElementById('fWarnDirty');
@@ -473,36 +485,148 @@
       return Array.prototype.map.call(listEl.querySelectorAll('input'), function (i) { return i.value.trim(); }).filter(Boolean);
     }
 
-    // 默认 AI 引擎下拉（issue #29）：「自动（推荐）」为首档（值 ''，保留缺省语义：lastGood 优先、其次第一个可用，issue #41）；
-    // 空配置选中自动档而不物化成 avail[0]（issue #134）；无可用工具时禁用并给提示
-    function renderAiEngineSelect(cfg) {
-      var hint = document.getElementById('aiEngineHint');
-      fAiEngine.innerHTML = '';
-      var avail = (state.aiTools || []).filter(function (t) { return t.installed; });
-      if (!avail.length) {
-        var o = el('option', null, '未检测到已安装的 AI 工具');
-        o.value = '';
-        fAiEngine.appendChild(o);
-        fAiEngine.disabled = true;
-        // 提示文案随注册表派生（issue #168 第 5 条）：新登记的工具自动出现在这里，不再手写四个工具名。
-        // 按引擎可调用档派生（issue #141）：可启动档工具不进引擎候选，不在此列
-        hint.textContent = '安装并登录 ' + Object.keys(AI_ENGINE_LABEL).map(function (k) { return AI_ENGINE_LABEL[k]; }).join(' / ') + ' 任一工具后，AI 功能入口才会出现';
-        return;
-      }
-      fAiEngine.disabled = false;
-      var auto = el('option', null, '自动（推荐）');
-      auto.value = '';
-      fAiEngine.appendChild(auto);
-      var best = state.aiCaps && state.aiCaps.engine; // 引擎链实际首选（含 lastGood 排序），标注让 UI 与行为对齐（issue #134）
-      avail.forEach(function (t) {
-        var o = el('option', null, t.label + '（' + t.cmd + '）' + (best && best.id === t.id ? ' · 当前首选' : ''));
-        o.value = t.id;
-        fAiEngine.appendChild(o);
-      });
-      var wanted = cfg && cfg.aiEngine;
-      fAiEngine.value = wanted && avail.some(function (t) { return t.id === wanted; }) ? wanted : '';
-      hint.textContent = '候选为本机已探测可用的工具；「自动」优先记忆的上次可用引擎';
+    /* ----- AI 供应商直连（应用直连模型 API）：预设填充 / Key 掩码 / 连接测试 ----- */
+    // 数值字段边界与主进程 store 归一化同口径（温度 0–2、tokens 0–32000、超时 5000–180000），UI 先夹紧再落盘
+    var AI_NUM_SPECS = {
+      fAiTemperature: { fallback: 0.4, min: 0, max: 2, integer: false },
+      fAiMaxTokens: { fallback: 0, min: 0, max: 32000, integer: true },
+      fAiTimeoutMs: { fallback: 60000, min: 5000, max: 180000, integer: true },
+    };
+    var aiProviderLoaded = false; // 设置成功读入后才参与自动保存，避免读取失败时用空值覆盖已存供应商配置
+
+    function aiFinite(v, fallback) {
+      var n = Number(v);
+      return isFinite(n) ? n : fallback;
     }
+
+    function aiPresetById(id) {
+      for (var i = 0; i < AI_PROVIDER_PRESETS.length; i += 1) {
+        if (AI_PROVIDER_PRESETS[i] && AI_PROVIDER_PRESETS[i].id === id) return AI_PROVIDER_PRESETS[i];
+      }
+      return null;
+    }
+
+    // 下拉赋值：值不在选项里时回落到 fallback（settings:get 脏值 / 旧版本预设 id 不抛错）
+    function aiSelectValue(sel, wanted, fallback) {
+      var want = wanted == null ? '' : String(wanted);
+      sel.value = want;
+      if (sel.value !== want) sel.value = fallback || '';
+      return sel.value;
+    }
+
+    // 预设/协议选项一次构建：预设列表 + 末尾「自定义」（列表已含 custom 预设时不重复追加）
+    function renderAiProviderChoices() {
+      fAiProviderProtocol.innerHTML = '';
+      AI_PROTOCOL_CHOICES.forEach(function (p) {
+        var o = el('option', null, p.label || p.id);
+        o.value = p.id;
+        fAiProviderProtocol.appendChild(o);
+      });
+      fAiProviderPreset.innerHTML = '';
+      var none = el('option', null, '未选择（手动填写）');
+      none.value = '';
+      fAiProviderPreset.appendChild(none);
+      var hasCustom = false;
+      AI_PROVIDER_PRESETS.forEach(function (p) {
+        if (!p || !p.id) return;
+        if (p.id === 'custom') hasCustom = true;
+        var o = el('option', null, p.label || p.id);
+        o.value = p.id;
+        fAiProviderPreset.appendChild(o);
+      });
+      if (!hasCustom) {
+        var custom = el('option', null, '自定义');
+        custom.value = 'custom';
+        fAiProviderPreset.appendChild(custom);
+      }
+    }
+
+    // 选预设时填入协议 / Base URL / 模型（仍可编辑）；「自定义」与未选择不清空当前填写
+    function applyAiProviderPreset(id) {
+      var p = aiPresetById(id);
+      if (!p || p.id === 'custom') return;
+      if (p.protocol) aiSelectValue(fAiProviderProtocol, p.protocol, 'openai');
+      fAiProviderBaseUrl.value = p.baseUrl || '';
+      fAiProviderModel.value = p.model || '';
+    }
+
+    function aiKeyPlaceholder(hasSavedKey) {
+      if (hasSavedKey) return '已保存（输入以更换）';
+      var p = aiPresetById(fAiProviderPreset.value);
+      return (p && p.keyHint) || '粘贴 API Key';
+    }
+
+    // Key 掩码：已存 Key 时提示「输入以更换」，否则用当前预设的 keyHint 作占位
+    function renderAiProviderStatus(cfg) {
+      fAiApiKey.placeholder = aiKeyPlaceholder(!!(cfg && cfg.hasAiApiKey));
+    }
+
+    // 回填设置：Key 不下发（留空 = 不改动已存 Key），其余字段与 store 默认值同口径
+    function renderAiProviderFields(cfg) {
+      cfg = cfg || {};
+      aiSelectValue(fAiProviderPreset, cfg.aiProviderPreset, '');
+      aiSelectValue(fAiProviderProtocol, cfg.aiProviderProtocol, 'openai');
+      fAiProviderBaseUrl.value = cfg.aiProviderBaseUrl || '';
+      fAiProviderModel.value = cfg.aiProviderModel || '';
+      // 首次使用（已选预设但参数为空）：按预设回填——否则下拉停在预设上却空着，
+      // 且 change 不会再触发，只能先切「未选择」再切回来才能填
+      if (!fAiProviderBaseUrl.value.trim() && !fAiProviderModel.value.trim()) {
+        applyAiProviderPreset(fAiProviderPreset.value);
+      }
+      fAiApiKey.value = '';
+      fAiTemperature.value = String(aiFinite(cfg.aiTemperature, 0.4));
+      fAiMaxTokens.value = String(aiFinite(cfg.aiMaxTokens, 0));
+      fAiTimeoutMs.value = String(aiFinite(cfg.aiTimeoutMs, 60000));
+      aiProviderLoaded = true;
+      renderAiProviderStatus(cfg);
+    }
+
+    function aiNumValue(inputEl, spec) {
+      var raw = String(inputEl.value == null ? '' : inputEl.value).trim();
+      var n = raw === '' ? NaN : Number(raw);
+      if (!isFinite(n)) return spec.fallback;
+      n = Math.min(spec.max, Math.max(spec.min, n));
+      return spec.integer ? Math.round(n) : Math.round(n * 10) / 10;
+    }
+
+    // 设置页草稿 → settings:set 补丁片段（aiApiKey 单独在保存链按「留空 = 保持已存」处理）
+    function collectAiProviderFields() {
+      return {
+        aiProviderPreset: fAiProviderPreset.value || '',
+        aiProviderProtocol: fAiProviderProtocol.value || 'openai',
+        aiProviderBaseUrl: fAiProviderBaseUrl.value.trim(),
+        aiProviderModel: fAiProviderModel.value.trim(),
+        aiTemperature: aiNumValue(fAiTemperature, AI_NUM_SPECS.fAiTemperature),
+        aiMaxTokens: aiNumValue(fAiMaxTokens, AI_NUM_SPECS.fAiMaxTokens),
+        aiTimeoutMs: aiNumValue(fAiTimeoutMs, AI_NUM_SPECS.fAiTimeoutMs),
+      };
+    }
+
+    // 供应商字段变化判定（与 aiEnabled 同属 AI 改动域，成功后触发 loadAiCaps 重估入口显隐）
+    function aiProviderFieldsChanged(next, prev) {
+      prev = prev || {};
+      return next.aiProviderPreset !== (typeof prev.aiProviderPreset === 'string' ? prev.aiProviderPreset : '') ||
+        next.aiProviderProtocol !== (prev.aiProviderProtocol === 'anthropic' ? 'anthropic' : 'openai') ||
+        next.aiProviderBaseUrl !== String(prev.aiProviderBaseUrl || '').trim() ||
+        next.aiProviderModel !== String(prev.aiProviderModel || '').trim() ||
+        next.aiTemperature !== Math.round(aiFinite(prev.aiTemperature, 0.4) * 10) / 10 ||
+        next.aiMaxTokens !== Math.round(aiFinite(prev.aiMaxTokens, 0)) ||
+        next.aiTimeoutMs !== Math.round(aiFinite(prev.aiTimeoutMs, 60000));
+    }
+
+    renderAiProviderChoices();
+    fAiProviderPreset.addEventListener('change', function () {
+      applyAiProviderPreset(fAiProviderPreset.value);
+      renderAiProviderStatus(state.settings);
+      scheduleSave();
+    });
+    // 数值输入失焦时夹紧回写（与落盘同口径；change 冒泡到设置页委托后按新值自动保存）
+    Object.keys(AI_NUM_SPECS).forEach(function (id) {
+      var inputEl = document.getElementById(id);
+      inputEl.addEventListener('change', function () {
+        inputEl.value = String(aiNumValue(inputEl, AI_NUM_SPECS[id]));
+      });
+    });
 
     function markRows(listEl, invalid) {
       Array.prototype.forEach.call(listEl.querySelectorAll('.path-row'), function (row) {
@@ -706,7 +830,7 @@
         renderLanding(LANDINGS.indexOf(cfg.landingView) >= 0 ? cfg.landingView : 'overview'); // 唤出着陆视图（issue #86）
         fAiEnabled.checked = cfg.aiEnabled !== false; // AI 功能总开关（issue #29）
         fillPromptTemplates(cfg); // 提示词模板（issue #78）：预填自定义值或内置默认
-        loadAiTools().then(function () { renderAiEngineSelect(cfg); });
+        renderAiProviderFields(cfg); // AI 供应商直连：回填配置（Key 只给 hasAiApiKey，输入框留空 = 不改）
         var th = savedTheme();
         themeId = th.id;
         themeAccent = th.accent;
@@ -724,7 +848,7 @@
         hintEl.textContent = '';
         hintEl.classList.remove('err');
         document.getElementById('hotkeyErr').textContent = '';
-        ['previewRes', 'testGhRes', 'checkEditorRes', 'checkTerminalRes', 'ghAuthRes'].forEach(function (id) {
+        ['previewRes', 'testGhRes', 'checkEditorRes', 'checkTerminalRes', 'ghAuthRes', 'aiProviderTestRes'].forEach(function (id) {
           var e = document.getElementById(id);
           e.textContent = '';
           e.className = 'res';
@@ -804,10 +928,16 @@
         aiPromptAdvice: promptDraftOf(fPromptAdvice, aiPromptDefaults().advice),
         theme: { id: themeId, accent: themeAccent, mode: themeMode, lightId: themeLightId, darkId: themeDarkId }, // 外观（issue #27）+ 跟随系统（issue #81）
       };
+      // AI 后端与供应商（应用直连模型 API）：字段并入同一补丁；设置未成功读入时不写，避免用空值覆盖已存配置
+      var typedAiKey = fAiApiKey.value.trim();
+      var aiProviderPatch = null;
+      if (aiProviderLoaded) {
+        aiProviderPatch = collectAiProviderFields();
+        Object.assign(patch, aiProviderPatch);
+        if (typedAiKey) patch.aiApiKey = typedAiKey; // 留空 = 保持已存 Key（与 token 同口径）
+      }
       var typedToken = fToken.value.trim();
       if (typedToken) patch.githubToken = typedToken; // 留空 = 保持已存 token（issue #12）
-      // 无可用引擎时下拉禁用：不物化 aiEngine，保留原显式偏好待工具回归（issue #134）
-      if (!fAiEngine.disabled) patch.aiEngine = fAiEngine.value;
       // 改动域检测：避免每次击键都重扫 PATH / 重扫磁盘 / 重渲染
       var pathsChanged = JSON.stringify(scanScopeOf(patch)) !== JSON.stringify(scanScopeOf(prev));
       var toolsChanged = JSON.stringify(patch.aiTools) !== JSON.stringify(prev.aiTools || []);
@@ -822,10 +952,10 @@
         JSON.stringify(patch.warningTypes) !==
           JSON.stringify({ dirty: prevWt.dirty !== false, unpushed: prevWt.unpushed !== false, ci: prevWt.ci !== false, review: prevWt.review !== false, pr: prevWt.pr !== false });
       var autoStartChanged = patch.autoStart !== !!prev.autoStart; // 自启开关变化后回读注册结果（issue #108）
-      // AI 开关/引擎变化需重估能力（issue #29）；自定义工具清单变化同时影响两者；
-      // aiEngine 字段被剔除时（无可用引擎）不参与比较（issue #134）
+      // AI 开关/供应商配置变化需重估能力（ai:caps 决定 AI 入口显隐）；自定义工具清单变化同时影响工具区
       var aiChanged = patch.aiEnabled !== (prev.aiEnabled !== false) ||
-        (('aiEngine' in patch) && patch.aiEngine !== (prev.aiEngine || ''));
+        (aiProviderPatch ? aiProviderFieldsChanged(aiProviderPatch, prev) : false) ||
+        !!typedAiKey;
       // 提示词模板改动（issue #78）：缓存键已含模板哈希，旧结果不会掩盖修改；
       // 周报自动生成标记复位，回到总览即按新模板自动重生成一次
       var promptChanged = patch.aiPromptWeekly !== (prev.aiPromptWeekly || null) ||
@@ -834,6 +964,8 @@
         state.settings = cfg;
         ghStateText();
         if (typedToken) fToken.value = '';
+        if (typedAiKey) fAiApiKey.value = ''; // 已落盘的 Key 不回显；placeholder 改为「已保存」
+        renderAiProviderStatus(cfg); // Key 掩码按落盘后的配置刷新
         if (autoStartChanged) refreshAutoStartErr(); // 自启注册结果回读（issue #108）
         var jobs = [];
         if (hotkeyChanged) jobs.push(api.getHotkeyError());
@@ -856,15 +988,9 @@
         }
         if (editorChanged) runCheck(patch.editorCmd, document.getElementById('checkEditorRes'));
         if (terminalChanged) checkTerminalCmd();
-        // 工具清单变化后重扫 PATH 并重建引擎下拉（issue #168 第 3 条）：原实现只调 loadAiTools()，
-        // 而 renderAiEngineSelect 只在打开设置页时调用一次——新增工具后下拉仍显示
-        // 「未检测到已安装的 AI 工具」且一直禁用，要关掉再打开设置才恢复
-        if (toolsChanged) {
-          loadAiTools().then(function () {
-            if (state.settings) renderAiEngineSelect(state.settings);
-          });
-        }
-        if (aiChanged || toolsChanged) loadAiCaps(); // AI 引擎/开关或可用工具集已变（issue #29）
+        // 工具清单变化后重扫 PATH（loadAiTools 内部会重渲工作台工具按钮与详情面板工具区）
+        if (toolsChanged) loadAiTools();
+        if (aiChanged || toolsChanged) loadAiCaps(); // AI 开关/供应商配置或可用工具集已变
         // 模板已改（issue #78）：复位周报自动生成标记；缓存键含模板哈希，旧结果已不会展出。
         // 设置页开着时不主动重生成（避免编辑途中反复起 AI 生成）；已关闭（hideSettings 触发 flushSave 的回调）则立即重估。
         // weeklyAutoDay 属 AI 渲染域（app.js），经 ctx.onPromptChanged 复位与按需重估
@@ -878,11 +1004,13 @@
     // 设置即输即存：文本输入停顿落盘；勾选/下拉/色板选择立即；token 失焦才提交（避免半段 token 落盘）
     var settingsBody = document.querySelector('.settings-body');
     settingsBody.addEventListener('input', function (e) {
-      if (e.target === fToken || e.target.id === 'fAccentHex') return;
+      // token / API Key 失焦才提交（避免半段密钥落盘），其余文本输入停顿即存
+      if (e.target === fToken || e.target === fAiApiKey || e.target.id === 'fAccentHex') return;
       scheduleSave();
     });
     settingsBody.addEventListener('change', function (e) {
       if (e.target === fToken && !fToken.value.trim()) return;
+      if (e.target === fAiApiKey && !fAiApiKey.value.trim()) return; // 留空 = 保持已存 Key
       if (e.target.id === 'fAccentHex') return; // hex 输入在自身 change 校验里处理
       scheduleSave();
     });
@@ -928,6 +1056,43 @@
       }).catch(function (err) {
         res.textContent = '测试失败：' + ipcErrText(err);
         res.classList.add('bad');
+      });
+    });
+    // 供应商直连「测试连接」：用当前草稿参数直接请求，不落盘；apiKey 传空串 = 使用已保存的 Key
+    document.getElementById('aiProviderTestBtn').addEventListener('click', function () {
+      var btn = this;
+      var res = document.getElementById('aiProviderTestRes');
+      if (!fAiProviderBaseUrl.value.trim() || !fAiProviderModel.value.trim()) {
+        res.textContent = '请先填写 Base URL 与模型';
+        res.className = 'res bad';
+        return;
+      }
+      if (typeof api.aiProviderTest !== 'function') { // 本地尚未接线时降级提示，不抛错
+        res.textContent = '当前版本不支持直连测试';
+        res.className = 'res bad';
+        return;
+      }
+      res.textContent = '正在连接…';
+      res.className = 'res';
+      btn.disabled = true;
+      api.aiProviderTest({
+        protocol: fAiProviderProtocol.value || 'openai',
+        baseUrl: fAiProviderBaseUrl.value.trim(),
+        model: fAiProviderModel.value.trim(),
+        apiKey: fAiApiKey.value.trim(),
+      }).then(function (r) {
+        if (r && r.ok) {
+          res.textContent = '连接成功 · ' + Math.round(aiFinite(r.ms, 0)) + ' ms';
+          res.classList.add('ok');
+        } else {
+          res.textContent = (r && r.reason) || '连接失败';
+          res.classList.add('bad');
+        }
+      }).catch(function (err) {
+        res.textContent = '连接失败：' + ipcErrText(err);
+        res.classList.add('bad');
+      }).then(function () {
+        btn.disabled = false;
       });
     });
     document.getElementById('ghDeviceBtn').addEventListener('click', startDeviceFlow);

@@ -14,10 +14,15 @@ contextBridge.exposeInMainWorld('devboardBoot', { theme: bootTheme });
 // 渲染层经 window.devboardConsts 消费，不再手写本地副本
 // AI 工具注册表派生（issue #123）：痕迹 label 映射与设置页图标选项由注册表 rendererConsts()
 // 一次算好随桥下发，渲染层直用，不再手写按工具 id 键控的本地副本，也不重复实现派生规则
+// AI 供应商预设（issue #180 后续）：设置页下拉与 Key 提示的单一来源，随桥下发避免渲染层手抄列表
 contextBridge.exposeInMainWorld('devboardConsts', Object.assign(
   {},
   require('./shared/constants'),
   require('./shared/ai-tools').rendererConsts(),
+  {
+    aiProviders: require('./shared/ai-providers').AI_PROVIDERS,
+    aiProtocols: require('./shared/ai-providers').AI_PROTOCOLS,
+  },
 ));
 
 // 主题 token 单一事实源（issue #122）：七套主题全量 token + 颜色工具，渲染层 app.js 经
@@ -70,6 +75,8 @@ contextBridge.exposeInMainWorld('devboard', {
   // AI 功能：能力探测 + 统一调用（issue #29）
   aiCaps: () => ipcRenderer.invoke('ai:caps'),
   aiAsk: (payload) => ipcRenderer.invoke('ai:ask', payload),
+  // 供应商连通性测试（issue #180 后续）：设置页「测试连接」，不落盘；apiKey 空 = 用已存 Key
+  aiProviderTest: (payload) => ipcRenderer.invoke('ai:provider:test', payload),
   // 提示词模板预览（issue #78）：用真实数据组装完整 prompt 展示
   aiPromptPreview: (payload) => ipcRenderer.invoke('ai:promptPreview', payload),
   // 设置页「数据」组（issue #79）：打开数据目录 + 导出/导入 + 重置

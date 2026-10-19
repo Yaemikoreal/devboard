@@ -57,7 +57,7 @@
     branchDetail: {}, // path + ' ' + branch -> { lastCommitAt, commits } | 'loading'
     suggestIdx: -1, // 搜索补全键盘选中项（issue #6）
     aiTools: null, // aitools:list 结果（含 installed 标记，issue #15）
-    aiCaps: null, // ai:caps 结果 { enabled, engine }（issue #29）
+    aiCaps: null, // ai:caps 结果 { enabled, configured, provider, cliTool }（AI 生成只走供应商直连）
     aiFilter: null, // AI 自然语言筛选 { raw, keyword, days }（issue #29，band 并入 state.band）
     aiJobs: {}, // AI 后台任务注册表 'kind|path' -> { status, startAt, result }（issue #40，切页不中断）
     details: {}, // path -> { readme, aiSessions } | 'loading'（issue #17 懒取）
@@ -968,10 +968,11 @@
     return f;
   }
 
-  // 起默认 AI CLI 处理某类警示：引擎不在（无可用工具）不挂键（沿用 ai:caps 显隐）；
+  // 起默认 AI CLI 处理某类警示（意图路由，ADR-0004）：本机工具不在（无 cliTool）不挂键；
+  // 该 CLI 只承接「把模板 prompt 带进终端」，不参与 AI 生成（周报/建议等生成只走供应商直连）。
   // pr 类型先探 gh CLI 决定模板降级版本，然后经 aitools:open 出口起可见终端
   function openIntentCli(p, type, btn) {
-    var eng = state.aiCaps && state.aiCaps.engine;
+    var eng = state.aiCaps && state.aiCaps.cliTool;
     if (!eng) return;
     var probe = type === 'pr' ? api.checkCommand('gh') : Promise.resolve({ ok: false });
     probe.then(function (r) {

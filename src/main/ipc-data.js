@@ -47,6 +47,8 @@ module.exports = function registerData({ store, getWindow, applySettings, checkC
     const cfgOut = Object.assign({}, store.getConfig());
     delete cfgOut.githubToken;
     delete cfgOut.githubTokenEnc;
+    delete cfgOut.aiApiKey; // AI 供应商 Key 同 token 口径：不随导出迁移（换机重新填）
+    delete cfgOut.aiApiKeyEnc;
     const payload = {
       app: 'SignalBoard',
       version: 1,
@@ -113,6 +115,8 @@ module.exports = function registerData({ store, getWindow, applySettings, checkC
       const patch = Object.assign({}, config);
       delete patch.githubToken; // 防御：即使导出文件被手工塞入 token 也不接收
       delete patch.githubTokenEnc;
+      delete patch.aiApiKey; // 同 githubToken：备份文件不携带供应商 Key，导入也不接收
+      delete patch.aiApiKeyEnc;
       applySettings(store.setConfig(patch)); // 热键/自启/刷新间隔等即时生效
     }
     return { ok: true };

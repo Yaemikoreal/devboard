@@ -181,6 +181,7 @@ try {
         </button>
         <div class="sn-subs" data-pane="aitools">
           <button type="button" data-target="grp-ai">AI 功能</button>
+          <button type="button" data-target="grp-aiprovider">AI 后端</button>
           <button type="button" data-target="grp-aitools">AI 工具</button>
         </div>
         <button class="sn-item" data-pane="github" type="button">
@@ -330,16 +331,58 @@ try {
           <div class="set-pane" id="pane-aitools">
             <div class="set-group" id="grp-ai">
               <h3>AI 功能</h3>
-              <div class="group-desc">AI 功能直接调用本机已安装、已登录的 Agent CLI，只发送统计事实与提交信息文本，不上传代码内容</div>
+              <div class="group-desc">AI 能力由下方配置的供应商直连提供；只发送统计事实与提交信息文本，不上传代码内容</div>
               <div class="field check">
                 <input type="checkbox" id="fAiEnabled">
                 <label for="fAiEnabled">启用 AI 功能（周报摘要 / 项目建议 / 自然语言筛选）</label>
               </div>
+            </div>
+            <!-- AI 供应商直连（应用直连模型 API）：
+                 配置字段见 store.js DEFAULT_CONFIG.ai*；预设/协议列表由 preload 经 devboardConsts 下发 -->
+            <div class="set-group" id="grp-aiprovider">
+              <h3>AI 后端与供应商</h3>
+              <div class="group-desc">供应商直连由应用自身调用模型 API，用于 AI 周报、项目建议与自然语言筛选；Key 仅保存在本机（经系统加密）。未配置时 AI 入口隐藏</div>
               <div class="field">
-                <label>默认 AI 引擎</label>
-                <select id="fAiEngine"></select>
-                <div class="hint" id="aiEngineHint"></div>
+                <label>供应商预设</label>
+                <select id="fAiProviderPreset"></select>
+                <div class="hint">选择预设会填入协议、Base URL 与模型，仍可手动修改；选「自定义」保留当前填写</div>
               </div>
+              <div class="field">
+                <label>协议</label>
+                <select id="fAiProviderProtocol"></select>
+              </div>
+              <div class="field">
+                <label>Base URL</label>
+                <input type="text" id="fAiProviderBaseUrl" spellcheck="false" placeholder="https://api.deepseek.com/v1">
+              </div>
+              <div class="field">
+                <label>模型</label>
+                <input type="text" id="fAiProviderModel" spellcheck="false" placeholder="deepseek-chat">
+              </div>
+              <div class="field">
+                <label>API Key</label>
+                <input type="password" id="fAiApiKey" autocomplete="off" spellcheck="false" placeholder="粘贴 API Key">
+                <div class="hint" id="aiApiKeyHint">Key 仅存本机（经系统加密）；留空表示继续使用已保存的 Key</div>
+                <div class="inline-check">
+                  <button id="aiProviderTestBtn" type="button">测试连接</button>
+                  <span class="res" id="aiProviderTestRes"></span>
+                </div>
+              </div>
+              <details class="adv" id="aiProviderAdv">
+                <summary>高级：采样与超时</summary>
+                <div class="field">
+                  <label>温度（0–2，越高越发散）</label>
+                  <input type="number" id="fAiTemperature" min="0" max="2" step="0.1" placeholder="0.4">
+                </div>
+                <div class="field">
+                  <label>最大输出 tokens（0 = 使用供应商默认）</label>
+                  <input type="number" id="fAiMaxTokens" min="0" max="32000" step="1" placeholder="0">
+                </div>
+                <div class="field">
+                  <label>超时（毫秒）</label>
+                  <input type="number" id="fAiTimeoutMs" min="5000" max="180000" step="1000" placeholder="60000">
+                </div>
+              </details>
             </div>
             <div class="set-group" id="grp-aitools">
               <h3>AI 工具</h3>

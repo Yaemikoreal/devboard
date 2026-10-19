@@ -12,6 +12,7 @@
     "test:scan": "node scripts/test-scan.js",
     "test:ai": "node scripts/test-ai.js",
     "test:github": "node scripts/test-github.js",
+    "test:provider": "node scripts/test-provider.js",
     "test:handoffs": "node scripts/test-handoffs.js",
     "test:intent": "node scripts/test-intent.js",
     "test:mcp": "node scripts/test-mcp.js",
