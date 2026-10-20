@@ -1,0 +1,4 @@
+- insert:
+    - id: signalboard
+      name: '@local/signalboard'
+      config: {}

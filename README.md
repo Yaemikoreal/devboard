@@ -110,7 +110,7 @@ npm start     # 启动：托盘常驻，Ctrl+Shift+D 唤出/隐藏
 
 ## MCP（实验性）
 
-SignalBoard 可作为 MCP server 供本机 Agent CLI 查询跨项目事实（只读）：项目列表、单项目近况、需要关注清单、备忘、交接。独立 stdio 进程，直接读 userData 缓存，应用不在运行也能答；响应携带 `scannedAt` 与数据龄，由 agent 自判新鲜度。
+SignalBoard 可作为 MCP server 供本机 Agent CLI 使用：查询跨项目事实（项目列表、单项目近况、需要关注清单、备忘、交接），并写交接 / 标记接力完成、触发全量重扫、快捷打开（文件夹/编辑器/终端）、在项目目录起 AI CLI——动作全部人在环，写操作只限交接（备忘与警示消音不可经 MCP 改动）。独立 stdio 进程，直接读 userData 缓存，应用不在运行也能答；响应携带 `scannedAt` 与数据龄，由 agent 自判新鲜度。
 
 ```bash
 # 注册进 Claude Code（键名 signalboard；codex 同理：codex mcp add signalboard -- …）
@@ -120,7 +120,7 @@ claude mcp add signalboard -- node <仓库路径>/bin/signalboard-mcp.js --user-
 node bin/signalboard-mcp.js
 ```
 
-数据目录不存在时进程会报错退出（不会静默建目录）。一键注册进已探测 CLI 属后续版本（设置页入口）。
+数据目录不存在时进程会报错退出（不会静默建目录）。设置页「AI 工具」组可一键注册进已探测且支持的 CLI（走各家原生 `mcp add`，结果附回滚命令）；注册时附带 `--app-exe`，动作工具（重扫/快捷打开/起 CLI）经二次实例消息落进运行中的应用，未注册该参数时查询与交接写入不受影响。
 
 ## 开发
 
@@ -214,7 +214,7 @@ Everything lives in the Electron userData directory (`%APPDATA%/SignalBoard/`) a
 
 ## MCP (experimental)
 
-SignalBoard can run as an MCP server so local agent CLIs can query cross-project facts (read-only): project list, per-project signals, attention list, memos, handoffs. It is an independent stdio process reading the userData caches — it answers even when the app is not running; responses carry `scannedAt` and a data-age so the agent can judge freshness.
+SignalBoard can run as an MCP server so local agent CLIs can query cross-project facts (project list, per-project signals, attention list, memos, handoffs) and also write handoffs / mark handoffs done, trigger a full rescan, quick-open (folder/editor/terminal) and launch an AI CLI in a project directory — all actions stay human-in-the-loop, and the write surface is limited to handoffs (memos and snooze cannot be changed via MCP). It is an independent stdio process reading the userData caches — it answers even when the app is not running; responses carry `scannedAt` and a data-age so the agent can judge freshness.
 
 ```bash
 # Register with Claude Code (key name "signalboard"; codex works the same: codex mcp add signalboard -- …)
@@ -224,7 +224,7 @@ claude mcp add signalboard -- node <repo>/bin/signalboard-mcp.js --user-data "%A
 node bin/signalboard-mcp.js
 ```
 
-The process exits with an error if the data directory does not exist (it never creates one silently). One-click registration into detected CLIs is planned for a later version.
+The process exits with an error if the data directory does not exist (it never creates one silently). The settings page (AI tools group) offers one-click registration into detected CLIs that support it (native `mcp add` per CLI, with a rollback command in the result); registration passes `--app-exe` so the action tools reach the running app via second-instance messages, while queries and handoff writes work without it.
 
 ## Development
 

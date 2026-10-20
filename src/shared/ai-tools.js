@@ -20,6 +20,9 @@ const AI_TOOLS = [
     spec: { args: ['-p'], stdin: true, shell: true },
     // 交互式可见终端的初始 prompt 预填方式（issue #142）：arg = 位置参数（claude "提示词" 直起会话）
     prefill: { mode: 'arg' },
+    // 一键注册 MCP（issue #149）：native = 该 CLI 有 mcp add 原生子命令，注册器据此构造命令；
+    // 未登记 facet 的 CLI（支持度未核实）注册器如实报「暂不支持」并给出 README 手动路径
+    mcp: { add: 'native' },
     // 图标来源：simple-icons anthropic（issue #21）
     icon: {
       bg: '#d97757',
@@ -35,6 +38,7 @@ const AI_TOOLS = [
     // --skip-git-repo-check：开机自启等场景 cwd 不是受信 git 仓库时 codex exec 会直接拒绝执行（issue #115）
     spec: { args: ['exec', '--skip-git-repo-check'], stdin: false, shell: false },
     prefill: { mode: 'arg' }, // 交互式 codex "提示词" 直起会话（issue #142）
+    mcp: { add: 'native' }, // codex mcp add 原生子命令（issue #149）
     // 图标来源：simple-icons openai v13（新版已下架，issue #21）
     icon: {
       bg: '#202020',
@@ -50,6 +54,7 @@ const AI_TOOLS = [
     // streamJson: 输出为 JSON 行，取 role=assistant 的 content 作为正文（kimi 文本模式会混入过程 bullet）
     spec: { args: ['-p'], stdin: false, shell: false, streamJson: true },
     prefill: { mode: 'arg' }, // 交互式 kimi "提示词" 直起会话（issue #142）
+    // kimi 的 MCP 注册方式未核实（无 facet）：注册器如实报暂不支持，不瞎写用户配置
     // kimi 无官方 simple-icons 条目（未收录 Moonshot），沿用 demos 的近似标（K 字，issue #21）
     icon: {
       bg: '#101010',
@@ -80,6 +85,8 @@ const AI_TOOLS = [
     label: 'Gemini CLI',
     shortLabel: 'Gemini',
     cmd: 'gemini',
+    // gemini mcp add 原生子命令（issue #149）：可启动档工具也支持注册，供 agent 查跨项目事实
+    mcp: { add: 'native' },
     icon: {
       bg: '#1b72e8',
       svg: '<text x="12" y="17" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">G</text>',
@@ -140,6 +147,8 @@ const AI_TOOLS = [
     label: 'Qwen Code',
     shortLabel: 'Qwen',
     cmd: 'qwen',
+    // qwen mcp add 原生子命令（Qwen Code 为 gemini-cli 分支，issue #149）
+    mcp: { add: 'native' },
     icon: {
       bg: '#615ced',
       svg: '<text x="12" y="17" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="sans-serif">Q</text>',

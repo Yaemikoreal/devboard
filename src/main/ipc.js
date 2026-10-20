@@ -17,8 +17,12 @@ const registerGithub = require('./ipc-github'); // GitHub 鉴权/账号域 handl
 const registerAi = require('./ipc-ai'); // AI 调度域 handler（issue #124 第二刀）
 const registerData = require('./ipc-data'); // 数据/系统辅助域 handler（issue #124 第三刀）
 const handoffs = require('./handoffs'); // 交接领域服务（issue #147，#148/#149 复用写入口）
+const boardMod = require('./board'); // 拼板纯模块（ADR-0005 配套提取，桌面与 DSH 插件共用同一实现）
+const actionProto = require('../mcp/protocol'); // MCP 动作 argv 协议（issue #149；协议文件在 src/mcp/，#149 误写 ./mcp 致启动崩）
+const mcpRegister = require('./mcp-register'); // MCP 一键注册器（issue #149）
+const { openCliInTerminal, detectAiTools } = registerAi; // 命名导出：open-cli 动作复用管线 + 注册目标探测
 const { DEFAULT_CONFIG } = require('./store');
-const { WARN_SEVERITY } = require('../shared/constants'); // 共享常量（issue-11 / #127）
+// WARN_SEVERITY 消费（attention 排序）已随拼板实现收敛到 board.js（ADR-0005 提取）
 const { createGitWatcher } = require('./watcher');
 
 // shell:true 时 Node 把 [cmd].concat(args).join(' ') 交给 cmd.exe 且不逐个加引号，
@@ -77,17 +81,9 @@ async function quickOpen({ path: projectPath, kind }, config) {
   return false;
 }
 
-// 警示消音：签名（label）匹配的警示被过滤；状态变化导致 label 改变时自动复出
-function applySnoozes(projects, snoozes) {
-  for (const p of projects) {
-    const s = snoozes[p.path];
-    if (!s) continue;
-    p.warnings = p.warnings.filter((w) => s[w.type] !== w.label);
-  }
-}
-
 // 警示规则整形已收敛到 scanner.warningRulesOf（issue #148）：MCP 工具响应侧重算警示时
 // 必须与拼板同口径（防「板说没警示、agent 查到警示」的漂移），单一来源在 localWarnings 旁
+// 警示消音随拼板实现收敛到 board.js（ADR-0005 提取），快照入参
 
 // 扫描域（issue #12 第 8 条）：roots/blacklist/extraPaths 三键永远同行，收敛一处构造 scope 对象；
 // draft 中合法（数组）的键优先，其余回退已存配置（scan:preview 的草稿语义）
@@ -200,71 +196,19 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
     },
   });
 
-  // 拼装 board：memos + 交接摘要 + 警示按当前规则重算 + GitHub 缓存挂接 + 警示消音 + 统计（缓存路径与新鲜扫描共用）
+  // 拼板薄壳（ADR-0005 配套提取）：快照从 store 现取，纯实现收敛在 board.js——
+  // 桌面应用与 DSH 插件共用同一拼板实现，「同口径」从注释约定升级为结构保证
   function assembleBoard(projects, config, fromCache) {
-    const memos = store.getMemos();
-    for (const p of projects) p.memo = memos[p.path] || '';
-
-    // 交接并入（issue #147）：latest + 未读数下发，agent 写入时间计入最后活动时间并重算分带——
-    // userData 侧时间不进只读扫描器，全板产出（缓存拼板/重扫补丁/GitHub 刷新补丁）唯一汇聚点在此
-    handoffs.applyToProjects(projects, {
+    const { board, stale } = boardMod.assembleBoard(projects, config, fromCache, {
+      memos: store.getMemos(),
       handoffsAll: store.getHandoffs(),
       handoffReadAt: store.getPrefs().handoffReadAt,
+      snoozes: store.getPrefs().snoozes,
+      githubCache: store.getGithubCache(),
     }, new Date());
-
-    // 警示按当前规则重算（issue #73）：缓存/降级条目里的 warnings 是旧规则产物，
-    // 依赖的事实字段（dirtyCount/lastCommitAt/ahead/github.openPRs）都在，重算零 IO，
-    // 设置改动后无需等重扫即反映到需要关注清单与行内警示点；消音签名按新 label 照常匹配
-    const rules = scanner.warningRulesOf(config);
-    const now = new Date();
-    for (const p of projects) p.warnings = scanner.localWarnings(p, now, rules);
-
-    const stale = github.attachFromCache(projects, config, store);
-    github.applyPrWarnings(projects, rules.types.pr);
-    github.applyCiWarnings(projects, rules.types.ci); // 默认分支 CI 失败（issue #143）
-    github.applyReviewWarnings(projects, rules.types.review); // PR 有待处理 review（issue #144）
-    applySnoozes(projects, store.getPrefs().snoozes);
-
-    // originUrl 仅为内部解析用，不下发渲染层
-    const out = projects.map((p) => {
-      const q = Object.assign({}, p);
-      delete q.originUrl;
-      return q;
-    });
-
-    // 需要关注清单携带警示类型（issue #77 类型图标）并按严重度排序（issue #74）：
-    // 未提交超期 > 未推送 > 开放 PR，同级按项目名稳定排序；WARN_SEVERITY 见共享常量模块
-    const severityOf = (types) => Math.min.apply(null, types.map((t) => (t in WARN_SEVERITY ? WARN_SEVERITY[t] : 9)));
-    const attention = out
-      .filter((p) => p.warnings.length > 0)
-      .map((p) => ({
-        path: p.path,
-        name: p.name,
-        label: p.warnings.map((w) => w.label).join('，'),
-        types: p.warnings.map((w) => w.type),
-      }))
-      .sort((a, b) => severityOf(a.types) - severityOf(b.types) || a.name.localeCompare(b.name));
-
     // 托盘 tooltip 计数随每次拼板刷新（issue #80）；显隐由 onAttentionCount 实现方按设置裁决
-    if (onAttentionCount) onAttentionCount(attention.length);
-
-    return {
-      board: {
-        scannedAt: new Date().toISOString(),
-        fromCache: !!fromCache,
-        stats: {
-          total: out.length,
-          commits7d: out.reduce((s, p) => s + p.commits7d, 0),
-          attentionCount: attention.length,
-        },
-        attention,
-        projects: out,
-        // GitHub 通知快照（issue #145）：未读事件跨项目注意力流，TTL 过期照发（刷新落地后推补丁）；
-        // 增量补丁（单项目）不带此字段，渲染层保留旧值
-        notifications: store.getGithubCache().notifications || { fetchedAt: 0, data: [], error: null },
-      },
-      stale,
-    };
+    if (onAttentionCount) onAttentionCount(board.attention.length);
+    return { board, stale };
   }
 
   // 全量扫描入口：在飞时复用同一 Promise（首启 buildBoard 与渲染层 board:get 会并发触发）
@@ -604,7 +548,52 @@ function registerIpc({ store, getWindow, applySettings, getHotkeyError, getAutoS
   });
   ipcMain.handle('win:close', () => { const w = getWindow(); if (w) w.close(); });
 
-  return { buildBoard, gitWatcher };
+  /* ----- MCP 动作派发与一键注册（issue #149） ----- */
+  // second-instance/启动段把 --mcp-action argv 转成既有能力：rescan（全量重扫）/
+  // refresh（缓存重拼推补丁，交接写入后未读点即时可见）/ quickopen / open-cli（预填管线复用）。
+  // 动作即请求：fire-and-forget，不向 server 回传完成结果（人在环）
+  function dispatchMcpAction(args) {
+    const action = String((args && args['mcp-action']) || '');
+    if (action === 'rescan' || action === 'refresh') {
+      buildBoard(action === 'rescan').catch((err) => console.error('[devboard] MCP 动作 ' + action + ' 失败:', err));
+      return Promise.resolve({ ok: true, action });
+    }
+    if (action === 'quickopen') {
+      return quickOpen({ path: args['mcp-path'], kind: args['mcp-kind'] || 'folder' }, store.getConfig())
+        .then((ok) => ({ ok: !!ok, action }))
+        .catch((err) => ({ ok: false, action, reason: String((err && err.message) || err) }));
+    }
+    if (action === 'open-cli') {
+      const prompt = actionProto.decodePrompt(args['mcp-prompt-b64']);
+      return openCliInTerminal(args['mcp-cmd'], args['mcp-path'], prompt, { pathExists, spawnResult })
+        .then((ok) => ({ ok: !!ok, action }))
+        .catch((err) => ({ ok: false, action, reason: String((err && err.message) || err) }));
+    }
+    return Promise.resolve({ ok: false, action, reason: '未知动作' });
+  }
+
+  // 一键注册（issue #149）：对已安装且登记 mcp facet 的 CLI 逐个执行原生 `mcp add`；
+  // 未登记 facet 的 CLI 如实报「暂不支持」（不瞎写用户配置），结果附回滚方式。
+  // server 脚本是纯 Node 程序，注册命令用 node 拉起——PATH 无 node 时整体不发起并给指路
+  ipcMain.handle('mcp:register', async () => {
+    const node = await checkCommand('node');
+    if (!node.ok) return { results: [], reason: 'PATH 中找不到 node：MCP server 为 Node 脚本，需先安装 Node.js' };
+    const detected = await detectAiTools(store.getConfig(), checkCommand);
+    const repoRoot = path.resolve(__dirname, '..', '..');
+    const serverBin = mcpRegister.serverScriptPath(repoRoot);
+    const results = [];
+    for (const t of detected.filter((x) => x.installed)) {
+      results.push(await mcpRegister.registerMcp(t.id, {
+        binPath: serverBin,
+        userDataDir: store.baseDir,
+        appExe: process.execPath,
+        appCwd: process.defaultApp ? repoRoot : null, // 开发形态 electron 需在仓库根以 `.` 指向应用
+      }, { execFile }));
+    }
+    return { results };
+  });
+
+  return { buildBoard, gitWatcher, mcpAction: dispatchMcpAction };
 }
 
 module.exports = { registerIpc };
