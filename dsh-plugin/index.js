@@ -64,8 +64,8 @@ export function apply(ctx, config) {
   // 面板数据路由（可选能力）：同源 GET，读侧与 agent 工具共用同一拼板实现
   ctx.effect(() => {
     const webServer = ctx.get('webServer');
-    if (!webServer) return; // 无 web 服务器的部署（headless）面板数据走命令通道
-    return webServer.register({
+    if (!webServer) return () => {}; // 无 web 服务器的部署（headless）面板数据走命令通道；effect 契约要求返回 disposer
+    const disposeBoard = webServer.register({
       kind: 'exact',
       path: '/api/signalboard/board',
       handler: (req, res) => {
@@ -86,6 +86,31 @@ export function apply(ctx, config) {
         });
       },
     });
+    // 详情深区懒加载（Task 5.4）：README 摘要 + AI 会话痕迹，按需取（scanner.projectDetail 容错）
+    const disposeDetail = webServer.register({
+      kind: 'exact',
+      path: '/api/signalboard/detail',
+      handler: (req, res) => {
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+        const u = new URL(req.url, 'http://x');
+        const p = String(u.searchParams.get('path') || '');
+        svc.projectDetail(p).then((data) => {
+          const body = JSON.stringify(data);
+          res.setHeader('content-type', 'application/json; charset=utf-8');
+          res.setHeader('cache-control', 'no-store');
+          res.end(req.method === 'HEAD' ? undefined : body);
+        }, (err) => {
+          res.statusCode = 500;
+          res.setHeader('content-type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ error: String((err && err.message) || err) }));
+        });
+      },
+    });
+    return () => { disposeBoard(); disposeDetail(); };
   }, 'signalboard: board route');
 
   // 常驻扫描：激活扫一次 + 定时静默刷新（scanIntervalMin 来自 userData config.json，

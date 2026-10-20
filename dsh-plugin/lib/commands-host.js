@@ -8,6 +8,7 @@
 // { id: uuid, role: 'user', content: [{type:'text',text}], source: {...生产者标记} }。
 import { randomUUID } from 'node:crypto';
 import { handoffs } from './domain.js';
+import { quickOpen } from './actions.js';
 
 const SOURCE = Object.freeze({ kind: 'plugin', plugin: '@local/signalboard' });
 
@@ -104,6 +105,24 @@ export function registerCommands(ctx, store, svc, t) {
         } catch (err) {
           return bad((err && err.message) || String(err));
         }
+      },
+    },
+    {
+      name: 'signalboard-open',
+      description: t ? t('cmd.open') : '在资源管理器/编辑器/终端打开某项目（与 agent 工具同一 actions.quickOpen）',
+      input: { hint: 'JSON：{"path": "项目绝对路径", "kind": "folder|editor|terminal"}' },
+      handler: (inv) => {
+        const args = parseJson(inv.rawInput);
+        if (!args || typeof args.path !== 'string' || !args.path.trim()) {
+          return bad('参数需为 JSON：{"path":"项目绝对路径","kind":"folder|editor|terminal"}');
+        }
+        const kind = ['folder', 'editor', 'terminal'].includes(args.kind) ? args.kind : 'folder';
+        // store.getConfig 现读（与工具面同口径）；命令处理器是同步契约 → 火后不管，结果落会话日志外只回执
+        void quickOpen(args.path, kind, store.getConfig()).then(
+          (r) => r.ok ? ok('已打开（' + kind + '）') : bad(r.reason || '打开失败'),
+          (err) => bad('打开失败：' + ((err && err.message) || err)),
+        );
+        return ok('已请求打开（' + kind + '）');
       },
     },
     {

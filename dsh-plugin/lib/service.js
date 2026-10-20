@@ -47,6 +47,7 @@ export function createService(ctx, store, cfg) {
         pinned: Array.isArray(prefs.pinned) ? prefs.pinned : [],
         cardOrder: Array.isArray(prefs.cardOrder) ? prefs.cardOrder : [],
         sortMode: prefs.sortMode || 'manual',
+        snoozes: prefs.snoozes || {}, // path -> { warningType: label }（详情面板已消音清单 + 取消）
       },
       summary,
       aiTools: aiList,
