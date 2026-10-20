@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
-// 仓库根 = 本包目录的上一级（目录链接安装时 import.meta.url 已是真实路径）
-const repoRoot = path.resolve(here, '..');
+// 仓库根 = 本文件（lib/domain.js）上跳两级：lib → dsh-plugin → 仓库根
+// （目录链接安装时 import.meta.url 已是真实路径；实测冒烟抓过少跳一级的错，见计划附录）
+const repoRoot = path.resolve(here, '..', '..');
 
 function domain(rel) {
   const abs = path.join(repoRoot, rel);
