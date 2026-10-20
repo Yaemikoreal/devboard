@@ -22,9 +22,17 @@ const DEFAULT_CONFIG = {
   trayAttentionCount: true, // 托盘 tooltip 显示「N 个项目需要关注」计数（issue #80）
   aiTools: [], // 自定义 AI 工具清单：[{label, cmd}]，与默认 claude/codex/kimi/grok 合并（issue #15）
   aiEnabled: true, // AI 功能总开关：周报/建议/自然语言筛选（issue #29）
-  aiEngine: '', // 默认 AI 引擎的工具 id；空 = 自动取第一个已探测可用的（issue #29）
   aiPromptWeekly: null, // AI 周报提示词模板（issue #78）：null = 代码内置默认模板；{{事实}} 为事实块插入点
   aiPromptAdvice: null, // AI 建议提示词模板（issue #78）：同上
+  // AI 供应商直连（issue #180 后续）：AI 生成只走模型 API；本机 CLI 仅保留给工作台/意图路由启动，不参与生成
+  aiProviderPreset: 'deepseek', // 设置页预设 id，仅记忆 UI 选择，不参与调用判定
+  aiProviderProtocol: 'openai', // openai=兼容 /chat/completions；anthropic=原生 /v1/messages
+  aiProviderBaseUrl: '',
+  aiProviderModel: '',
+  aiApiKey: '', // 仅内存；落盘为 aiApiKeyEnc（safeStorage），settings:get 不下发
+  aiTemperature: 0.4, // 0–2；null 表示不传
+  aiMaxTokens: 0, // 0 = 不传（用供应商默认）
+  aiTimeoutMs: 60000, // 单次直连超时；筛选另有 20s 上限
   theme: { id: 'warm', accent: '#f5d90a' }, // 外观：整体主题 + 强调色（issue #27）
   density: 'standard', // 密度档位：standard / compact（issue #84）
   reduceMotion: false, // 降低动效：停动画并关闭玻璃模糊（issue #82）
@@ -123,6 +131,7 @@ class Store {
   _writeConfig(cfg) {
     const out = Object.assign({}, cfg);
     delete out.hasGithubToken;
+    delete out.hasAiApiKey;
     if (this._canSeal()) {
       const enc = cfg.githubToken ? this._seal(cfg.githubToken) : '';
       if (cfg.githubToken && enc === null) {
@@ -133,6 +142,19 @@ class Store {
       }
     } else {
       out.githubToken = cfg.githubToken || ''; // 无加密能力时按注释承诺退回明文兜底
+    }
+    // AI 供应商 API Key 与 githubToken 同口径：能加密则落 aiApiKeyEnc，config.json 不留明文；
+    // 无 keyring / seal 失败时退回明文，保证换机与受限环境仍可用（issue #109 同法）
+    if (this._canSeal()) {
+      const encKey = cfg.aiApiKey ? this._seal(cfg.aiApiKey) : '';
+      if (cfg.aiApiKey && encKey === null) {
+        out.aiApiKey = cfg.aiApiKey;
+      } else {
+        out.aiApiKeyEnc = encKey;
+        delete out.aiApiKey;
+      }
+    } else {
+      out.aiApiKey = cfg.aiApiKey || '';
     }
     this.writeJson('config.json', out);
   }
@@ -152,6 +174,17 @@ class Store {
         delete raw.githubToken;
       }
     }
+    // 迁移历史明文 AI Key：读到时立即改写为密文（与 githubToken 同法）；seal 失败保留明文下次重试
+    if (raw.aiApiKey && this._canSeal()) {
+      const encKey = this._seal(raw.aiApiKey);
+      if (encKey !== null) {
+        const migrated = Object.assign({}, DEFAULT_CONFIG, raw, { aiApiKeyEnc: encKey });
+        delete migrated.aiApiKey;
+        this.writeJson('config.json', migrated);
+        raw.aiApiKeyEnc = encKey;
+        delete raw.aiApiKey;
+      }
+    }
     const cfg = Object.assign({}, DEFAULT_CONFIG, raw);
     if (raw.githubTokenEnc && this._canSeal()) {
       cfg.githubToken = this.vault.unseal(raw.githubTokenEnc) || '';
@@ -159,6 +192,13 @@ class Store {
       cfg.githubToken = ''; // 有密文但无法解密（如跨机拷贝），按未配置处理
     }
     delete cfg.githubTokenEnc;
+    // AI Key 解密：有密文但无法解密（如跨机拷贝）按未配置处理，避免拿密文当 Key 发请求
+    if (raw.aiApiKeyEnc && this._canSeal()) {
+      cfg.aiApiKey = this.vault.unseal(raw.aiApiKeyEnc) || '';
+    } else if (raw.aiApiKeyEnc && !this._canSeal()) {
+      cfg.aiApiKey = '';
+    }
+    delete cfg.aiApiKeyEnc;
     if (!Array.isArray(cfg.roots) || cfg.roots.length === 0) cfg.roots = DEFAULT_CONFIG.roots.slice();
     if (!Array.isArray(cfg.blacklist)) cfg.blacklist = DEFAULT_CONFIG.blacklist.slice();
     if (!Array.isArray(cfg.extraPaths)) cfg.extraPaths = [];
@@ -178,6 +218,23 @@ class Store {
     // 提示词模板（issue #78）：null = 内置默认；非字符串/空白脏数据回落 null
     if (typeof cfg.aiPromptWeekly !== 'string' || !cfg.aiPromptWeekly.trim()) cfg.aiPromptWeekly = null;
     if (typeof cfg.aiPromptAdvice !== 'string' || !cfg.aiPromptAdvice.trim()) cfg.aiPromptAdvice = null;
+    // AI 供应商字段归一（issue #180 后续）：枚举限已知值、长度截断、数值夹紧；
+    // 空串表示「未配置」，由 providerReady() 统一判定，不在 store 层报错
+    if (['openai', 'anthropic'].indexOf(cfg.aiProviderProtocol) < 0) cfg.aiProviderProtocol = 'openai';
+    cfg.aiProviderPreset = typeof cfg.aiProviderPreset === 'string' ? cfg.aiProviderPreset.slice(0, 40) : '';
+    cfg.aiProviderBaseUrl = typeof cfg.aiProviderBaseUrl === 'string' ? cfg.aiProviderBaseUrl.trim().slice(0, 500) : '';
+    cfg.aiProviderModel = typeof cfg.aiProviderModel === 'string' ? cfg.aiProviderModel.trim().slice(0, 200) : '';
+    cfg.aiApiKey = typeof cfg.aiApiKey === 'string' ? cfg.aiApiKey.trim() : '';
+    const tplTemp = Number(cfg.aiTemperature);
+    cfg.aiTemperature = Number.isFinite(tplTemp) ? Math.min(2, Math.max(0, tplTemp)) : 0.4;
+    const tplTokens = Number(cfg.aiMaxTokens);
+    cfg.aiMaxTokens = Number.isFinite(tplTokens) ? Math.max(0, Math.min(32000, Math.round(tplTokens))) : 0;
+    const tplTimeout = Number(cfg.aiTimeoutMs);
+    cfg.aiTimeoutMs = Number.isFinite(tplTimeout) ? Math.max(5000, Math.min(180000, Math.round(tplTimeout))) : 60000;
+    // 旧版本遗留字段（本机 CLI 引擎/直连回退）不再生效，读入时剥掉，避免设置页/导出带出幽灵配置
+    delete cfg.aiEngine;
+    delete cfg.aiBackend;
+    delete cfg.aiFallbackCli;
     // 密度档位（issue #84）：限已知值
     if (['standard', 'compact'].indexOf(cfg.density) < 0) cfg.density = 'standard';
     cfg.reduceMotion = !!cfg.reduceMotion; // 降低动效（issue #82）：布尔归一

@@ -1095,7 +1095,8 @@ main{flex:1;min-height:0;overflow-y:auto;padding:14px 24px 24px}
 .field{margin-bottom:14px}
 .field label{display:block;font-size:var(--fs-body);color:var(--ink-2);margin-bottom:5px;letter-spacing:.03em}
 .field .hint{font-size:var(--fs-aux);color:var(--ink-3);margin-top:4px}
-.field input[type=text],.field input[type=password],.field textarea{
+/* number 输入与 text/password 同一视觉语言（AI 后端高级参数：温度 / tokens / 超时） */
+.field input[type=text],.field input[type=password],.field input[type=number],.field textarea{
   width:100%;border:1px solid var(--line);border-radius:var(--r-chip);
   background:var(--bg);color:var(--ink);font:inherit;font-size:var(--fs-body);
   padding:7px 12px;outline:none;

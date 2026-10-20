@@ -90,7 +90,9 @@ function git(projectPath, args, timeout = 5000) {
         // core.quotepath=false：非 ASCII 文件名按 UTF-8 原文输出，否则 porcelain 给八进制转义，dirtyFiles/dirtyMtime 解析不到真实路径
         execFile('git', ['-C', projectPath, '-c', 'core.quotepath=false'].concat(args), { timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
           if (err) reject(err);
-          else resolve(stdout.trim());
+          // 只去尾部空白：porcelain 首行若是「 M file」，整串 trim 会连状态前的空格一起削掉，
+          // 随后 slice(3) 解析出的文件名丢首字符（实测 package-lock.json → ackage-lock.json）
+          else resolve(String(stdout).replace(/\s+$/, ''));
         });
       })
   ).finally(() => gitSlot.release());

@@ -183,7 +183,7 @@ let itemDetailImpl = () => Promise.resolve({ body: '首次正文', comments: [],
 const SETTINGS = {
   density: 'normal', landingView: 'overview', reduceMotion: false,
   hasGithubToken: true, githubToken: 'tok', aiEnabled: false,
-  aiEngine: '', aiTools: [], roots: [], extraPaths: [], blacklist: [],
+  aiTools: [], roots: [], extraPaths: [], blacklist: [],
   themeId: 'warm', accent: '', onTop: false, autoStart: false,
   scanInterval: 0, warnDirtyDays: 3, warnDirty: true, warnUnpushed: true,
   warnCi: true, warnReview: true, warnPr: true, notifyEnabled: true,
@@ -213,7 +213,12 @@ const api = {
   onShowSettings(cb) { showSettingsCb = cb; },
   aiToolsList: () => Promise.resolve([]),
   aiToolsOpen: (cmd, projectPath, prompt) => { aiToolsOpenCalls.push({ cmd, projectPath, prompt }); return Promise.resolve(true); },
-  aiCaps: () => Promise.resolve({ enabled: true, engine: { id: 'claude', label: 'Claude Code', cmd: 'claude' } }),
+  aiCaps: () => Promise.resolve({
+    enabled: true,
+    configured: true,
+    provider: { preset: 'custom', label: '测试供应商 · mock', model: 'mock', protocol: 'openai' },
+    cliTool: { id: 'claude', label: 'Claude Code', cmd: 'claude' },
+  }),
   aiAsk: (payload) => {
     if (payload && payload.kind === 'advice' && payload.cachedOnly) {
       // #142：advice 缓存命中，供「执行」键断言预填文本

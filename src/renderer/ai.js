@@ -183,20 +183,28 @@
     }
 
     /* ---------- AI 功能（issue #29）：能力探测 + 周报 + 详情建议 + 自然语言筛选 ---------- */
-    // 入口显隐总闸：开关关闭或未探测到可用引擎时，所有 AI 入口隐藏
+    // 入口显隐总闸：AI 开关打开且供应商配置完整（Base URL / 模型 / Key 三项齐全）才出现
     function aiReady() {
-      return !!(state.aiCaps && state.aiCaps.enabled && state.aiCaps.engine);
+      var caps = state.aiCaps;
+      return !!(caps && caps.enabled && caps.configured);
+    }
+
+    // 当前供应商展示信息（供应商直连是唯一 AI 生成后端）；cliTool 仅用于「执行」起本机 CLI（意图路由）
+    function aiBackendInfo() {
+      var caps = state.aiCaps || {};
+      var label = (caps.provider && caps.provider.label) || 'AI 供应商';
+      return { label: label, cliTool: caps.cliTool || null };
     }
 
     function loadAiCaps() {
       return api.aiCaps().then(function (caps) {
-        state.aiCaps = caps || { enabled: false, engine: null };
+        state.aiCaps = caps || { enabled: false, configured: false, provider: null, cliTool: null };
         renderAiWeeklyEntry();
         if (state.selectedPath) {
           var p = findProject(state.selectedPath);
           if (p) renderPanel(p);
         }
-      }).catch(function () { state.aiCaps = { enabled: false, engine: null }; });
+      }).catch(function () { state.aiCaps = { enabled: false, configured: false, provider: null, cliTool: null }; });
     }
 
     // AI 正文结构化渲染（issue #47/#48）：识别小标题 / 列表行 / **加粗**，把 markdown-lite 排成可读版式；
@@ -318,8 +326,8 @@
         // 引擎可能中途消失（issue #168 第 12 条）：ai:caps 失败或设置里关掉 AI 都会把
         // state.aiCaps 置成 { enabled:false, engine:null }，而本函数跑在 1s setInterval 里——
         // 无保护地取 .engine.label 会每秒抛一次未捕获异常，秒数文案随之冻结
-        var eng = state.aiCaps && state.aiCaps.engine;
-        return '正在总结…（本机 ' + (eng ? eng.label : 'AI 引擎') + '，已等待 ' +
+        var info = aiBackendInfo();
+        return '正在总结…（' + info.label + '，已等待 ' +
           Math.max(0, Math.round((Date.now() - job.startAt) / 1000)) + ' 秒；可切换到别处，完成后回来查看）';
       };
       line.textContent = makeText();
@@ -359,7 +367,13 @@
           if (job.status === 'done') weeklyAutoDay = localDateStr(new Date());
           else weeklyAutoFailAt = Date.now();
         }
-        if (job.status === 'error' && job.auto) return; // 自动生成失败保持安静（issue #42）
+        if (job.status === 'error' && job.auto) {
+          // 自动生成失败保持安静（issue #42），但必须清掉进行态骨架：否则 1s 计时器因节点仍在 DOM
+          // 继续累加「已等待 N 秒」，卡片看起来永远卡在生成中（真实运行实测 496s 假进行态）
+          box.classList.add('hidden');
+          box.innerHTML = '';
+          return;
+        }
         // 刚完成的后台任务：直接展出交接结果
         box.classList.remove('hidden');
         fillAiBox(box, job.result);
@@ -403,28 +417,32 @@
     function renderAiAdviceSec(p) {
       if (!aiReady()) return null;
       var s = sec('AI 建议');
+      var info = aiBackendInfo();
       var btn = el('button', 'ai-btn', '✦ 生成建议');
       btn.type = 'button';
-      btn.title = '用本机 ' + state.aiCaps.engine.label + ' 分析该项目 git 信号';
+      btn.title = '用 ' + info.label + ' 分析该项目 git 信号';
       s.firstChild.appendChild(btn);
       var box = el('div', 'ai-box hidden');
       s.appendChild(box);
       var key = aiJobKey('advice', p.path);
       var job = liveAiJob(key);
-      // 「执行」键（issue #142）：把当前展出的建议文本作为预填 prompt，在项目目录可见终端起 CLI。
-      // 文本取 fillAiBox 记录的 __lastText（面板重渲后随 box 重建，不落陈旧引用）
-      var runBtn = el('button', 'ai-btn ai-run', '▶ 执行');
-      runBtn.type = 'button';
-      runBtn.title = '在项目目录用 ' + state.aiCaps.engine.label + ' 执行这条建议（预填建议文本，人在环确认）';
-      runBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var text = box.__lastText;
-        if (!text) return; // 还没有可执行的建议（未生成/生成失败）
-        api.aiToolsOpen(state.aiCaps.engine.cmd, p.path, text).then(function (ok) {
-          flashBtn(runBtn, ok ? '已启动' : '启动失败', ok);
-        }).catch(function () { flashBtn(runBtn, '启动失败', false); });
-      });
-      s.firstChild.appendChild(runBtn);
+      // 「执行」键（issue #142）依赖本机 CLI 的可见终端：未装任何 CLI 时隐藏，避免点了没反应。
+      // 注意：CLI 仅承接「把建议文本带进终端」的意图路由，不参与 AI 生成（生成只走供应商直连）
+      if (info.cliTool) {
+        var cliEngine = info.cliTool;
+        var runBtn = el('button', 'ai-btn ai-run', '▶ 执行');
+        runBtn.type = 'button';
+        runBtn.title = '在项目目录用本机 ' + cliEngine.label + ' 执行这条建议（预填建议文本，人在环确认）';
+        runBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var text = box.__lastText;
+          if (!text) return; // 还没有可执行的建议（未生成/生成失败）
+          api.aiToolsOpen(cliEngine.cmd, p.path, text).then(function (ok) {
+            flashBtn(runBtn, ok ? '已启动' : '启动失败', ok);
+          }).catch(function () { flashBtn(runBtn, '启动失败', false); });
+        });
+        s.firstChild.appendChild(runBtn);
+      }
       if (job && job.status === 'running') {
         paintAiRunning(box, btn, job); // 后台任务在飞：切出去再回来恢复进行态
       } else if (job) {

@@ -77,7 +77,7 @@ const AI_TOOLS = [
     },
   },
   // ---- 可启动档（issue #141 探测泛化）：主流 Agent CLI 候选，PATH 命中即进工作台/快捷打开/设置页 ----
-  // 未登记 spec：引擎候选只取「installed 且有 spec」的工具（resolveEngines 闸门），此类只进可启动档；
+  // 未登记 spec：可调用档只取「installed 且有 spec」的工具（ai:caps 的 cliTool 闸门），此类只进可启动档；
   // 未登记 localDir：会话痕迹探测暂缺（scanner 对缺席已容错），待确认项留后续按工具补登记
   // 图标：simple-icons 未收录或路径无法核实的，沿用 kimi 的字母近似标先例，避免手写错误品牌路径
   {
@@ -193,8 +193,8 @@ function aiToolLabels() {
   return map;
 }
 
-// 引擎可调用档的 label 映射（issue #141）：只含有 spec 的工具——AI 功能入口文案（「安装并登录
-// 某某后，AI 功能入口才会出现」）按此派生，与 resolveEngines 的 spec 闸门同口径，不列可启动档工具
+// 可调用档的 label 映射（issue #141）：只含有 spec 的工具——工作台/意图路由的可用工具文案按此派生，
+// 与 ai:caps 选 cliTool 的 spec 闸门同口径，不列可启动档工具
 function engineToolLabels() {
   const map = {};
   for (const t of AI_TOOLS) if (t.spec) map[t.id] = t.label;
