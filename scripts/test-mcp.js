@@ -15,6 +15,33 @@ const BIN = path.join(__dirname, '..', 'bin', 'signalboard-mcp.js');
 const NOW = Date.now();
 const DAY = 86400000;
 
+// 回归（#149 热修）：ipc.js 把 src/mcp/protocol 误写 ./mcp/protocol 致主进程启动即崩，
+// 而 require 解析错误只在 Electron 拉起时暴露，纯 node 测试加载不到主进程模块——
+// 这里静态扫描 src 下所有相对 require，断言解析目标存在，坏路径在跑测试时就拦下
+function checkRelativeRequires() {
+  const root = path.join(__dirname, '..', 'src');
+  const files = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.js')) files.push(p);
+    }
+  })(root);
+  let checked = 0;
+  for (const f of files) {
+    for (const m of fs.readFileSync(f, 'utf8').matchAll(/require\((['"])(\.[^'"]+)\1\)/g)) {
+      const target = path.resolve(path.dirname(f), m[2]);
+      assert(
+        fs.existsSync(target) || fs.existsSync(`${target}.js`) || fs.existsSync(path.join(target, 'index.js')),
+        `${path.relative(root, f)} 坏 require 路径: ${m[2]}`
+      );
+      checked += 1;
+    }
+  }
+  assert(checked > 0, 'require 扫描未命中任何相对路径，正则或目录结构变了需跟进');
+}
+
 function makeUserData() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-mcp-'));
   const scannedAt = new Date(NOW - 5 * 60 * 1000).toISOString();
@@ -76,6 +103,7 @@ function startServer(userDataDir, extraArgs) {
 }
 
 async function main() {
+  checkRelativeRequires(); // 先静态验路径，坏 require 不必等拉起 server 才炸
   const { dir, scannedAt, projDirty } = makeUserData();
 
   // --- 正常数据目录：全协议链路 ---
