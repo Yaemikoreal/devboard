@@ -48,6 +48,8 @@ window.__ModuleLoader__.load({
       'ov.weekly.empty': '本周尚未生成总结。',
       'ov.weekly.generate': '生成本周总结',
       'ov.weekly.today': '今日已生成 · 重新生成',
+      'ov.weekly.busy': '生成中…',
+      'ov.weekly.busyHint': '已请求当前会话生成，完成后此卡片自动更新（约需 1-2 分钟）。',
       'ov.weekly.genFailed': '生成需在会话中进行——当前无活动会话，可在会话内输入 /signalboard-weekly。',
       'ov.weekly.engine': 'DSH 会话生成',
       'ov.workbench': '工作台',
@@ -56,6 +58,9 @@ window.__ModuleLoader__.load({
       'ov.guide.body': '还没有配置扫描根目录。在桌面端「设置 → 扫描根目录」添加后，这里会展示项目概况。',
       'bd.search': '搜索项目名或备忘…',
       'bd.none': '没有匹配的项目',
+      'bd.pin': '置顶',
+      'bd.unpin': '取消置顶',
+      'bd.dragHint': '拖动调整位序',
       'bd.memoHint': '备忘：',
       'dt.signals': '近况信号',
       'dt.commits': '近 7 天提交',
@@ -84,6 +89,7 @@ window.__ModuleLoader__.load({
       'dt.advice': 'AI 建议',
       'dt.advice.empty': '尚未生成建议。',
       'dt.advice.ask': '请求建议',
+      'dt.advice.busy': '生成中…',
       'dt.advice.genFailed': '生成需在会话中进行——可在会话内对该项目运行 /signalboard-advice。',
       'dt.recentCommits': '近期提交',
       'dt.dirtyFiles': '未提交清单',
@@ -115,6 +121,8 @@ window.__ModuleLoader__.load({
       'ov.weekly.empty': 'No summary generated this week yet.',
       'ov.weekly.generate': 'Generate weekly summary',
       'ov.weekly.today': 'Generated today · Regenerate',
+      'ov.weekly.busy': 'Generating…',
+      'ov.weekly.busyHint': 'Requested in the current session — this card updates when done (1-2 min).',
       'ov.weekly.genFailed': 'Generation needs a session — run /signalboard-weekly in a session.',
       'ov.weekly.engine': 'DSH session',
       'ov.workbench': 'Workbench',
@@ -123,6 +131,9 @@ window.__ModuleLoader__.load({
       'ov.guide.body': 'No scan roots configured yet. Add them in the desktop app settings and the overview will appear here.',
       'bd.search': 'Search name or memo…',
       'bd.none': 'No matching projects',
+      'bd.pin': 'Pin',
+      'bd.unpin': 'Unpin',
+      'bd.dragHint': 'Drag to reorder',
       'bd.memoHint': 'Memo: ',
       'dt.signals': 'Signals',
       'dt.commits': 'Commits (7d)',
@@ -151,6 +162,7 @@ window.__ModuleLoader__.load({
       'dt.advice': 'AI Advice',
       'dt.advice.empty': 'No advice generated yet.',
       'dt.advice.ask': 'Request advice',
+      'dt.advice.busy': 'Generating…',
       'dt.advice.genFailed': 'Generation needs a session — run /signalboard-advice for this project.',
       'dt.recentCommits': 'Recent commits',
       'dt.dirtyFiles': 'Dirty file list',
@@ -251,6 +263,11 @@ window.__ModuleLoader__.load({
       return months;
     }
     function bandGroup(p) { return BAND_LABEL[p.band] ? p.band : 'archive'; }
+    // 本地日期串（YYYY-MM-DD）——summary.weekly.date 由 shared.localDateStr 落盘（本地时区），
+    // 面板比对「今日已生成」必须同口径，不能用 toISOString（UTC，晚八小时会把当晚判成昨天）
+    function localDayStr(d) {
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
 
     // ============ 数据层 ============
     async function fetchBoard() {
@@ -280,21 +297,41 @@ window.__ModuleLoader__.load({
 
     // ============ 应用（工厂内组合，apply 时注入 ctx 依赖）============
     function createApp({ ctx }) {
-      // 命令执行：解析当前主视图会话 → remote.commands.execute；无会话返回结构化失败
+      // 当前会话 id：Page 组件经 kit useSessions hook 捕获 catalog（whale-pet 同法：
+      // retainedBy.mainView>0 的是主视图会话），写进 ref 供命令执行读取；hook 缺席时
+      // 降级 ctx.get('sessions') 尝试；两者皆无 → 命令返回 no-session（UI 显示引导文案）
+      const sessionRef = { current: null };
       async function runCommand(line) {
-        let sessionId = null;
-        try {
-          const sessions = ctx.get('sessions');
-          if (sessions && typeof sessions.useSnapshot === 'function') {
-            const snap = sessions.useSnapshot();
-            const row = Object.values((snap && snap.byId) || {}).find((r) => r && r.retainedBy && (r.retainedBy.mainView ?? 0) > 0);
+        let sessionId = sessionRef.current;
+        if (!sessionId) {
+          try {
+            const sessions = ctx.get('sessions');
+            const snap = sessions && (typeof sessions.useSnapshot === 'function' ? sessions.useSnapshot() : (typeof sessions.getSnapshot === 'function' ? sessions.getSnapshot() : null));
+            const row = snap && Object.values(snap.byId || {}).find((r) => r && r.retainedBy && (r.retainedBy.mainView ?? 0) > 0);
             sessionId = row && row.id;
-          }
-        } catch { /* 会话面缺席 → 引导文案 */ }
+          } catch { /* 会话面缺席 */ }
+        }
         if (!sessionId) return { kind: 'error', text: 'no-session' };
         const r = await ctx.remote.commands.execute(sessionId, line, []);
         if (!r.ok) throw new Error((r.error && r.error.message) || 'execute failed');
         return (r.value && r.value.result) || { kind: 'error', text: 'empty result' };
+      }
+      // 生成触发链（6.2）：命令注入会话 → 快速轮询（5s×24=2min）直到谓词命中 → 停
+      // 谓词由调用方给（weekly: summary.weekly.date==今天；advice: advice[path].at 变新）
+      function pollUntil(predicate, baseline, onTick, tries = 24, gapMs = 5000) {
+        return new Promise((resolve) => {
+          let n = 0;
+          const timer = setInterval(async () => {
+            n += 1;
+            try {
+              const d = await fetchBoard();
+              if (onTick) onTick(d);
+              if (predicate(d)) { clearInterval(timer); resolve(true); return; }
+            } catch { /* 单次失败容忍，下个周期再来 */ }
+            if (n >= tries) { clearInterval(timer); resolve(false); }
+          }, gapMs);
+          void baseline;
+        });
       }
 
       // ---- 顶栏（视图切换 + 刷新）----
@@ -309,24 +346,40 @@ window.__ModuleLoader__.load({
       }
 
       // ---- 总览 ----
-      function Overview({ data, goDetail, now, refreshSoon }) {
+      function Overview({ data, goDetail, now, refreshSoon, setData }) {
         const b = data.board;
         const guide = data.guide || {};
         const summary = data.summary || {};
         const aiTools = Array.isArray(data.aiTools) ? data.aiTools.filter((t) => t.installed) : [];
+        const [weeklyBusy, setWeeklyBusy] = React.useState(false);
+        const todayStr = localDayStr(new Date());
         if (!guide.rootsConfigured && b.stats.total === 0) {
           return h('div', { className: 'sb-card' },
             h('h2', null, T('ov.guide.title')),
             h('div', { className: 'sb-muted', style: { marginTop: 6 } }, T('ov.guide.body')),
           );
         }
+        const weekly = summary.weekly;
+        const startWeekly = () => {
+          if (weeklyBusy) return;
+          setWeeklyBusy(true);
+          const baselineAt = weekly ? Date.parse(weekly.at) : 0;
+          runCommand('/signalboard-weekly')
+            .then((r) => {
+              if (r && r.kind === 'error' && r.text === 'no-session') { setWeeklyBusy(false); return; }
+              return pollUntil(
+                (d) => !!(d && d.summary && d.summary.weekly && Date.parse(d.summary.weekly.at) > baselineAt),
+                baselineAt,
+                (d) => setData(d),
+              ).then((hit) => { setWeeklyBusy(false); if (!hit) refreshSoon(); });
+            })
+            .catch(() => setWeeklyBusy(false));
+        };
         const months = monthlyActivity(
           b.projects.reduce((acc, p) => acc.map((c, i) => c + (p.activity365 ? p.activity365[i] : 0)), new Array(365).fill(0)),
           null,
         );
         const maxM = Math.max(1, ...months.map((m) => m.count));
-        const weekly = summary.weekly;
-        const todayStr = new Date().toISOString().slice(0, 10);
         return [
           h('div', { className: 'sb-chips', key: 'chips' },
             h('div', { className: 'sb-chip' }, h('b', null, String(b.stats.total)), h('span', { className: 'sb-muted' }, T('ov.stats.total'))),
@@ -362,9 +415,10 @@ window.__ModuleLoader__.load({
                 )
               : h('div', { className: 'sb-muted' }, T('ov.weekly.empty')),
             h('button', {
-              className: 'sb-btn accent', style: { marginTop: 8 },
-              onClick: () => runCommand('/signalboard-weekly').then(refreshSoon).catch(() => {}),
-            }, weekly && weekly.date === todayStr ? T('ov.weekly.today') : T('ov.weekly.generate')),
+              className: 'sb-btn accent', style: { marginTop: 8 }, disabled: weeklyBusy,
+              onClick: startWeekly,
+            }, weeklyBusy ? T('ov.weekly.busy') : weekly && weekly.date === todayStr ? T('ov.weekly.today') : T('ov.weekly.generate')),
+            weeklyBusy ? h('div', { className: 'sb-muted', style: { fontSize: 11, marginTop: 6 } }, T('ov.weekly.busyHint')) : null,
           ),
           h('div', { className: 'sb-card', key: 'bench' },
             h('div', { className: 'sb-h3', style: { margin: '0 0 6px' } }, T('ov.workbench')),
@@ -378,8 +432,9 @@ window.__ModuleLoader__.load({
       }
 
       // ---- 项目板 ----
-      function Board({ data, goDetail, now }) {
+      function Board({ data, goDetail, now, refreshSoon, setData }) {
         const [q, setQ] = React.useState('');
+        const dragPath = React.useRef(null);
         const prefs = data.prefs || {};
         const pinned = new Set(prefs.pinned || []);
         const groups = new Map(BAND_DEFS.map((b) => [b.id, []]));
@@ -396,6 +451,27 @@ window.__ModuleLoader__.load({
           if (q && !((p.name || '').toLowerCase().includes(q.toLowerCase()) || (p.memo || '').toLowerCase().includes(q.toLowerCase()))) continue;
           groups.get(bandGroup(p)).push(p);
         }
+        // 置顶 toggle：直接下发 pin/unpin（位序由拖拽单独维护，两者互不覆盖——
+        // 排序读侧语义：置顶优先 → cardOrder 次序 → 其余按板序）
+        const togglePin = (path) => {
+          const set = new Set(prefs.pinned || []);
+          const action = set.has(path) ? 'unpin' : 'pin';
+          runCommand('/signalboard-pref ' + JSON.stringify({ action, path }))
+            .then(refreshSoon).catch(() => {});
+        };
+        // 拖拽落点：重排「可视全序」（置顶优先的当前渲染序）→ cardOrder 全量下发
+        const reorder = (targetPath) => {
+          const src = dragPath.current;
+          dragPath.current = null;
+          if (!src || src === targetPath) return;
+          const order = projects.map((p) => p.path);
+          const from = order.indexOf(src);
+          const to = order.indexOf(targetPath);
+          if (from === -1 || to === -1) return;
+          order.splice(to, 0, order.splice(from, 1)[0]);
+          runCommand('/signalboard-pref ' + JSON.stringify({ action: 'order', cardOrder: order }))
+            .then(refreshSoon).catch(() => {});
+        };
         return [
           h('input', { key: 'q', className: 'sb-search', placeholder: T('bd.search'), value: q, onChange: (e) => setQ(e.target.value) }),
           BAND_DEFS.map((b) => {
@@ -403,8 +479,19 @@ window.__ModuleLoader__.load({
             if (!list || list.length === 0) return null;
             return h('div', { key: b.id, style: { marginBottom: 12 } },
               h('div', { className: 'sb-h3' }, b.label + ' · ' + list.length),
-              list.map((p) => h('div', { key: p.path, className: 'sb-row', onClick: () => goDetail(p.path), title: p.path },
-                pinned.has(p.path) ? h('span', { style: { opacity: .7 } }, '📌') : null,
+              list.map((p) => h('div', {
+                key: p.path, className: 'sb-row', title: p.path,
+                draggable: true,
+                onDragStart: () => { dragPath.current = p.path; },
+                onDragOver: (e) => e.preventDefault(),
+                onDrop: (e) => { e.preventDefault(); reorder(p.path); },
+                onClick: () => goDetail(p.path),
+              },
+                h('span', {
+                  className: 'sb-pin', title: pinned.has(p.path) ? T('bd.unpin') : T('bd.pin'),
+                  onClick: (e) => { e.stopPropagation(); togglePin(p.path); },
+                  style: { cursor: 'pointer', opacity: pinned.has(p.path) ? 1 : 0.35, fontSize: 13 },
+                }, pinned.has(p.path) ? '📌' : '📍'),
                 h('b', null, p.name),
                 h('span', { className: 'sb-pill' + (p.band === 'hot' ? ' hot' : '') }, BAND_LABEL[bandGroup(p)]),
                 (p.warnings || []).slice(0, 2).map((w) => h('span', { key: w.type, className: 'sb-muted', style: { fontSize: 11 } }, w.label)),
@@ -421,7 +508,7 @@ window.__ModuleLoader__.load({
       }
 
       // ---- 详情 ----
-      function Detail({ data, path, goBack, now }) {
+      function Detail({ data, path, goBack, now, refreshSoon, setData }) {
         const p = (data.board.projects || []).find((x) => x.path === path);
         const prefs = data.prefs || {};
         const mySnoozes = (prefs.snoozes || {})[path] || {};
@@ -431,6 +518,7 @@ window.__ModuleLoader__.load({
         const [toast, setToast] = React.useState('');
         const [deep, setDeep] = React.useState(null);
         const [saving, setSaving] = React.useState(false);
+        const [adviceBusy, setAdviceBusy] = React.useState(false);
         React.useEffect(() => {
           let alive = true;
           fetchDetail(path).then((d) => { if (alive) setDeep(d); }, () => { if (alive) setDeep({ readme: '', aiSessions: [] }); });
@@ -524,7 +612,24 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'sb-muted', style: { fontSize: 11, marginTop: 4 } }, T('ov.weekly.engine') + ' · ' + relTime(myAdvice.at, now)),
                 )
               : h('div', { className: 'sb-muted' }, T('dt.advice.empty')),
-            h('button', { className: 'sb-btn accent', style: { marginTop: 8 }, onClick: () => run('/signalboard-advice ' + JSON.stringify({ path })) }, T('dt.advice.ask')),
+            h('button', {
+              className: 'sb-btn accent', style: { marginTop: 8 }, disabled: adviceBusy,
+              onClick: () => {
+                if (adviceBusy) return;
+                setAdviceBusy(true);
+                const baselineAt = myAdvice ? Date.parse(myAdvice.at) : 0;
+                runCommand('/signalboard-advice ' + JSON.stringify({ path }))
+                  .then((r) => {
+                    if (r && r.kind === 'error' && r.text === 'no-session') { setAdviceBusy(false); say(T('dt.advice.genFailed')); return; }
+                    return pollUntil(
+                      (d) => !!(d && d.summary && d.summary.advice && d.summary.advice[path] && Date.parse(d.summary.advice[path].at) > baselineAt),
+                      baselineAt,
+                      (d) => setData(d),
+                    ).then((hit) => { setAdviceBusy(false); if (!hit) refreshSoon(); });
+                  })
+                  .catch(() => setAdviceBusy(false));
+              },
+            }, adviceBusy ? T('dt.advice.busy') : T('dt.advice.ask')),
           ),
           (p.recentCommits || []).length > 0 ? h('div', { className: 'sb-card' },
             h('div', { className: 'sb-h3', style: { margin: '0 0 6px' } }, T('dt.recentCommits')),
@@ -547,13 +652,23 @@ window.__ModuleLoader__.load({
         );
       }
 
-      // ---- 根组件：轮询 + 视图路由 ----
-      function Page() {
+      // ---- 根组件：轮询 + 视图路由 + 会话捕获 ----
+      function Page(props) {
         const [phase, setPhase] = React.useState('loading');
         const [data, setData] = React.useState(null);
         const [error, setError] = React.useState(null);
         const [view, setView] = React.useState({ kind: 'overview' });
         const [now, setNow] = React.useState(Date.now());
+        // 会话捕获（6.2 兼容性主路径）：kit 的 useSessions hook（renderer standardProps 注入）；
+        // 缺席（宿主版本差异）时静默降级 runCommand 内的 ctx.get('sessions') 兜底
+        React.useEffect(() => {
+          try {
+            if (typeof props.useSessions !== 'function') return;
+            const catalog = props.useSessions((s) => s);
+            const row = Object.values((catalog && catalog.byId) || {}).find((r) => r && r.retainedBy && (r.retainedBy.mainView ?? 0) > 0);
+            sessionRef.current = (row && row.id) || null;
+          } catch { /* hook 不可用 → 降级 */ }
+        });
         const load = React.useCallback(() => {
           fetchBoard().then(
             (d) => { setPhase('ready'); setData(d); setError(null); },
@@ -575,9 +690,9 @@ window.__ModuleLoader__.load({
         const age = scannedAt ? relTime(scannedAt, now) : '';
         return h('div', { className: 'sb-root', style: PAD },
           h(TopBar, { view: view.kind, setView: (k) => setView({ kind: k }), onRefresh: load, ageText: age }),
-          view.kind === 'overview' ? h(Overview, { data, goDetail: (p) => setView({ kind: 'detail', path: p }), now, refreshSoon }) : null,
-          view.kind === 'board' ? h(Board, { data, goDetail: (p) => setView({ kind: 'detail', path: p }), now }) : null,
-          view.kind === 'detail' ? h(Detail, { data, path: view.path, goBack: () => setView({ kind: 'board' }), now, refreshSoon }) : null,
+          view.kind === 'overview' ? h(Overview, { data, goDetail: (p) => setView({ kind: 'detail', path: p }), now, refreshSoon, setData }) : null,
+          view.kind === 'board' ? h(Board, { data, goDetail: (p) => setView({ kind: 'detail', path: p }), now, refreshSoon }) : null,
+          view.kind === 'detail' ? h(Detail, { data, path: view.path, goBack: () => setView({ kind: 'board' }), now, refreshSoon, setData }) : null,
         );
       }
 
