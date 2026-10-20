@@ -69,7 +69,10 @@ export function buildToolDefs(ctx, store, cfg) {
   }
 
   const renderJson = (args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }];
-  const jsonOut = () => ({ schema: { type: 'json', description: 'JSON 数据（信封含 scannedAt/dataAgeMs）' }, render: renderJson });
+  // V4 实测勘误：output.schema 的 type 白名单只有 object/array/string/number/integer/boolean/null
+  // （计划 §0 V4 行把 json/oneOf 写进受控子集是过度陈述，注册即拒）；13 工具返回值全为对象信封，
+  // 统一收敛 type:'object'——schema 不再下钻，具体形状由 render 的 JSON 文本承载
+  const jsonOut = () => ({ schema: { type: 'object', description: 'JSON 数据（信封含 scannedAt/dataAgeMs）' }, render: renderJson });
   const readOnly = () => true;
   const notSafe = () => false;
 

@@ -57,8 +57,9 @@ export function apply(ctx, config) {
     ctx.effect(() => ctx.tools.register(def), 'signalboard: tool ' + def.name);
   }
 
-  // UI 命令（描述走宿主 locale 服务由 Client 注册字典；Host 侧描述用注册时静态文案兜底）
-  ctx.effect(() => registerCommands(ctx, store, svc), 'signalboard: commands');
+  // UI 命令：内部逐条 ctx.effect 注册（registerCommands 返回 defs 数组——数组有 Symbol.iterator，
+  // 不能穿过 effect 边界：cordis 会把它当 generator 资源消费并在首个元素上抛 Invalid effect）
+  registerCommands(ctx, store, svc);
 
   // 面板数据路由（可选能力）：同源 GET，读侧与 agent 工具共用同一拼板实现
   ctx.effect(() => {

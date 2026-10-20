@@ -24,7 +24,7 @@ function domain(rel) {
 }
 
 export const scanner = domain('src/main/scanner.js');
-export const storeMod = domain('src/main/store.js');
+export const Store = domain('src/main/store.js').Store;
 export const handoffs = domain('src/main/handoffs.js');
 export const github = domain('src/main/github.js');
 export const ai = domain('src/main/ai.js');

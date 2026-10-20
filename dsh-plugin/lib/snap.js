@@ -3,7 +3,7 @@
 // 与 MCP server 同款纪律）；并实现插件形态的进程内重扫（「请求应用执行」语义在此形态消失）。
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { scanner, storeMod, actionProto } from './domain.js';
+import { scanner, actionProto } from './domain.js';
 
 // userData 解析：默认与桌面应用 userData 同目录（Windows %APPDATA%\SignalBoard；
 // macOS ~/Library/Application Support/SignalBoard；linux ~/.config/SignalBoard），
